@@ -1,17 +1,16 @@
 extern crate petgraph;
 extern crate num;
 
-mod wavefront;
 mod graph;
+mod wavefront;
 
 use std::convert::identity;
 
 use graph::{Alphabet, ASCIIAlphabet, POAGraph, AlignedPair};
 
 use petgraph::prelude::*;
-use petgraph::graph::{Node, node_index};
-use petgraph::visit::{IntoNeighbors, Visitable};
-
+use crate::wavefront::aligner::WavefrontPOAligner;
+use crate::wavefront::compute::gap_affine::WFComputeGapAffine;
 
 
 fn main() -> Result<(), String> {
@@ -68,7 +67,9 @@ fn main() -> Result<(), String> {
 
     println!("Ranked nodes: {:?}", poa_graph.rank_to_node);
     println!("Seq 3 coded: {:?}", seq3_coded);
-    wavefront::wavefront_poa(&poa_graph, &seq3_coded);
+
+    let mut aligner: WavefrontPOAligner<u32, WFComputeGapAffine<u32>, u8> = WavefrontPOAligner::new(&poa_graph);
+    aligner.align(&seq3_coded);
 
     // let transformed = poa_graph.graph.map(
     //     |_, data| char::from(alphabet.decode(data.code).unwrap()),

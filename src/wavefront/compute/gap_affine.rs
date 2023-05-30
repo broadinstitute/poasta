@@ -1,6 +1,7 @@
 use std::convert::identity;
 use crate::graph::POAGraph;
-use crate::wavefront::{OffsetPrimitive, DiagIx, WFPoint, FRPoint, Wavefront, WFCompute};
+use crate::wavefront::{OffsetPrimitive, DiagIx, WFPoint, FRPoint, Wavefront, FRPointContainer};
+use super::WFCompute;
 
 #[derive(Debug, Clone, Default)]
 struct WavefrontSetGapAffine<Offset: OffsetPrimitive> {
@@ -10,11 +11,23 @@ struct WavefrontSetGapAffine<Offset: OffsetPrimitive> {
 }
 
 impl<Offset: OffsetPrimitive> WavefrontSetGapAffine<Offset> {
-    pub fn new(k_lo: DiagIx, k_hi: DiagIx) -> Self {
+    pub fn new(k_lo: DiagIx, k_hi: DiagIx,
+               fr_points_m: FRPointContainer<Offset>,
+               fr_points_i: FRPointContainer<Offset>,
+               fr_points_d: FRPointContainer<Offset>
+    ) -> Self {
         Self {
-            wavefront_m: Wavefront::new_with_size(k_lo, k_hi),
-            wavefront_i: Wavefront::new_with_size(k_lo, k_hi),
-            wavefront_d: Wavefront::new_with_size(k_lo, k_hi)
+            wavefront_m: Wavefront::new_with_fr_points(k_lo, k_hi, fr_points_m),
+            wavefront_i: Wavefront::new_with_fr_points(k_lo, k_hi, fr_points_i),
+            wavefront_d: Wavefront::new_with_fr_points(k_lo, k_hi, fr_points_d)
+        }
+    }
+
+    pub fn initial() -> Self {
+        Self {
+            wavefront_m: Wavefront::new_with_fr_points(0, 0, vec![Some(Offset::zero())]),
+            wavefront_i: Wavefront::new(),
+            wavefront_d: Wavefront::new()
         }
     }
 
@@ -35,40 +48,36 @@ impl<Offset: OffsetPrimitive> WavefrontSetGapAffine<Offset> {
     }
 
     pub fn extend_point(&mut self, point: &FRPoint<Offset>) {
-        self.wavefront_m.update_fr_point(point);
+        self.wavefront_m.update_fr_point((point.diag(), point.offset() + Offset::one()));
     }
 
     pub fn reached_point(&self, point: &FRPoint<Offset>) -> bool {
-        let fr_points = vec![
-            self.wavefront_m.get_fr_point(point.diag()),
-            self.wavefront_i.get_fr_point(point.diag()),
-            self.wavefront_d.get_fr_point(point.diag())
-        ];
-
-        fr_points.into_iter()
-            .filter_map(identity)
-            .any(|p| p.offset() == point.offset())
+        if let Some(p) = self.wavefront_m.get_fr_point(point.diag()) {
+            p.offset() == point.offset()
+        } else {
+            false
+        }
     }
 }
 
-struct WFComputeGapAffine<Offset: OffsetPrimitive> {
-    pub penalty_mismatch: usize,
-    pub penalty_gap_open: usize,
-    pub penalty_gap_extend: usize,
+pub struct WFComputeGapAffine<Offset: OffsetPrimitive> {
+    pub penalty_mismatch: i64,
+    pub penalty_gap_open: i64,
+    pub penalty_gap_extend: i64,
 
     wavefronts: Vec<WavefrontSetGapAffine<Offset>>
 }
 
 impl<Offset: OffsetPrimitive> WFComputeGapAffine<Offset> {
-    fn get_prev_wf(&self, score: usize) -> Option<&WavefrontSetGapAffine<Offset>> {
-        if score < self.wavefronts.len() {
-            Some(&self.wavefronts[score])
+    fn get_prev_wf(&self, score: i64) -> Option<&WavefrontSetGapAffine<Offset>> {
+        if score > 0 && score < self.wavefronts.len() as i64 {
+            Some(&self.wavefronts[score as usize])
         } else {
             None
         }
     }
 
-    fn get_lowest_successor_diag<Seq: Eq>(&self, graph: &POAGraph<Seq>,
+    fn get_lowest_successor_diag<Seq: Eq + Clone>(&self, graph: &POAGraph<Seq>,
                                           wavefront: &Wavefront<Offset>) -> Option<DiagIx> {
         wavefront.iter()
             // For each FR point, identify the corresponding node in the graph, and find successor
@@ -87,7 +96,7 @@ impl<Offset: OffsetPrimitive> WFComputeGapAffine<Offset> {
             .min()
     }
 
-    fn new_k_lo<Seq: Eq>(&self, graph: &POAGraph<Seq>, new_score: usize) -> DiagIx {
+    fn new_k_lo<Seq: Eq + Clone>(&self, graph: &POAGraph<Seq>, new_score: i64) -> DiagIx {
         // Take into account that the new k can be quite a bit lower because of a successor
         // with lower rank
         let k_lo_mis = self.get_prev_wf(new_score - self.penalty_mismatch)
@@ -109,7 +118,7 @@ impl<Offset: OffsetPrimitive> WFComputeGapAffine<Offset> {
             min().unwrap()
     }
 
-    fn new_k_hi<Seq: Eq>(&self, new_score: usize) -> DiagIx {
+    fn new_k_hi(&self, new_score: i64) -> DiagIx {
         // For the new k_hi, we don't need to take into account successors, because a successor node
         // will always have a lower rank, not higher, because of topological order.
         let k_hi_mis = self.get_prev_wf(new_score - self.penalty_mismatch)
@@ -129,6 +138,18 @@ impl<Offset: OffsetPrimitive> WFComputeGapAffine<Offset> {
         options.into_iter().
             filter_map(identity).
             max().unwrap() + 1
+    }
+}
+
+impl<Offset: OffsetPrimitive> Default for WFComputeGapAffine<Offset> {
+    fn default() -> Self {
+        Self {
+            penalty_mismatch: 4,
+            penalty_gap_open: 6,
+            penalty_gap_extend: 2,
+
+            wavefronts: vec![WavefrontSetGapAffine::initial()]
+        }
     }
 }
 
@@ -153,11 +174,9 @@ impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
         }
     }
 
-    fn next<Seq: Eq>(&mut self, graph: &POAGraph<Seq>, new_score: usize) {
+    fn next<Seq: Eq + Clone>(&mut self, graph: &POAGraph<Seq>, new_score: i64) {
         let k_lo = self.new_k_lo(graph, new_score);
         let k_hi = self.new_k_hi(new_score);
-
-        let mut new_wf: WavefrontSetGapAffine<Offset> = WavefrontSetGapAffine::new(k_lo, k_hi);
 
         let new_fr_i: Vec<Option<Offset>> = (k_lo..=k_hi)
             .map(|k| {
@@ -229,7 +248,7 @@ impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
                     .filter(|prev_fr_point| {
                         let prev_rank = prev_fr_point.rank();
                         // Offset plus one because we are performing a (mis)match
-                        let new_rank = (k, prev_fr_point.offset() + 1).rank();
+                        let new_rank = (k, prev_fr_point.offset() + Offset::one()).rank();
 
                         let node1 = graph.get_node_by_rank(prev_rank);
                         let node2 = graph.get_node_by_rank(new_rank);
@@ -239,9 +258,11 @@ impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
                     .map(|fr_point| fr_point.offset())
 
                     // Previous insertion/deletion state
-                    .chain(new_fr_i[k - k_lo].iter())
-                    .chain(new_fr_d[k - k_lo].iter())
+                    .chain(vec![new_fr_i[(k - k_lo) as usize], new_fr_d[(k - k_lo) as usize]].into_iter()
+                           .filter_map(identity))
                     .max()
             }).collect();
+
+        self.wavefronts.push(WavefrontSetGapAffine::new(k_lo, k_hi, new_fr_m, new_fr_i, new_fr_d));
     }
 }

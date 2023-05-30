@@ -110,7 +110,7 @@ pub struct POAGraph<A>
     node_to_rank: HashMap<NodeIndex, usize>,
 }
 
-impl<A> POAGraph<A>
+impl<A: Eq + Clone> POAGraph<A>
 {
     pub fn new() -> Self {
         POAGraph {
