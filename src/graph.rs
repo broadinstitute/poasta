@@ -4,8 +4,8 @@ use petgraph::prelude::*;
 use petgraph::algo::toposort;
 
 pub trait Alphabet<T, C> {
-    fn encode(&self, symbol: T) -> Option<C>;
-    fn decode(&self, code: C) -> Option<T>;
+    fn encode(&self, symbol: &T) -> Option<C>;
+    fn decode(&self, code: &C) -> Option<T>;
 }
 
 pub struct ASCIIAlphabet {
@@ -42,12 +42,12 @@ impl ASCIIAlphabet {
 }
 
 impl Alphabet<u8, u8> for ASCIIAlphabet {
-    fn encode(&self, symbol: u8) -> Option<u8> {
-        self.coder[symbol as usize]
+    fn encode(&self, symbol: &u8) -> Option<u8> {
+        self.coder[*symbol as usize]
     }
 
-    fn decode(&self, code: u8) -> Option<u8> {
-        self.decoder[code as usize]
+    fn decode(&self, code: &u8) -> Option<u8> {
+        self.decoder[*code as usize]
     }
 }
 

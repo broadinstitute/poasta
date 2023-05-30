@@ -13,13 +13,33 @@ use crate::wavefront::aligner::WavefrontPOAligner;
 use crate::wavefront::compute::gap_affine::WFComputeGapAffine;
 
 
+fn seq_to_alphabet_code<T, C, A: Alphabet<T, C>>(alphabet: &A, seq: &[T]) -> Result<Vec<C>, String>
+where
+    C: Into<char>
+{
+    let (coded_sequence_opt, failed): (Vec<_>, Vec<_>) = seq.iter()
+        .map(|e| alphabet.encode(e))
+        .partition(Option::is_some);
+
+    if !failed.is_empty() {
+        let failed_chars: Vec<(usize, char)> = failed.into_iter().filter_map(identity).map(|t| t.into()).enumerate().collect();
+        return Err(format!("Found symbols not in the alphabet: {:?}", failed_chars));
+    }
+
+    Ok(coded_sequence_opt.into_iter().filter_map(identity).collect())
+}
+
+
 fn main() -> Result<(), String> {
     let alphabet = ASCIIAlphabet::new(b"ACGT");
     let mut poa_graph = POAGraph::new();
 
     let seq1 = b"AATGGTTGTCACGTCAGT";
+    let seq1_coded = seq_to_alphabet_code(&alphabet, seq1)?;
     let weights1 = vec![1; seq1.len()];
+
     let seq2 = b"ATTGTAAAGTCTCGTCGGT";
+    let seq2_coded = seq_to_alphabet_code(&alphabet, seq2)?;
     let weights2 = vec![1; seq2.len()];
 
     // EMBOSS_001         1 AATGGT--TGTCACGTCAGT     18
@@ -49,23 +69,14 @@ fn main() -> Result<(), String> {
         AlignedPair{ rpos: Some(NodeIndex::from(17)), qpos: Some(18)}
     ];
 
-    poa_graph.add_alignment_with_weights(seq1, None, &weights1)?;
-    poa_graph.add_alignment_with_weights(seq2, Some(&alignment), &weights2)?;
+    poa_graph.add_alignment_with_weights(&seq1_coded, None, &weights1)?;
+    poa_graph.add_alignment_with_weights(&seq2_coded, Some(&alignment), &weights2)?;
 
     let seq3 = b"AATGGTTGTCACGTCAGT";
-    let (coded_sequence_opt, failed): (Vec<_>, Vec<_>) = seq3.into_iter()
-        .map(|e| alphabet.encode(*e))
-        .partition(Option::is_some);
-
-    if !failed.is_empty() {
-        let failed_chars: Vec<(usize, char)> = failed.into_iter().filter_map(identity).map(char::from).enumerate().collect();
-        return Err(format!("Found symbols not in the alphabet: {:?}", failed_chars));
-
-    }
-
-    let seq3_coded: Vec<_> = coded_sequence_opt.into_iter().filter_map(identity).collect();
+    let seq3_coded = seq_to_alphabet_code(&alphabet, seq3)?;
 
     println!("Ranked nodes: {:?}", poa_graph.rank_to_node);
+    println!("Node labels: {:?}", poa_graph.graph.node_indices().map(|v| poa_graph.graph[v].code).collect::<Vec<u8>>());
     println!("Seq 3 coded: {:?}", seq3_coded);
 
     let mut aligner: WavefrontPOAligner<u32, WFComputeGapAffine<u32>, u8> = WavefrontPOAligner::new(&poa_graph);

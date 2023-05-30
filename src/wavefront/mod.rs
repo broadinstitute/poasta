@@ -2,6 +2,7 @@ extern crate num;
 use num::{FromPrimitive, PrimInt};
 
 use std::cmp;
+use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::ops::{Index, IndexMut};
 
@@ -11,7 +12,7 @@ pub mod compute;
 pub type DiagIx = i64;
 
 pub trait OffsetPrimitive: FromPrimitive + PrimInt
-    + TryInto<usize> + Default + Copy + Debug { }
+    + TryInto<i64> + Default + Copy + Debug { }
 
 impl OffsetPrimitive for u8 { }
 impl OffsetPrimitive for u16 { }
@@ -19,7 +20,7 @@ impl OffsetPrimitive for u32 { }
 impl OffsetPrimitive for u64 { }
 
 pub type FRPoint<Offset> = (DiagIx, Offset);
-pub type FRPointContainer<Offset> = Vec<Option<Offset>>;
+pub type FRPointContainer<Offset> = VecDeque<Option<Offset>>;
 
 trait WFPoint<Offset: OffsetPrimitive>: Debug {
     fn rank(&self) -> usize;
@@ -30,7 +31,10 @@ trait WFPoint<Offset: OffsetPrimitive>: Debug {
 impl<Offset: OffsetPrimitive> WFPoint<Offset> for FRPoint<Offset> {
     fn rank(&self) -> usize {
         match self.1.try_into() {
-            Ok(ref v) => v - self.0 as usize,
+            Ok(ref v) => {
+                println!("{:?} - {:?} = {:?}", v, self.0, v - self.0);
+                (v - self.0) as usize
+            },
             Err(_) => panic!("Could not convert offset to usize!")
         }
     }
@@ -81,7 +85,11 @@ impl<Offset: OffsetPrimitive> Wavefront<Offset> {
             Self {
                 k_lo: new_k_lo,
                 k_hi: new_k_hi,
-                furthest_points: fr_points[start..=end].into()
+                furthest_points: fr_points.into_iter()
+                    .enumerate()
+                    .filter(|(i, p)| *i >= start && *i <= end)
+                    .map(|(i, p)| p)
+                    .collect()
             }
         } else {
             Self::default()
@@ -89,6 +97,7 @@ impl<Offset: OffsetPrimitive> Wavefront<Offset> {
     }
 
     fn diag_to_ix(&self, diag: DiagIx) -> Option<usize> {
+        println!("to_ix, k_lo: {:?}, k_hi: {:?}, diag: {:?}, len: {:?}", self.k_lo, self.k_hi, diag, self.furthest_points.len());
         if diag >= self.k_lo && diag <= self.k_hi {
             Some((diag - self.k_lo) as usize)
         } else {
@@ -96,7 +105,37 @@ impl<Offset: OffsetPrimitive> Wavefront<Offset> {
         }
     }
 
+    fn ensure_size(&mut self, diag: DiagIx) {
+        let diff = if diag < self.k_lo {
+            (self.k_lo - diag) as usize
+        } else if diag > self.k_hi {
+            (diag - self.k_hi) as usize
+        } else {
+            0
+        };
+
+        println!("k_lo: {:?}, k_hi: {:?}, requested: {:?}, diff: {:?}", self.k_lo, self.k_hi, diag, diff);
+
+        if diff != 0 {
+            self.furthest_points.reserve(self.furthest_points.len() + diff);
+            if diag < self.k_lo {
+                for _ in 0..diff {
+                    self.furthest_points.push_front(None);
+                }
+
+                self.k_lo -= diff as i64;
+            } else {
+                for _ in 0..diff {
+                    self.furthest_points.push_back(None);
+                }
+
+                self.k_hi += diff as i64;
+            }
+        }
+    }
+
     pub fn update_fr_point(&mut self, point: FRPoint<Offset>) {
+        self.ensure_size(point.diag());
         let ix = self.diag_to_ix(point.diag()).unwrap();
 
         match self.furthest_points[ix] {
@@ -110,6 +149,14 @@ impl<Offset: OffsetPrimitive> Wavefront<Offset> {
 
         return if let Some(offset) = &self.furthest_points[ix] {
             Some((k, offset.clone()))
+        } else {
+            None
+        }
+    }
+
+    pub fn get(&self, k: DiagIx) -> Option<Offset> {
+        if k >= self.k_lo && k <= self.k_hi {
+            self.furthest_points[(k - self.k_lo) as usize].clone()
         } else {
             None
         }
@@ -130,7 +177,7 @@ impl<Offset: OffsetPrimitive> Default for Wavefront<Offset> {
         Wavefront {
             k_lo: 0,
             k_hi: 0,
-            furthest_points: vec![None],
+            furthest_points: vec![None].into(),
         }
     }
 }

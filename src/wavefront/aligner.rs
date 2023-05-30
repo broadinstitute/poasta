@@ -35,14 +35,16 @@ impl<'a, Offset, Compute, A> WavefrontPOAligner<'a, Offset, Compute, A>
             Err(_) => panic!("Could not determine maximum value for Offset type!")
         };
 
-        assert!(seq.len() < max_offset, "Sequence is too long for Offset type!");
+        assert!(seq.len() < max_offset as usize, "Sequence is too long for Offset type!");
 
         let k_end = seq.len() as DiagIx - self.graph.graph.node_count() as i64;
-        let offset_end = Offset::from(seq.len() - 1).unwrap();
+        let offset_end = Offset::from(seq.len()).unwrap();
         let fr_end = (k_end, offset_end) as FRPoint<Offset>;
+        println!("Need to reach: {:?}", fr_end);
 
         let mut score: i64 = 0;
         loop {
+            println!("----- EXTEND: score {}", score);
             self.wf_extend(seq);
 
             if self.compute.reached_point(&fr_end) {
@@ -51,7 +53,7 @@ impl<'a, Offset, Compute, A> WavefrontPOAligner<'a, Offset, Compute, A>
             }
 
             score += 1;
-
+            println!("----- NEXT: score {}", score);
             self.compute.next(self.graph, score);
         }
     }
@@ -75,7 +77,7 @@ impl<'a, Offset, Compute, A> WavefrontPOAligner<'a, Offset, Compute, A>
                 Err(_) => panic!("Could not obtain offset!")
             };
 
-            if self.graph.graph[node].code == seq[offset] {
+            if self.graph.graph[node].code == seq[offset as usize] {
                 self.compute.extend(&point);
 
                 let mut num_neighbors = 0;
@@ -87,6 +89,7 @@ impl<'a, Offset, Compute, A> WavefrontPOAligner<'a, Offset, Compute, A>
                     // Add neighbor with updated diagonal and one step further along `seq`
                     stack.push((new_k, point.offset() + Offset::one()));
                     num_neighbors += 1;
+                    println!("Added neighbor {:?}", (new_k, point.offset() + Offset::one()))
                 }
             }
         }

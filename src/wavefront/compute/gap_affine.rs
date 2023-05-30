@@ -25,7 +25,7 @@ impl<Offset: OffsetPrimitive> WavefrontSetGapAffine<Offset> {
 
     pub fn initial() -> Self {
         Self {
-            wavefront_m: Wavefront::new_with_fr_points(0, 0, vec![Some(Offset::zero())]),
+            wavefront_m: Wavefront::new_with_fr_points(0, 0, vec![Some(Offset::zero())].into()),
             wavefront_i: Wavefront::new(),
             wavefront_d: Wavefront::new()
         }
@@ -48,11 +48,13 @@ impl<Offset: OffsetPrimitive> WavefrontSetGapAffine<Offset> {
     }
 
     pub fn extend_point(&mut self, point: &FRPoint<Offset>) {
+        println!("Extending point {:?} to increase offset with one", point);
         self.wavefront_m.update_fr_point((point.diag(), point.offset() + Offset::one()));
     }
 
     pub fn reached_point(&self, point: &FRPoint<Offset>) -> bool {
         if let Some(p) = self.wavefront_m.get_fr_point(point.diag()) {
+            println!("Reached: {:?}, target: {:?}", p, point);
             p.offset() == point.offset()
         } else {
             false
@@ -115,7 +117,7 @@ impl<Offset: OffsetPrimitive> WFComputeGapAffine<Offset> {
 
         options.into_iter().
             filter_map(identity).
-            min().unwrap()
+            min().unwrap_or(-1)
     }
 
     fn new_k_hi(&self, new_score: i64) -> DiagIx {
@@ -137,7 +139,7 @@ impl<Offset: OffsetPrimitive> WFComputeGapAffine<Offset> {
 
         options.into_iter().
             filter_map(identity).
-            max().unwrap() + 1
+            max().unwrap_or(0) + 1
     }
 }
 
@@ -163,7 +165,7 @@ impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
 
     fn extend_candidates(&self) -> Vec<FRPoint<Offset>> {
         match self.wavefronts.last() {
-            Some(v) => v.wavefront_m.iter().collect(),
+            Some(v) => v.extend_candidates().collect(),
             None => vec![]
         }
     }
@@ -178,13 +180,13 @@ impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
         let k_lo = self.new_k_lo(graph, new_score);
         let k_hi = self.new_k_hi(new_score);
 
-        let new_fr_i: Vec<Option<Offset>> = (k_lo..=k_hi)
+        let new_fr_i: FRPointContainer<Offset> = (k_lo..=k_hi)
             .map(|k| {
                 let values: Vec<Offset> = vec![
                     self.get_prev_wf(new_score - self.penalty_gap_open - self.penalty_gap_extend)
-                        .and_then(|prev_wf| prev_wf.wavefront_m[k-1]),
+                        .and_then(|prev_wf| prev_wf.wavefront_m.get(k-1)),
                     self.get_prev_wf(new_score - self.penalty_gap_extend)
-                        .and_then(|prev_wf| prev_wf.wavefront_i[k-1]),
+                        .and_then(|prev_wf| prev_wf.wavefront_i.get(k-1)),
                 ].into_iter().filter_map(identity).collect();
 
                 values.into_iter()
@@ -192,13 +194,13 @@ impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
                     .map(|max_offset| max_offset + Offset::one())
             }).collect();
 
-        let new_fr_d: Vec<Option<Offset>> = (k_lo..=k_hi)
+        let new_fr_d: FRPointContainer<Offset> = (k_lo..=k_hi)
             .map(|k| {
                 let pred_candidates_m = (k+1..=k_hi)
                     // Get previous furthest reaching points from source wavefront
                     .filter_map(|k_prev| {
                         self.get_prev_wf(new_score - self.penalty_gap_open - self.penalty_gap_extend)
-                            .and_then(|prev_wf| prev_wf.wavefront_m[k_prev])
+                            .and_then(|prev_wf| prev_wf.wavefront_m.get(k_prev))
                             .map(|offset| (k_prev, offset.clone()))
                     })
                     // Only include those that involve a valid edge
@@ -217,7 +219,7 @@ impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
                     // Get previous furthest reaching points from source wavefront
                     .filter_map(|k_prev| {
                         self.get_prev_wf(new_score - self.penalty_gap_extend)
-                            .and_then(|prev_wf| prev_wf.wavefront_d[k_prev])
+                            .and_then(|prev_wf| prev_wf.wavefront_d.get(k_prev))
                             .map(|offset| (k_prev, offset.clone()))
                     })
                     // Only include those that involve a valid edge
@@ -235,13 +237,13 @@ impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
                 pred_candidates_m.chain(pred_candidates_d).max()
             }).collect();
 
-        let new_fr_m: Vec<Option<Offset>> = (k_lo..=k_hi)
+        let new_fr_m: FRPointContainer<Offset> = (k_lo..=k_hi)
             .map(|k| {
                 (k..=k_hi)
                     // Get previous furthest reaching points from source wavefront
                     .filter_map(|k_prev| {
                         self.get_prev_wf(new_score - self.penalty_mismatch)
-                            .and_then(|prev_wf| prev_wf.wavefront_m[k_prev])
+                            .and_then(|prev_wf| prev_wf.wavefront_m.get(k_prev))
                             .map(|offset| (k_prev, offset.clone()))
                     })
                     // Only include those that involve a valid edge
