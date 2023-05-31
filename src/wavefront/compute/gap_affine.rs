@@ -87,7 +87,7 @@ impl<Offset: OffsetPrimitive> WFComputeGapAffine<Offset> {
         wavefront.iter()
             // For each FR point, identify the corresponding node in the graph, and find successor
             // with the highest rank difference.
-            .map(|point| {
+            .filter_map(|point| {
                 let node = graph.get_node_by_rank(point.rank());
                 let max_rank_diff = graph.graph.neighbors(node)
                     .map(|n| graph.get_node_rank(n))
@@ -97,7 +97,6 @@ impl<Offset: OffsetPrimitive> WFComputeGapAffine<Offset> {
                 // Difference in rank is the same as difference in diagonal index
                 max_rank_diff.map(|v| point.diag() - v as DiagIx)
             })
-            .filter_map(identity)
             .min()
     }
 
@@ -118,9 +117,9 @@ impl<Offset: OffsetPrimitive> WFComputeGapAffine<Offset> {
 
         let options = vec![k_lo_mis, k_lo_gap_open, k_lo_del_ext, k_lo_ins_ext];
 
-        options.into_iter().
-            filter_map(identity).
-            min().unwrap_or(-1)
+        options.into_iter()
+            .flatten()
+            .min().unwrap_or(-1)
     }
 
     fn new_k_hi(&self, new_score: i64) -> DiagIx {
@@ -140,9 +139,9 @@ impl<Offset: OffsetPrimitive> WFComputeGapAffine<Offset> {
 
         let options = vec![k_hi_mis, k_hi_gap_open, k_hi_del_ext, k_hi_ins_ext];
 
-        options.into_iter().
-            filter_map(identity).
-            max().unwrap_or(0) + 1
+        options.into_iter()
+            .flatten()
+            .max().unwrap_or(0) + 1
     }
 }
 
@@ -191,7 +190,7 @@ impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
                         .and_then(|prev_wf| prev_wf.wavefront_m.get(k-1)),
                     self.get_prev_wf(new_score - self.cost_gap_extend)
                         .and_then(|prev_wf| prev_wf.wavefront_i.get(k-1)),
-                ].into_iter().filter_map(identity).collect();
+                ].into_iter().flatten().collect();
                 eprintln!("-I k: {:?}, prev options ({:?}, {:?}): {:?}", k,
                           new_score - self.cost_gap_open - self.cost_gap_extend,
                           new_score - self.cost_gap_extend, values);
@@ -302,7 +301,7 @@ impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
                 let prev_indel: Vec<Offset> = vec![
                     new_fr_i[(k - k_lo) as usize],
                     new_fr_d[(k - k_lo) as usize]
-                ].into_iter().filter_map(identity).collect();
+                ].into_iter().flatten().collect();
 
                 eprintln!("- prev options (k: {:?}-{:?}): {:?}, indel: {:?}",
                     k, k_hi, prev_mis, prev_indel);

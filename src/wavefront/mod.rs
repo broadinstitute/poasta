@@ -86,8 +86,7 @@ impl<Offset: OffsetPrimitive> Wavefront<Offset> {
                 k_hi: new_k_hi,
                 furthest_points: fr_points.into_iter()
                     .enumerate()
-                    .filter(|(i, p)| *i >= start && *i <= end)
-                    .map(|(i, p)| p)
+                    .filter_map(|(i, p)| if i >= start && i <= end { Some(p) } else { None })
                     .collect()
             }
         } else {
@@ -146,16 +145,12 @@ impl<Offset: OffsetPrimitive> Wavefront<Offset> {
     pub fn get_fr_point(&self, k: DiagIx) -> Option<FRPoint<Offset>> {
         let ix = self.diag_to_ix(k)?;
 
-        return if let Some(offset) = &self.furthest_points[ix] {
-            Some((k, offset.clone()))
-        } else {
-            None
-        }
+        self.furthest_points[ix].map(|offset| (k, offset))
     }
 
     pub fn get(&self, k: DiagIx) -> Option<Offset> {
         if k >= self.k_lo && k <= self.k_hi {
-            self.furthest_points[(k - self.k_lo) as usize].clone()
+            self.furthest_points[(k - self.k_lo) as usize]
         } else {
             None
         }
@@ -165,7 +160,7 @@ impl<Offset: OffsetPrimitive> Wavefront<Offset> {
         self.furthest_points.iter()
             .zip(self.k_lo..=self.k_hi)
             .filter_map(|v| match v {
-                (Some(offset), diag) => Some((diag, offset.clone())),
+                (Some(offset), diag) => Some((diag, *offset)),
                 _ => None
             })
     }

@@ -95,7 +95,5 @@ fn main() -> Result<(), String> {
     let mut aligner: WavefrontPOAligner<u32, WFComputeGapAffine<u32>, u8> = WavefrontPOAligner::new(&poa_graph);
     aligner.align(&seq3_coded);
 
-
-
     Ok(())
 }
