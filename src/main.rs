@@ -5,10 +5,13 @@ mod graph;
 mod wavefront;
 
 use std::convert::identity;
+use std::fmt::Debug;
 
 use graph::{Alphabet, ASCIIAlphabet, POAGraph, AlignedPair};
 
 use petgraph::prelude::*;
+use petgraph::dot::Dot;
+
 use crate::wavefront::aligner::WavefrontPOAligner;
 use crate::wavefront::compute::gap_affine::WFComputeGapAffine;
 
@@ -72,23 +75,27 @@ fn main() -> Result<(), String> {
     poa_graph.add_alignment_with_weights(&seq1_coded, None, &weights1)?;
     poa_graph.add_alignment_with_weights(&seq2_coded, Some(&alignment), &weights2)?;
 
-    let seq3 = b"AATGGTTGTCACGTCAGT";
+    let transformed = poa_graph.graph.map(
+        |ix, data|
+            format!("{:?} ({:?})", char::from(alphabet.decode(&data.code).unwrap()), poa_graph.get_node_rank(ix)),
+        |_, data|
+            format!("{}, {:?}", data.weight, data.sequence_ids)
+    );
+
+    let dot = Dot::new(&transformed);
+    println!("{:?}", dot);
+
+    let seq3 = b"AATGGTTGTCACGACAGT";
     let seq3_coded = seq_to_alphabet_code(&alphabet, seq3)?;
 
-    println!("Ranked nodes: {:?}", poa_graph.rank_to_node);
-    println!("Node labels: {:?}", poa_graph.graph.node_indices().map(|v| poa_graph.graph[v].code).collect::<Vec<u8>>());
-    println!("Seq 3 coded: {:?}", seq3_coded);
+    eprintln!("Ranked nodes: {:?}", poa_graph.rank_to_node);
+    eprintln!("Node labels: {:?}", poa_graph.graph.node_indices().map(|v| poa_graph.graph[v].code).collect::<Vec<u8>>());
+    eprintln!("Seq 3 coded: {:?}", seq3_coded);
 
     let mut aligner: WavefrontPOAligner<u32, WFComputeGapAffine<u32>, u8> = WavefrontPOAligner::new(&poa_graph);
     aligner.align(&seq3_coded);
 
-    // let transformed = poa_graph.graph.map(
-    //     |_, data| char::from(alphabet.decode(data.code).unwrap()),
-    //     |_, data| format!("{}, {:?}", data.weight, data.sequence_ids));
-    //
-    // let dot = Dot::new(&transformed);
-    //
-    // println!("{:?}", dot);
+
 
     Ok(())
 }

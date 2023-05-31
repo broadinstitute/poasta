@@ -32,7 +32,6 @@ impl<Offset: OffsetPrimitive> WFPoint<Offset> for FRPoint<Offset> {
     fn rank(&self) -> usize {
         match self.1.try_into() {
             Ok(ref v) => {
-                println!("{:?} - {:?} = {:?}", v, self.0, v - self.0);
                 (v - self.0) as usize
             },
             Err(_) => panic!("Could not convert offset to usize!")
@@ -97,7 +96,7 @@ impl<Offset: OffsetPrimitive> Wavefront<Offset> {
     }
 
     fn diag_to_ix(&self, diag: DiagIx) -> Option<usize> {
-        println!("to_ix, k_lo: {:?}, k_hi: {:?}, diag: {:?}, len: {:?}", self.k_lo, self.k_hi, diag, self.furthest_points.len());
+        eprintln!("to_ix, k_lo: {:?}, k_hi: {:?}, diag: {:?}, len: {:?}", self.k_lo, self.k_hi, diag, self.furthest_points.len());
         if diag >= self.k_lo && diag <= self.k_hi {
             Some((diag - self.k_lo) as usize)
         } else {
@@ -114,7 +113,7 @@ impl<Offset: OffsetPrimitive> Wavefront<Offset> {
             0
         };
 
-        println!("k_lo: {:?}, k_hi: {:?}, requested: {:?}, diff: {:?}", self.k_lo, self.k_hi, diag, diff);
+        eprintln!("k_lo: {:?}, k_hi: {:?}, requested: {:?}, diff: {:?}", self.k_lo, self.k_hi, diag, diff);
 
         if diff != 0 {
             self.furthest_points.reserve(self.furthest_points.len() + diff);

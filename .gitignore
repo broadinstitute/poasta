@@ -1,3 +1,5 @@
 /target
 .idea
 log.txt
+graph.dot
+graph.png
