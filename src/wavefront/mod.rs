@@ -1,51 +1,16 @@
 extern crate num;
-use num::{FromPrimitive, PrimInt};
 
 use std::cmp;
-use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::ops::{Index, IndexMut};
 
+pub mod fr_points;
 pub mod aligner;
 pub mod compute;
 
-pub type DiagIx = i64;
+use fr_points::{DiagIx, OffsetPrimitive, FRPoint, FRPointContainer, WFPoint};
+use crate::wavefront::fr_points::{ExtendCandidate, OffsetWithBacktrace};
 
-pub trait OffsetPrimitive: FromPrimitive + PrimInt
-    + TryInto<i64> + Default + Copy + Debug { }
-
-impl OffsetPrimitive for u8 { }
-impl OffsetPrimitive for u16 { }
-impl OffsetPrimitive for u32 { }
-impl OffsetPrimitive for u64 { }
-
-pub type FRPoint<Offset> = (DiagIx, Offset);
-pub type FRPointContainer<Offset> = VecDeque<Option<Offset>>;
-
-trait WFPoint<Offset: OffsetPrimitive>: Debug {
-    fn rank(&self) -> usize;
-    fn offset(&self) -> Offset;
-    fn diag(&self) -> DiagIx;
-}
-
-impl<Offset: OffsetPrimitive> WFPoint<Offset> for FRPoint<Offset> {
-    fn rank(&self) -> usize {
-        match self.1.try_into() {
-            Ok(ref v) => {
-                (v - self.0) as usize
-            },
-            Err(_) => panic!("Could not convert offset to usize!")
-        }
-    }
-
-    fn offset(&self) -> Offset {
-        self.1
-    }
-
-    fn diag(&self) -> DiagIx {
-        self.0
-    }
-}
 
 #[derive(Debug, Clone)]
 struct Wavefront<Offset: OffsetPrimitive> {
@@ -132,25 +97,33 @@ impl<Offset: OffsetPrimitive> Wavefront<Offset> {
         }
     }
 
-    pub fn update_fr_point(&mut self, point: FRPoint<Offset>) {
-        self.ensure_size(point.diag());
-        let ix = self.diag_to_ix(point.diag()).unwrap();
+    pub fn extend_candidate(&mut self, candidate: &ExtendCandidate<Offset>) {
+        self.ensure_size(candidate.curr().diag());
+        let ix = self.diag_to_ix(candidate.curr().diag()).unwrap();
+
+        // Extend this candidate, increase the offset for this diagonal by one (done in
+        // `make_offset_with_bt`)
+        let offset_with_bt = candidate.make_offset_with_bt();
 
         match self.furthest_points[ix] {
-            Some(ref mut v) => *v = cmp::max(*v, point.offset()),
-            None => self.furthest_points[ix as usize] = Some(point.offset())
+            Some(ref mut v) => {
+                if *v <= offset_with_bt {
+                    v.offset = offset_with_bt.offset;
+
+                    if offset_with_bt.prev.is_some() {
+                        v.prev = offset_with_bt.prev;
+                    }
+                } else {
+                    eprintln!("EXTEND {:?} - not overriding existing FR point {:?}", offset_with_bt, *v);
+                }
+            },
+            None => self.furthest_points[ix] = Some(offset_with_bt)
         };
-    }
-
-    pub fn get_fr_point(&self, k: DiagIx) -> Option<FRPoint<Offset>> {
-        let ix = self.diag_to_ix(k)?;
-
-        self.furthest_points[ix].map(|offset| (k, offset))
     }
 
     pub fn get(&self, k: DiagIx) -> Option<Offset> {
         if k >= self.k_lo && k <= self.k_hi {
-            self.furthest_points[(k - self.k_lo) as usize]
+            self.furthest_points[(k - self.k_lo) as usize].as_ref().map(|v| v.offset)
         } else {
             None
         }
@@ -160,7 +133,7 @@ impl<Offset: OffsetPrimitive> Wavefront<Offset> {
         self.furthest_points.iter()
             .zip(self.k_lo..=self.k_hi)
             .filter_map(|v| match v {
-                (Some(offset), diag) => Some((diag, *offset)),
+                (Some(offset), diag) => Some((diag, offset.offset)),
                 _ => None
             })
     }
@@ -177,7 +150,7 @@ impl<Offset: OffsetPrimitive> Default for Wavefront<Offset> {
 }
 
 impl<Offset: OffsetPrimitive> Index<DiagIx> for Wavefront<Offset> {
-    type Output = Option<Offset>;
+    type Output = Option<OffsetWithBacktrace<Offset>>;
 
     fn index(&self, index: DiagIx) -> &Self::Output {
         assert!(index >= self.k_lo && index <= self.k_hi);

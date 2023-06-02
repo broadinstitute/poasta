@@ -1,5 +1,6 @@
 use crate::graph::POAGraph;
 use super::compute::WFCompute;
+use super::fr_points::ExtendCandidate;
 use super::{OffsetPrimitive, DiagIx, FRPoint, WFPoint};
 
 use std::marker::PhantomData;
@@ -61,34 +62,34 @@ impl<'a, Offset, Compute, A> WavefrontPOAligner<'a, Offset, Compute, A>
     fn wf_extend(&mut self, seq: &[A]) {
         // Check if we can extend without mismatches along our current diagonals. Follow paths
         // in the graph in a depth first manner, and update furthest reaching points accordingly.
-        let mut stack: Vec<FRPoint<Offset>> = self.compute.extend_candidates();
+        let mut stack: Vec<ExtendCandidate<Offset>> = self.compute.extend_candidates();
         eprintln!("Stack at start: {:?}", stack);
 
-        while let Some(point) = stack.pop() {
-            let rank = point.rank();
+        while let Some(candidate) = stack.pop() {
+            let rank = candidate.curr().rank();
             let node = self.graph.get_node_by_rank(rank);
 
-            eprintln!("Popped item {:?}, node_rank: {}", point, rank);
+            eprintln!("Popped item {:?}, node_rank: {}", candidate, rank);
             eprintln!("Remaining stack: {:?}", stack);
 
             // Sequence matches, add successors to stack
-            let offset = match point.offset().try_into() {
+            let offset = match candidate.curr().offset().try_into() {
                 Ok(v) => v,
                 Err(_) => panic!("Could not obtain offset!")
             };
 
             if self.graph.graph[node].code == seq[offset as usize] {
-                self.compute.extend(&point);
+                self.compute.extend(&candidate);
 
                 for neighbor in self.graph.graph.neighbors(node) {
                     // `succ_rank` is always greater than `rank` because of topological order
                     let succ_rank = self.graph.get_node_rank(neighbor);
-                    let new_k = point.diag() - (succ_rank - rank - 1) as DiagIx;
+                    let new_k = candidate.curr().diag() - (succ_rank - rank - 1) as DiagIx;
 
                     // Add neighbor with updated diagonal and one step further along `seq`
                     if (offset as usize) < seq.len() - 1 {
-                        stack.push((new_k, point.offset() + Offset::one()));
-                        eprintln!("Added neighbor {:?}", (new_k, point.offset() + Offset::one()))
+                        stack.push(candidate.new_for_successor((new_k, candidate.curr().offset() + Offset::one())));
+                        eprintln!("Added neighbor {:?}", (new_k, candidate.curr().offset() + Offset::one()))
                     }
                 }
             }
