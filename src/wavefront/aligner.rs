@@ -1,9 +1,13 @@
 use crate::graph::POAGraph;
+use crate::alignment::{AlignedPair, Alignment};
+
 use super::compute::WFCompute;
 use super::fr_points::ExtendCandidate;
 use super::{OffsetPrimitive, DiagIx, FRPoint, WFPoint};
 
 use std::marker::PhantomData;
+use petgraph::visit::NodeCount;
+
 
 pub struct WavefrontPOAligner<'a, Offset, Compute, A>
     where
@@ -30,7 +34,7 @@ impl<'a, Offset, Compute, A> WavefrontPOAligner<'a, Offset, Compute, A>
         }
     }
 
-    pub fn align(&mut self, seq: &[A]) {
+    pub fn align(&mut self, seq: &[A]) -> Alignment {
         let max_offset = match Offset::max_value().try_into() {
             Ok(v) => v,
             Err(_) => panic!("Could not determine maximum value for Offset type!")
@@ -57,6 +61,9 @@ impl<'a, Offset, Compute, A> WavefrontPOAligner<'a, Offset, Compute, A>
             eprintln!("----- NEXT: score {}", score);
             self.compute.next(self.graph, score);
         }
+
+        eprintln!("Sequence length: {:?}", seq.len());
+        self.compute.backtrace(self.graph, &fr_end)
     }
 
     fn wf_extend(&mut self, seq: &[A]) {
@@ -67,6 +74,10 @@ impl<'a, Offset, Compute, A> WavefrontPOAligner<'a, Offset, Compute, A>
 
         while let Some(candidate) = stack.pop() {
             let rank = candidate.curr().rank();
+            if rank >= self.graph.graph.node_count() {
+                continue;
+            }
+
             let node = self.graph.get_node_by_rank(rank);
 
             eprintln!("Popped item {:?}, node_rank: {}", candidate, rank);
@@ -85,10 +96,11 @@ impl<'a, Offset, Compute, A> WavefrontPOAligner<'a, Offset, Compute, A>
                     // `succ_rank` is always greater than `rank` because of topological order
                     let succ_rank = self.graph.get_node_rank(neighbor);
                     let new_k = candidate.curr().diag() - (succ_rank - rank - 1) as DiagIx;
+                    let new_point = (new_k, candidate.curr().offset() + Offset::one());
 
                     // Add neighbor with updated diagonal and one step further along `seq`
-                    if (offset as usize) < seq.len() - 1 {
-                        stack.push(candidate.new_for_successor((new_k, candidate.curr().offset() + Offset::one())));
+                    if (offset as usize) < seq.len() - 1 && new_point.rank() < self.graph.graph.node_count() {
+                        stack.push(candidate.new_for_successor(new_point));
                         eprintln!("Added neighbor {:?}", (new_k, candidate.curr().offset() + Offset::one()))
                     }
                 }

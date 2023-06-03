@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use petgraph::prelude::*;
 use petgraph::algo::toposort;
 
+use crate::alignment::{Alignment, AlignedPair};
+
 pub trait Alphabet<T, C> {
     fn encode(&self, symbol: &T) -> Option<C>;
     fn decode(&self, code: &C) -> Option<T>;
@@ -51,22 +53,6 @@ impl Alphabet<u8, u8> for ASCIIAlphabet {
     }
 }
 
-pub struct AlignedPair {
-    pub rpos: Option<NodeIndex>,
-    pub qpos: Option<usize>
-}
-
-impl AlignedPair {
-    fn is_aligned(&self) -> bool {
-        matches!((self.rpos, self.qpos), (Some(_), Some(_)))
-    }
-
-    fn is_indel(&self) -> bool {
-        !self.is_aligned()
-    }
-}
-
-pub type Alignment = Vec<AlignedPair>;
 
 #[derive(Debug)]
 pub struct POANode<A> {

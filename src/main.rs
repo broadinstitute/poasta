@@ -1,13 +1,15 @@
 extern crate petgraph;
 extern crate num;
 
+mod alignment;
 mod graph;
 mod wavefront;
 
 use std::convert::identity;
 use std::fmt::Debug;
 
-use graph::{Alphabet, ASCIIAlphabet, POAGraph, AlignedPair};
+use alignment::AlignedPair;
+use graph::{Alphabet, ASCIIAlphabet, POAGraph};
 
 use petgraph::prelude::*;
 use petgraph::dot::Dot;
@@ -85,7 +87,7 @@ fn main() -> Result<(), String> {
     let dot = Dot::new(&transformed);
     println!("{:?}", dot);
 
-    let seq3 = b"AATGGTTGTCACGACAGT";
+    let seq3 = b"AATGGTTGTCACGAACTTTACAGT";
     let seq3_coded = seq_to_alphabet_code(&alphabet, seq3)?;
 
     eprintln!("Ranked nodes: {:?}", poa_graph.rank_to_node);
@@ -93,7 +95,18 @@ fn main() -> Result<(), String> {
     eprintln!("Seq 3 coded: {:?}", seq3_coded);
 
     let mut aligner: WavefrontPOAligner<u32, WFComputeGapAffine<u32>, u8> = WavefrontPOAligner::new(&poa_graph);
-    aligner.align(&seq3_coded);
+    let alignment = aligner.align(&seq3_coded);
+
+    let (ref_aln, qry_aln): (String, String) = alignment
+        .into_iter()
+        .map(|pair|
+            (pair.rpos.and_then(|nix| alphabet.decode(&poa_graph.graph[nix].code).map(char::from)).unwrap_or('-'),
+             pair.qpos.map(|qpos| char::from(seq3[qpos])).unwrap_or('-'))
+        )
+        .unzip();
+
+    eprintln!("  Graph: {:?}", ref_aln);
+    eprintln!("  Query: {:?}", qry_aln);
 
     Ok(())
 }

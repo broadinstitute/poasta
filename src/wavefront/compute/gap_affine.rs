@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use crate::alignment::{AlignedPair, Alignment};
 
 use crate::graph::POAGraph;
 use crate::wavefront::Wavefront;
@@ -48,12 +49,15 @@ impl<Offset: OffsetPrimitive> WavefrontSetGapAffine<Offset> {
         ks.into_iter().max().unwrap_or(0)
     }
 
-    pub fn extend_candidates(&self) -> impl Iterator<Item=FRPoint<Offset>> + '_ {
+    pub fn extend_candidates(&self) -> impl Iterator<Item=ExtendCandidate<Offset>> + '_ {
         self.wavefront_m.iter()
+            .map(|p|
+                ExtendCandidate(p, None)
+            )
     }
 
-    pub fn extend_point(&mut self, candidate: &ExtendCandidate<Offset>) {
-        self.wavefront_m.extend_candidate(candidate);
+    pub fn extend_point(&mut self, curr_score: i64, candidate: &ExtendCandidate<Offset>) {
+        self.wavefront_m.extend_candidate(curr_score, candidate);
     }
 
     pub fn reached_point(&self, point: &FRPoint<Offset>) -> bool {
@@ -162,23 +166,25 @@ impl<Offset: OffsetPrimitive> Default for WFComputeGapAffine<Offset> {
 impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
     fn reached_point(&self, point: &FRPoint<Offset>) -> bool {
         match self.wavefronts.last() {
-            Some(v) => v.reached_point(point),
+            Some(v) => {
+                eprintln!("after extend: {:?}", v);
+                v.reached_point(point)
+            },
             None => false
         }
     }
 
     fn extend_candidates(&self) -> Vec<ExtendCandidate<Offset>> {
         match self.wavefronts.last() {
-            Some(v) => v.extend_candidates()
-                .map(|p| ExtendCandidate(p, None))
-                .collect(),
+            Some(v) => v.extend_candidates().collect(),
             None => vec![]
         }
     }
 
     fn extend(&mut self, candidate: &ExtendCandidate<Offset>) {
+        let score = self.wavefronts.len() as i64 - 1;
         if let Some(v) = self.wavefronts.last_mut() {
-            v.extend_point(candidate);
+            v.extend_point(score, candidate);
         }
     }
 
@@ -192,10 +198,14 @@ impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
                 let values: Vec<PrevCandidate<Offset>> = vec![
                     self.get_prev_wf(new_score - self.cost_gap_extend)
                         .and_then(|prev_wf| prev_wf.wavefront_i.get(k-1))
-                        .map(|offset| PrevCandidate((k-1, offset), PrevState::Insertion)),
+                        .map(|offset|
+                            PrevCandidate((k-1, offset), PrevState::Insertion(new_score - self.cost_gap_extend))
+                        ),
                     self.get_prev_wf(new_score - self.cost_gap_open - self.cost_gap_extend)
                         .and_then(|prev_wf| prev_wf.wavefront_m.get(k-1))
-                        .map(|offset| PrevCandidate((k-1, offset), PrevState::Mismatch)),
+                        .map(|offset|
+                            PrevCandidate((k-1, offset), PrevState::Mismatch(new_score - self.cost_gap_open - self.cost_gap_extend))
+                        ),
                 ].into_iter().flatten().collect();
                 eprintln!("-I k: {:?}, prev options ({:?}, {:?}): {:?}", k,
                           new_score - self.cost_gap_open - self.cost_gap_extend,
@@ -219,7 +229,9 @@ impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
                     .filter_map(|k_prev| {
                         self.get_prev_wf(new_score - self.cost_gap_extend)
                             .and_then(|prev_wf| prev_wf.wavefront_d.get(k_prev))
-                            .map(|offset| PrevCandidate((k_prev, offset), PrevState::Deletion))
+                            .map(|offset|
+                                PrevCandidate((k_prev, offset), PrevState::Deletion(new_score - self.cost_gap_extend))
+                            )
                     })
                     // Only include those that involve a valid edge
                     .filter(|prev_fr_point| {
@@ -233,11 +245,7 @@ impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
                         let node1 = graph.get_node_by_rank(prev_rank);
                         let node2 = graph.get_node_by_rank(new_rank);
 
-                        let is_neighbor = graph.is_neighbor(node1, node2);
-                        eprintln!("- {:?} -> {:?} -- is true edge: {:?}",
-                                  prev_rank, new_rank, is_neighbor);
-
-                        is_neighbor
+                        graph.is_neighbor(node1, node2)
                     });
 
                 let pred_candidates_m = (k+1..=k_hi)
@@ -245,7 +253,9 @@ impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
                     .filter_map(|k_prev| {
                         self.get_prev_wf(new_score - self.cost_gap_open - self.cost_gap_extend)
                             .and_then(|prev_wf| prev_wf.wavefront_m.get(k_prev))
-                            .map(|offset| PrevCandidate((k_prev, offset), PrevState::Mismatch))
+                            .map(|offset|
+                                PrevCandidate((k_prev, offset), PrevState::Mismatch(new_score - self.cost_gap_open - self.cost_gap_extend))
+                            )
                     })
                     // Only include those that involve a valid edge
                     .filter(|prev_fr_point| {
@@ -259,11 +269,7 @@ impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
                         let node1 = graph.get_node_by_rank(prev_rank);
                         let node2 = graph.get_node_by_rank(new_rank);
 
-                        let is_neighbor = graph.is_neighbor(node1, node2);
-                        eprintln!(" - {:?} -> {:?} -- is true edge: {:?}",
-                                  prev_rank, new_rank, is_neighbor);
-
-                        is_neighbor
+                        graph.is_neighbor(node1, node2)
                     });
 
                 pred_candidates_d.chain(pred_candidates_m)
@@ -282,9 +288,11 @@ impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
                 // Previous was insertion/deletion state
                 let prev_indel: Vec<PrevCandidate<Offset>> = vec![
                     new_fr_i[(k - k_lo) as usize].as_ref()
-                        .map(|offset| PrevCandidate((k, offset.offset), PrevState::Insertion)),
+                        .map(|offset|
+                            PrevCandidate((k, offset.offset), PrevState::Insertion(new_score))),
                     new_fr_d[(k - k_lo) as usize].as_ref()
-                        .map(|offset| PrevCandidate((k, offset.offset), PrevState::Deletion))
+                        .map(|offset|
+                            PrevCandidate((k, offset.offset), PrevState::Deletion(new_score)))
                 ].into_iter().flatten().collect();
 
                 // Previous was (mis)match state, check all possible predecessors
@@ -294,7 +302,8 @@ impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
                         eprintln!("k': {:?}", k_prev);
                         self.get_prev_wf(new_score - self.cost_mismatch)
                             .and_then(|prev_wf| prev_wf.wavefront_m.get(k_prev))
-                            .map(|offset| PrevCandidate((k_prev, offset), PrevState::Mismatch))
+                            .map(|offset|
+                                PrevCandidate((k_prev, offset), PrevState::Mismatch(new_score - self.cost_mismatch)))
                     })
                     // Only include those that involve a valid edge
                     .filter(|prev_fr_point| {
@@ -309,11 +318,7 @@ impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
                         let node1 = graph.get_node_by_rank(prev_rank);
                         let node2 = graph.get_node_by_rank(new_rank);
 
-                        let is_neighbor = graph.is_neighbor(node1, node2);
-                        eprintln!("- {:?} -> {:?} -- is true edge: {:?}",
-                                 prev_rank, new_rank, is_neighbor);
-
-                        is_neighbor
+                        graph.is_neighbor(node1, node2)
                     })
                     .collect();
 
@@ -336,5 +341,76 @@ impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
         eprintln!("M_{}: {:?}", new_score, new_fr_m);
 
         self.wavefronts.push(WavefrontSetGapAffine::new(k_lo, k_hi, new_fr_m, new_fr_i, new_fr_d));
+    }
+
+    fn backtrace<Seq: Eq + Clone>(&self, graph: &POAGraph<Seq>, end_point: &FRPoint<Offset>) -> Alignment {
+        assert!(self.reached_point(end_point));
+
+        let mut alignment: Alignment = vec![];
+        let mut curr_offset = end_point.offset() - Offset::one();
+        let mut curr_rank = (end_point.diag(), curr_offset).rank();
+
+        let mut curr_pointer = self.wavefronts.last()
+            .and_then(|wf| wf.wavefront_m.get_pointer(end_point.diag()));
+
+        while let Some(pointer) = curr_pointer {
+            let PrevCandidate(prev_point, prev_state) = pointer;
+
+            eprintln!("Current (rank, offset): ({:?}, {:?})", curr_rank, curr_offset);
+            eprintln!("Curr prev point: {:?} (state: {:?})", prev_point, prev_state);
+
+            match prev_state {
+                PrevState::Start | PrevState::Match(_) | PrevState::Mismatch(_) => {
+                    let offset_diff: i64 = (curr_offset - prev_point.offset())
+                        .try_into()
+                        .unwrap_or_else(|_| panic!("Could not convert offset difference"));
+
+                    for _ in 0..offset_diff {
+                        let offset: i64 = curr_offset.try_into()
+                            .unwrap_or_else(|_| panic!("Could not convert current offset"));
+
+                        let node = graph.get_node_by_rank(curr_rank);
+                        alignment.push(AlignedPair::new(Some(node), Some(offset as usize)));
+                        eprintln!("{:?}", alignment.last().unwrap());
+                        curr_offset = curr_offset - Offset::one();
+                        curr_rank -= 1;
+                    }
+
+                    eprintln!("- Setting new node rank to {:?} (old: {:?})", prev_point.rank(), curr_rank);
+                    curr_rank = prev_point.rank();
+
+                    curr_pointer = match prev_state {
+                        PrevState::Start => None,
+                        _ => self.get_prev_wf(prev_state.score())
+                                .and_then(|wf| wf.wavefront_m.get_pointer(prev_point.diag()))
+                    }
+                },
+                PrevState::Deletion(prev_score) => {
+                    let node = graph.get_node_by_rank(curr_rank);
+                    alignment.push(AlignedPair::new(Some(node), None));
+                    eprintln!("{:?}", alignment.last().unwrap());
+
+                    eprintln!("- Setting new node rank to {:?} (old: {:?})", prev_point.rank(), curr_rank);
+                    curr_rank = prev_point.rank();
+                    curr_pointer = self.get_prev_wf(*prev_score)
+                        .and_then(|wf| wf.wavefront_d.get_pointer(prev_point.diag()));
+                }
+                PrevState::Insertion(prev_score) => {
+                    let offset: i64 = curr_offset.try_into()
+                        .unwrap_or_else(|_| panic!("Could not convert current offset"));
+
+                    alignment.push(AlignedPair::new(None, Some(offset as usize)));
+                    curr_offset = curr_offset - Offset::one();
+
+                    eprintln!("Setting new node rank to {:?} (old: {:?})", prev_point.rank(), curr_rank);
+                    curr_rank = prev_point.rank();
+                    curr_pointer = self.get_prev_wf(*prev_score)
+                        .and_then(|wf| wf.wavefront_i.get_pointer(prev_point.diag()));
+
+                }
+            }
+        }
+
+        alignment.into_iter().rev().collect()
     }
 }

@@ -1,6 +1,5 @@
 extern crate num;
 
-use std::cmp;
 use std::fmt::Debug;
 use std::ops::{Index, IndexMut};
 
@@ -9,7 +8,7 @@ pub mod aligner;
 pub mod compute;
 
 use fr_points::{DiagIx, OffsetPrimitive, FRPoint, FRPointContainer, WFPoint};
-use crate::wavefront::fr_points::{ExtendCandidate, OffsetWithBacktrace};
+use crate::wavefront::fr_points::{ExtendCandidate, OffsetWithBacktrace, PrevCandidate};
 
 
 #[derive(Debug, Clone)]
@@ -97,13 +96,13 @@ impl<Offset: OffsetPrimitive> Wavefront<Offset> {
         }
     }
 
-    pub fn extend_candidate(&mut self, candidate: &ExtendCandidate<Offset>) {
+    pub fn extend_candidate(&mut self, curr_score: i64, candidate: &ExtendCandidate<Offset>) {
         self.ensure_size(candidate.curr().diag());
         let ix = self.diag_to_ix(candidate.curr().diag()).unwrap();
 
         // Extend this candidate, increase the offset for this diagonal by one (done in
         // `make_offset_with_bt`)
-        let offset_with_bt = candidate.make_offset_with_bt();
+        let offset_with_bt = candidate.make_offset_with_bt(curr_score);
 
         match self.furthest_points[ix] {
             Some(ref mut v) => {
@@ -124,6 +123,14 @@ impl<Offset: OffsetPrimitive> Wavefront<Offset> {
     pub fn get(&self, k: DiagIx) -> Option<Offset> {
         if k >= self.k_lo && k <= self.k_hi {
             self.furthest_points[(k - self.k_lo) as usize].as_ref().map(|v| v.offset)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_pointer(&self, k: DiagIx) -> Option<&PrevCandidate<Offset>> {
+        if k >= self.k_lo && k <= self.k_hi {
+            self.furthest_points[(k - self.k_lo) as usize].as_ref().and_then(|v| v.prev.as_ref())
         } else {
             None
         }
