@@ -291,8 +291,12 @@ impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
                         .map(|offset|
                             PrevCandidate((k, offset.offset), PrevState::Insertion(new_score))),
                     new_fr_d[(k - k_lo) as usize].as_ref()
-                        .map(|offset|
-                            PrevCandidate((k, offset.offset), PrevState::Deletion(new_score)))
+                        .and_then(|offset|
+                            if (k, offset.offset).rank() < graph.graph.node_count() - 1 {
+                                Some(PrevCandidate((k, offset.offset), PrevState::Deletion(new_score)))
+                            } else {
+                                None
+                            })
                 ].into_iter().flatten().collect();
 
                 // Previous was (mis)match state, check all possible predecessors
