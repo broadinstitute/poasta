@@ -3,3 +3,6 @@
 log.txt
 graph.dot
 graph.png
+output/
+.ipynb_checkpoints
+.DS_Store
