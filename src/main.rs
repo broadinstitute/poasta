@@ -1,50 +1,26 @@
 extern crate petgraph;
 extern crate num;
 
+use petgraph::prelude::*;
+use petgraph::dot::Dot;
+
 mod alignment;
 mod graph;
 mod wavefront;
 
-use std::convert::identity;
-use std::fmt::Debug;
-
 use alignment::AlignedPair;
-use graph::{Alphabet, ASCIIAlphabet, POAGraph};
-
-use petgraph::prelude::*;
-use petgraph::dot::Dot;
-
-use crate::wavefront::aligner::WavefrontPOAligner;
-use crate::wavefront::compute::gap_affine::WFComputeGapAffine;
-
-
-fn seq_to_alphabet_code<T, C, A: Alphabet<T, C>>(alphabet: &A, seq: &[T]) -> Result<Vec<C>, String>
-where
-    C: Into<char>
-{
-    let (coded_sequence_opt, failed): (Vec<_>, Vec<_>) = seq.iter()
-        .map(|e| alphabet.encode(e))
-        .partition(Option::is_some);
-
-    if !failed.is_empty() {
-        let failed_chars: Vec<(usize, char)> = failed.into_iter().filter_map(identity).map(|t| t.into()).enumerate().collect();
-        return Err(format!("Found symbols not in the alphabet: {:?}", failed_chars));
-    }
-
-    Ok(coded_sequence_opt.into_iter().filter_map(identity).collect())
-}
+use graph::POAGraph;
+use wavefront::aligner::WavefrontPOAligner;
+use wavefront::compute::gap_affine::WFComputeGapAffine;
 
 
 fn main() -> Result<(), String> {
-    let alphabet = ASCIIAlphabet::new(b"ACGT");
     let mut poa_graph = POAGraph::new();
 
-    let seq1 = b"AATGGTTGTCACGTCAGT";
-    let seq1_coded = seq_to_alphabet_code(&alphabet, seq1)?;
+    let seq1 = b"AATGGTTGTCACGTCAGTAA";
     let weights1 = vec![1; seq1.len()];
 
-    let seq2 = b"ATTGTAAAGTCTCGTCGGT";
-    let seq2_coded = seq_to_alphabet_code(&alphabet, seq2)?;
+    let seq2 = b"ATTGTAAAGTCTCGTCGGTTT";
     let weights2 = vec![1; seq2.len()];
 
     // EMBOSS_001         1 AATGGT--TGTCACGTCAGT     18
@@ -71,15 +47,17 @@ fn main() -> Result<(), String> {
         AlignedPair{ rpos: Some(NodeIndex::from(14)), qpos: Some(15)},
         AlignedPair{ rpos: Some(NodeIndex::from(15)), qpos: Some(16)},
         AlignedPair{ rpos: Some(NodeIndex::from(16)), qpos: Some(17)},
-        AlignedPair{ rpos: Some(NodeIndex::from(17)), qpos: Some(18)}
+        AlignedPair{ rpos: Some(NodeIndex::from(17)), qpos: Some(18)},
+        AlignedPair{ rpos: Some(NodeIndex::from(18)), qpos: None},
+        AlignedPair{ rpos: Some(NodeIndex::from(19)), qpos: None},
     ];
 
-    poa_graph.add_alignment_with_weights(&seq1_coded, None, &weights1)?;
-    poa_graph.add_alignment_with_weights(&seq2_coded, Some(&alignment), &weights2)?;
+    poa_graph.add_alignment_with_weights(seq1, None, &weights1)?;
+    poa_graph.add_alignment_with_weights(seq2, Some(&alignment), &weights2)?;
 
     let transformed = poa_graph.graph.map(
         |ix, data|
-            format!("{:?} ({:?})", char::from(alphabet.decode(&data.code).unwrap()), poa_graph.get_node_rank(ix)),
+            format!("{:?} ({:?})", char::from(data.symbol), poa_graph.get_node_rank(ix)),
         |_, data|
             format!("{}, {:?}", data.weight, data.sequence_ids)
     );
@@ -87,20 +65,16 @@ fn main() -> Result<(), String> {
     let dot = Dot::new(&transformed);
     println!("{:?}", dot);
 
-    let seq3 = b"AATGGTTGTCACGAACTTTACAGT";
-    let seq3_coded = seq_to_alphabet_code(&alphabet, seq3)?;
+    //        let seq1 = b"AATGGTTGTCACGT------CAGT";
+    let seq3 = b"TTGTCAACGTCAGTAAAAA";
 
-    eprintln!("Ranked nodes: {:?}", poa_graph.rank_to_node);
-    eprintln!("Node labels: {:?}", poa_graph.graph.node_indices().map(|v| poa_graph.graph[v].code).collect::<Vec<u8>>());
-    eprintln!("Seq 3 coded: {:?}", seq3_coded);
-
-    let mut aligner: WavefrontPOAligner<u32, WFComputeGapAffine<u32>, u8> = WavefrontPOAligner::new(&poa_graph);
-    let alignment = aligner.align(&seq3_coded);
+    let mut aligner: WavefrontPOAligner<u32, WFComputeGapAffine<u32>> = WavefrontPOAligner::new(&poa_graph, "output");
+    let alignment = aligner.align(seq3);
 
     let (ref_aln, qry_aln): (String, String) = alignment
         .into_iter()
         .map(|pair|
-            (pair.rpos.and_then(|nix| alphabet.decode(&poa_graph.graph[nix].code).map(char::from)).unwrap_or('-'),
+            (pair.rpos.map(|nix| char::from(poa_graph.graph[nix].symbol)).unwrap_or('-'),
              pair.qpos.map(|qpos| char::from(seq3[qpos])).unwrap_or('-'))
         )
         .unzip();

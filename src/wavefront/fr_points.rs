@@ -56,8 +56,8 @@ impl<Offset: OffsetPrimitive> WFPoint<Offset> for FRPoint<Offset> {
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum PrevState {
+#[derive(PartialEq, Clone, Debug)]
+pub enum State {
     Start,
     Match(i64),
     Mismatch(i64),
@@ -65,20 +65,20 @@ pub enum PrevState {
     Insertion(i64)
 }
 
-impl PrevState {
+impl State {
     pub fn score(&self) -> i64 {
         match self {
-            PrevState::Start => 0,
-            PrevState::Match(score) => *score,
-            PrevState::Mismatch(score) => *score,
-            PrevState::Deletion(score) => *score,
-            PrevState::Insertion(score) => *score
+            State::Start => 0,
+            State::Match(score) => *score,
+            State::Mismatch(score) => *score,
+            State::Deletion(score) => *score,
+            State::Insertion(score) => *score
         }
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct PrevCandidate<Offset: OffsetPrimitive>(pub FRPoint<Offset>, pub PrevState);
+pub struct PrevCandidate<Offset: OffsetPrimitive>(pub FRPoint<Offset>, pub State);
 
 impl<Offset: OffsetPrimitive> PrevCandidate<Offset> {
     pub fn rank(&self) -> usize {
@@ -138,7 +138,7 @@ impl<Offset: OffsetPrimitive> Default for OffsetWithBacktrace<Offset> {
     fn default() -> Self {
         Self {
             offset: Offset::zero(),
-            prev: Some(PrevCandidate((0, Offset::zero()), PrevState::Start))
+            prev: Some(PrevCandidate((0, Offset::zero()), State::Start))
         }
     }
 }
@@ -191,12 +191,12 @@ impl<Offset: OffsetPrimitive> ExtendCandidate<Offset> {
 
     pub fn make_offset_with_bt(&self, curr_score: i64) -> OffsetWithBacktrace<Offset> {
         OffsetWithBacktrace {
-            offset: self.0.move_one().offset(),
+            offset: self.0.offset(),
             prev: self.1.and_then(
                 // Only update backtrace if we switch diagonals
                 |prev| if self.curr().diag() != prev.diag() {
-                    eprintln!("{:?} -> {:?}, changed diagonals", self.curr(), self.pred());
-                    Some(PrevCandidate(prev, PrevState::Match(curr_score)))
+                    eprintln!("{:?} (k: {:?}) -> {:?} (k: {:?}), changed diagonals", prev, prev.diag(), self.curr(), self.curr().diag());
+                    Some(PrevCandidate(prev, State::Match(curr_score)))
                 } else {
                     None
                 }

@@ -24,6 +24,14 @@ impl<Offset: OffsetPrimitive> Wavefront<Offset> {
         Wavefront::default()
     }
 
+    pub fn initial() -> Self {
+        Wavefront {
+            k_lo: 0,
+            k_hi: 0,
+            furthest_points: vec![Some(OffsetWithBacktrace::default())].into()
+        }
+    }
+
     pub fn new_with_fr_points(k_lo: DiagIx, k_hi: DiagIx,
                               fr_points: FRPointContainer<Offset>) -> Self {
         // Check which diagonal has first/last furthest point, and use that as k_lo and k_hi
@@ -96,7 +104,7 @@ impl<Offset: OffsetPrimitive> Wavefront<Offset> {
         }
     }
 
-    pub fn extend_candidate(&mut self, curr_score: i64, candidate: &ExtendCandidate<Offset>) {
+    pub fn extend_candidate(&mut self, curr_score: i64, candidate: &ExtendCandidate<Offset>) -> bool {
         self.ensure_size(candidate.curr().diag());
         let ix = self.diag_to_ix(candidate.curr().diag()).unwrap();
 
@@ -109,15 +117,23 @@ impl<Offset: OffsetPrimitive> Wavefront<Offset> {
                 if *v <= offset_with_bt {
                     v.offset = offset_with_bt.offset;
 
+                    eprintln!("New Extended point: {:?}", offset_with_bt);
                     if offset_with_bt.prev.is_some() {
                         v.prev = offset_with_bt.prev;
                     }
+                    eprintln!("Pointer for that diagonal: {:?}", v.prev);
+                    true
                 } else {
                     eprintln!("EXTEND {:?} - not overriding existing FR point {:?}", offset_with_bt, *v);
+                    false
                 }
             },
-            None => self.furthest_points[ix] = Some(offset_with_bt)
-        };
+            None => {
+                eprintln!("Extended point (new diagonal): {:?}", offset_with_bt);
+                self.furthest_points[ix] = Some(offset_with_bt);
+                true
+            }
+        }
     }
 
     pub fn get(&self, k: DiagIx) -> Option<Offset> {
