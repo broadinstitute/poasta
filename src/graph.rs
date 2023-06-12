@@ -121,6 +121,8 @@ impl POAGraph {
             let (nfirst, _) = self.add_nodes_for_sequence(
                 sequence, weights, 0, sequence.len()).unwrap();
             self.sequences.push(nfirst);
+            self.post_process()?;
+
             return Ok(())
         }
 
