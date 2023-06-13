@@ -4,14 +4,10 @@ extern crate num;
 use petgraph::prelude::*;
 use petgraph::dot::Dot;
 
-mod alignment;
-mod graph;
-mod wavefront;
-
-use alignment::AlignedPair;
-use graph::POAGraph;
-use wavefront::aligner::WavefrontPOAligner;
-use wavefront::compute::gap_affine::WFComputeGapAffine;
+use poasta::alignment::AlignedPair;
+use poasta::graph::POAGraph;
+use poasta::wavefront::aligner::WavefrontPOAligner;
+use poasta::wavefront::compute::gap_affine::WFComputeGapAffine;
 
 
 fn main() -> Result<(), String> {
@@ -66,21 +62,27 @@ fn main() -> Result<(), String> {
     println!("{:?}", dot);
 
     //        let seq1 = b"AATGGTTGTCACGT------CAGT";
-    let seq3 = b"TTGTCAACGTCAGTAAAAA";
+    let seq3 = b"TTGTCAACATCAGTAAAAA";
 
     let mut aligner: WavefrontPOAligner<u32, WFComputeGapAffine<u32>> = WavefrontPOAligner::new(&poa_graph, "output");
     let alignment = aligner.align(seq3);
 
-    let (ref_aln, qry_aln): (String, String) = alignment
-        .into_iter()
-        .map(|pair|
-            (pair.rpos.map(|nix| char::from(poa_graph.graph[nix].symbol)).unwrap_or('-'),
-             pair.qpos.map(|qpos| char::from(seq3[qpos])).unwrap_or('-'))
-        )
-        .unzip();
+    for AlignedPair{ rpos, qpos} in alignment.iter() {
+        let rpos_str = rpos.map(|v| format!("{}", poa_graph.get_node_rank(v))).unwrap_or(String::new());
+        let qpos_str = qpos.map(|v| format!("{}", v)).unwrap_or(String::new());
 
-    eprintln!("  Graph: {:?}", ref_aln);
-    eprintln!("  Query: {:?}", qry_aln);
+        let rnuc = rpos.map(|nix| char::from(poa_graph.graph[nix].symbol)).unwrap_or('|');
+        let qnuc = qpos.map(|p| char::from(seq3[p])).unwrap_or('|');
+
+        let aln_char = if rpos.is_some() && qpos.is_some() {
+            if rnuc == qnuc { '-' } else { '*' }
+        } else {
+            '-'
+        };
+
+        eprintln!("{rpos_str:>5} {rnuc} {aln_char} {qnuc} {qpos_str:<5}");
+    }
+
 
     Ok(())
 }
