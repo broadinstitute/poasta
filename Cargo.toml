@@ -6,5 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+anyhow = "1.0.71"
+clap = { version = "~4.3", features = ["derive"] }
+noodles = { version = "0.41.0", features = ["fasta", "fastq"] }
 num = { version = "0.4" }
 petgraph = { version = "~0.6", features = ["serde-1"] }
