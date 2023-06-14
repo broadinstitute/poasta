@@ -1,6 +1,7 @@
 use petgraph::prelude::*;
 use petgraph::algo::toposort;
 
+use crate::errors::PoastaError;
 use crate::alignment::{Alignment, AlignedPair};
 
 pub enum NodeByRank {
@@ -62,6 +63,10 @@ impl POAGraph {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.graph.node_count() == 0
+    }
+
     fn add_edge(&mut self, s: NodeIndex, t: NodeIndex, sequence_id: usize, weight: usize) {
         // If edge exists, update sequence ID and weight of the existing one
         if let Some(e) = self.graph.find_edge(s, t) {
@@ -73,13 +78,15 @@ impl POAGraph {
         }
     }
 
-    pub fn add_nodes_for_sequence(
+    pub fn add_nodes_for_sequence<T: AsRef<[u8]>>(
         &mut self,
-        sequence: &[u8],
+        sequence: T,
         weights: &[usize],
         start: usize,
         end: usize,
     ) -> Option<(NodeIndex, NodeIndex)> {
+        let seq = sequence.as_ref();
+
         if start == end {
             return None;
         }
@@ -87,7 +94,7 @@ impl POAGraph {
         let mut first_node = None;
         let mut prev = None;
         for pos in start..end {
-            let curr_node = self.graph.add_node(POANodeData::new(sequence[pos]));
+            let curr_node = self.graph.add_node(POANodeData::new(seq[pos]));
 
             if first_node.is_none() {
                 first_node = Some(curr_node);
@@ -103,23 +110,22 @@ impl POAGraph {
         Some((first_node.unwrap(), prev.unwrap()))
     }
 
-    pub fn add_alignment_with_weights(
+    pub fn add_alignment_with_weights<T: AsRef<[u8]>>(
         &mut self,
-        sequence: &[u8],
+        sequence: T,
         alignment_opt: Option<&Alignment>,
         weights: &[usize]
-    ) -> Result<(), String> {
-        if sequence.len() != weights.len() {
-            return Err(format!(
-                "Sequence length ({}) is not the same as the number of weights ({})!",
-                sequence.len(), weights.len()
-            ));
+    ) -> Result<(), PoastaError> {
+        let seq = sequence.as_ref();
+
+        if seq.len() != weights.len() {
+            return Err(PoastaError::WeightsUnequalSize(seq.len(), weights.len()))
         }
 
         if alignment_opt.is_none() {
             // No aligned bases, just add unaligned nodes
             let (nfirst, _) = self.add_nodes_for_sequence(
-                sequence, weights, 0, sequence.len()).unwrap();
+                seq, weights, 0, seq.len()).unwrap();
             self.sequences.push(nfirst);
             self.post_process()?;
 
@@ -131,10 +137,10 @@ impl POAGraph {
         // Check start and end of alignment
         let valid_ix: Vec<usize> = alignment.iter()
             .filter_map(|e| e.qpos)
-            .filter(|qpos| *qpos < sequence.len()).collect();
+            .filter(|qpos| *qpos < seq.len()).collect();
 
         if valid_ix.is_empty() {
-            return Err(String::from("No valid aligned positions!"));
+            return Err(PoastaError::InvalidAlignment);
         }
 
         // Add unaligned bases
@@ -142,7 +148,7 @@ impl POAGraph {
         let last = valid_ix.last().unwrap();
 
         let mut nodes_unaligned_begin = self.add_nodes_for_sequence(
-            sequence, weights, 0, *first);
+            seq, weights, 0, *first);
 
         let mut prev = if let Some((_, begin_n2)) = nodes_unaligned_begin {
             Some(begin_n2)
@@ -151,7 +157,7 @@ impl POAGraph {
         };
 
         let nodes_unaligned_end = self.add_nodes_for_sequence(
-            sequence, weights, last+1, sequence.len());
+            seq, weights, last+1, seq.len());
 
         // Add aligned bases
         for AlignedPair {rpos, qpos} in alignment {
@@ -161,7 +167,7 @@ impl POAGraph {
 
             let q = qpos.unwrap();
             let mut curr: Option<NodeIndex> = None;
-            let qsymbol = sequence[q];
+            let qsymbol = seq[q];
 
             if let Some(r) = rpos {
                 // We got an aligned pair
@@ -196,7 +202,7 @@ impl POAGraph {
                 }
             } else {
                 // It's an insertion
-                let new_node = self.graph.add_node(POANodeData::new(qsymbol.clone()));
+                let new_node = self.graph.add_node(POANodeData::new(qsymbol));
                 curr = Some(new_node);
             }
 
@@ -223,12 +229,11 @@ impl POAGraph {
         Ok(())
     }
 
-    fn post_process(&mut self) -> Result<(), String> {
+    fn post_process(&mut self) -> Result<(), PoastaError> {
         self.topological_sorted.clear();
         self.start_nodes.clear();
 
-        self.topological_sorted = toposort(&self.graph, None)
-            .map_err(|_| String::from("Graph contains a cycle!"))?;
+        self.topological_sorted = toposort(&self.graph, None)?;
 
         for (rank, node) in self.topological_sorted.iter().enumerate() {
             self.graph[*node].rank = rank + 1; // Rank zero is reserved for the special "start" node

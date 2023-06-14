@@ -34,7 +34,9 @@ impl<Offset, Compute> WavefrontPOAligner<Offset, Compute>
         }
     }
 
-    pub fn align(&mut self, graph: &POAGraph, seq: &[u8]) -> Alignment {
+    pub fn align<T: AsRef<[u8]>>(&mut self, graph: &POAGraph, sequence: T) -> Alignment {
+        let seq = sequence.as_ref();
+
         let max_offset = match Offset::max_value().try_into() {
             Ok(v) => v,
             Err(_) => panic!("Could not determine maximum value for Offset type!")
