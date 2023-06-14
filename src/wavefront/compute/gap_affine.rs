@@ -191,6 +191,11 @@ impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
             })
     }
 
+    fn reset(&mut self) {
+        self.wavefronts.clear();
+        self.wavefronts.push(WavefrontSetGapAffine::new());
+    }
+
     fn extend_candidates(&self) -> Vec<FRPoint<Offset>> {
         match self.wavefronts.last() {
             Some(v) => v.extend_candidates().collect(),

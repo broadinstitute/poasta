@@ -42,6 +42,7 @@ impl<Offset, Compute> WavefrontPOAligner<Offset, Compute>
 
         assert!(seq.len() - 1 < max_offset as usize, "Sequence is too long for Offset type!");
 
+        self.compute.reset();
         let reached_end;
         let mut score: i64 = 0;
         loop {

@@ -11,6 +11,7 @@ use crate::wavefront::fr_points::{OffsetPrimitive, FRPoint, ExtendCandidate};
 pub trait WFCompute<Offset: OffsetPrimitive> : Default {
     fn reached_end(&self, graph: &POAGraph, seq_length: usize) -> Option<FRPoint<Offset>>;
 
+    fn reset(&mut self);
     fn extend_candidates(&self) -> Vec<FRPoint<Offset>>;
     fn extend(&mut self, candidate: &ExtendCandidate<Offset>) -> bool;
     fn next(&mut self, graph: &POAGraph, seq_len: usize, new_score: i64);
