@@ -172,7 +172,9 @@ impl<Offset: OffsetPrimitive> Default for WFComputeGapAffine<Offset> {
     }
 }
 
-impl<Offset: OffsetPrimitive> WFCompute<Offset> for WFComputeGapAffine<Offset> {
+impl<Offset: OffsetPrimitive> WFCompute for WFComputeGapAffine<Offset> {
+    type OffsetType = Offset;
+
     fn reached_end(&self, graph: &POAGraph, seq_length: usize) -> Option<FRPoint<Offset>> {
         self.wavefronts.last()
             .and_then(|wf| {

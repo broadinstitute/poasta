@@ -5,39 +5,36 @@ use crate::alignment::Alignment;
 
 use super::compute::WFCompute;
 use super::fr_points::ExtendCandidate;
-use super::{OffsetPrimitive, DiagIx, FRPoint, WFPoint};
+use super::{DiagIx, FRPoint, WFPoint};
 
-use std::marker::PhantomData;
 use std::path::PathBuf;
 
+use num::{One, Bounded};
 
-pub struct WavefrontPOAligner<Offset, Compute>
+
+pub struct WavefrontPOAligner<Compute>
     where
-        Offset: OffsetPrimitive,
-        Compute: WFCompute<Offset>,
+        Compute: WFCompute,
 {
     compute: Compute,
     debug_output_dir: PathBuf,
-    dummy: PhantomData<Offset>
 }
 
-impl<Offset, Compute> WavefrontPOAligner<Offset, Compute>
+impl<Compute> WavefrontPOAligner<Compute>
     where
-        Offset: OffsetPrimitive,
-        Compute: WFCompute<Offset>,
+        Compute: WFCompute,
 {
     pub fn new(debug_output_dir: impl Into<PathBuf>) -> Self {
         WavefrontPOAligner {
             compute: Compute::default(),
             debug_output_dir: debug_output_dir.into(),
-            dummy: PhantomData
         }
     }
 
     pub fn align<T: AsRef<[u8]>>(&mut self, graph: &POAGraph, sequence: T) -> Alignment {
         let seq = sequence.as_ref();
 
-        let max_offset = match Offset::max_value().try_into() {
+        let max_offset = match Compute::OffsetType::max_value().try_into() {
             Ok(v) => v,
             Err(_) => panic!("Could not determine maximum value for Offset type!")
         };
@@ -77,13 +74,13 @@ impl<Offset, Compute> WavefrontPOAligner<Offset, Compute>
         self.compute.backtrace(graph, reached_end.unwrap())
     }
 
-    fn neighboring_fr_points(&self, graph: &POAGraph, point: FRPoint<Offset>) -> Vec<FRPoint<Offset>> {
+    fn neighboring_fr_points(&self, graph: &POAGraph, point: FRPoint<Compute::OffsetType>) -> Vec<FRPoint<Compute::OffsetType>> {
         graph.neighbors_for_rank(point.rank())
             .map(|succ| {
                 let succ_rank = graph.get_node_rank(succ);
                 let succ_k = point.diag() - (succ_rank - point.rank() - 1) as DiagIx;
 
-                (succ_k, point.offset() + Offset::one())
+                (succ_k, point.offset() + Compute::OffsetType::one())
             })
             .collect()
     }
@@ -91,11 +88,11 @@ impl<Offset, Compute> WavefrontPOAligner<Offset, Compute>
     fn wf_extend(&mut self, graph: &POAGraph, seq: &[u8]) {
         // Check if we can extend without mismatches along our current diagonals. Follow paths
         // in the graph in a depth first manner, and update furthest reaching points accordingly.
-        let mut stack: Vec<ExtendCandidate<Offset>> = self.compute.extend_candidates().into_iter()
+        let mut stack: Vec<ExtendCandidate<Compute::OffsetType>> = self.compute.extend_candidates().into_iter()
             .flat_map(|p| {
                 self.neighboring_fr_points(graph, p).into_iter()
                     .map(|neighbor| ExtendCandidate(neighbor, Some(p)))
-                    .collect::<Vec<ExtendCandidate<Offset>>>()
+                    .collect::<Vec<ExtendCandidate<Compute::OffsetType>>>()
             })
             .collect();
         eprintln!("Stack at start: {:?}", stack);

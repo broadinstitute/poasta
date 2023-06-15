@@ -10,10 +10,8 @@ use clap::{Parser, Subcommand, Args, ValueEnum};
 use noodles::fasta;
 use anyhow::{Result, Context};
 
-use petgraph::prelude::*;
 use petgraph::dot::Dot;
 
-use poasta::alignment::AlignedPair;
 use poasta::graph::POAGraph;
 use poasta::wavefront::aligner::WavefrontPOAligner;
 use poasta::wavefront::compute::gap_affine::WFComputeGapAffine;
@@ -80,7 +78,7 @@ fn main() -> Result<()> {
         Some(CliSubcommand::Align(v)) => {
             // TODO: load graph from file if given
             let mut graph = POAGraph::new();
-            let mut aligner: WavefrontPOAligner<u32, WFComputeGapAffine<u32>> = WavefrontPOAligner::new("output");
+            let mut aligner: WavefrontPOAligner<WFComputeGapAffine<u32>> = WavefrontPOAligner::new("output");
 
             // Let's read the sequences from the given FASTA
             let mut reader = fasta::reader::Builder::default().build_from_path(&v.sequences)
