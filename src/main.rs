@@ -16,6 +16,7 @@ use poasta::graph::POAGraph;
 use poasta::wavefront::aligner::WavefrontPOAligner;
 use poasta::wavefront::compute::gap_affine::WFComputeGapAffine;
 use poasta::errors::PoastaError;
+use poasta::io::load_graph;
 
 
 trait Output: Write + IsTerminal { }
@@ -76,8 +77,13 @@ struct AlignArgs {
 }
 
 fn align(align_args: &AlignArgs) -> Result<()> {
-    // TODO: load graph from file if given
-    let mut graph = POAGraph::new();
+    let mut graph = if let Some(path) = &align_args.graph {
+        let file_in = File::open(path)?;
+        load_graph(&file_in)?
+    } else {
+        POAGraph::new()
+    };
+
     let mut aligner: WavefrontPOAligner<WFComputeGapAffine<u32>> = WavefrontPOAligner::new("output");
 
     // Let's read the sequences from the given FASTA
