@@ -4,6 +4,26 @@ use petgraph::algo::toposort;
 use crate::errors::PoastaError;
 use crate::alignment::{Alignment, AlignedPair};
 
+/// A sequence aligned to the POA graph.
+///
+/// Stores the sequence name and the start node in the graph.
+#[derive(Clone)]
+pub struct Sequence(String, NodeIndex);
+
+impl Sequence {
+    pub fn name(&self) -> &String {
+        &self.0
+    }
+
+    pub fn start_node(&self) -> NodeIndex {
+        self.1
+    }
+}
+
+
+/// The POA graph contains a virtual "start" node, which always has rank 0, which connects to all
+/// other nodes with in-degree 0. When requesting the node index by rank, this enum thus indicates
+/// whether you requested an actual node or the virtual start node.
 pub enum NodeByRank {
     Start,
     Node(NodeIndex)
@@ -44,9 +64,10 @@ impl POAEdgeData {
 
 type POAGraphType = DiGraph<POANodeData, POAEdgeData>;
 
+#[derive(Default)]
 pub struct POAGraph {
     pub graph: POAGraphType,
-    pub sequences: Vec<NodeIndex>,
+    pub sequences: Vec<Sequence>,
     topological_sorted: Vec<NodeIndex>,
     start_nodes: Vec<NodeIndex>,
     end_nodes: Vec<NodeIndex>
@@ -112,6 +133,7 @@ impl POAGraph {
 
     pub fn add_alignment_with_weights<T: AsRef<[u8]>>(
         &mut self,
+        sequence_name: &str,
         sequence: T,
         alignment_opt: Option<&Alignment>,
         weights: &[usize]
@@ -126,7 +148,7 @@ impl POAGraph {
             // No aligned bases, just add unaligned nodes
             let (nfirst, _) = self.add_nodes_for_sequence(
                 seq, weights, 0, seq.len()).unwrap();
-            self.sequences.push(nfirst);
+            self.sequences.push(Sequence(sequence_name.to_owned(), nfirst));
             self.post_process()?;
 
             return Ok(())
@@ -222,7 +244,7 @@ impl POAGraph {
             self.add_edge(prev.unwrap(), unaligned_end, self.sequences.len(), weights[*last] + weights[*last + 1]);
         }
 
-        self.sequences.push(nodes_unaligned_begin.unwrap().0);
+        self.sequences.push(Sequence(sequence_name.to_owned(), nodes_unaligned_begin.unwrap().0));
 
         self.post_process()?;
 

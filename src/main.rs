@@ -90,10 +90,10 @@ fn main() -> Result<()> {
                 eprintln!("Aligning {}", record.name());
 
                 if graph.is_empty() {
-                    graph.add_alignment_with_weights(record.sequence(), None, &weights)?;
+                    graph.add_alignment_with_weights(record.name(), record.sequence(), None, &weights)?;
                 } else {
                     let alignment = aligner.align(&graph, record.sequence());
-                    graph.add_alignment_with_weights(record.sequence(), Some(&alignment), &weights)?;
+                    graph.add_alignment_with_weights(record.name(), record.sequence(), Some(&alignment), &weights)?;
                 }
             }
             let transformed = graph.graph.map(
