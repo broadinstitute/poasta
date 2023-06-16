@@ -39,18 +39,6 @@ impl<Offset: OffsetPrimitive> WavefrontSetGapAffine<Offset> {
         }
     }
 
-    pub fn k_lo(&self) -> i64 {
-        let ks = vec![self.wavefront_m.k_lo, self.wavefront_i.k_lo, self.wavefront_d.k_lo];
-
-        ks.into_iter().min().unwrap_or(0)
-    }
-
-    pub fn k_hi(&self) -> i64 {
-        let ks = vec![self.wavefront_m.k_hi, self.wavefront_i.k_hi, self.wavefront_d.k_hi];
-
-        ks.into_iter().max().unwrap_or(0)
-    }
-
     pub fn extend_candidates(&self) -> impl Iterator<Item=FRPoint<Offset>> + '_ {
         eprintln!("{:?}", self.wavefront_m);
 
