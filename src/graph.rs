@@ -1,5 +1,6 @@
 use petgraph::prelude::*;
 use petgraph::algo::toposort;
+use serde::{Serialize, Deserialize};
 
 use crate::errors::PoastaError;
 use crate::alignment::{Alignment, AlignedPair};
@@ -7,7 +8,7 @@ use crate::alignment::{Alignment, AlignedPair};
 /// A sequence aligned to the POA graph.
 ///
 /// Stores the sequence name and the start node in the graph.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Sequence(String, NodeIndex);
 
 impl Sequence {
@@ -21,16 +22,18 @@ impl Sequence {
 }
 
 
-/// The POA graph contains a virtual "start" node, which always has rank 0, which connects to all
+/// The POA graph contains a virtual "start" node, which always has rank 0, and which connects to all
 /// other nodes with in-degree 0. When requesting the node index by rank, this enum thus indicates
 /// whether you requested an actual node or the virtual start node.
+///
+/// See also: [`POAGraph::get_node_by_rank`].
 pub enum NodeByRank {
     Start,
     Node(NodeIndex)
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct POANodeData {
     pub symbol: u8,
     pub aligned_nodes: Vec<NodeIndex>,
@@ -47,7 +50,7 @@ impl POANodeData {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct POAEdgeData {
     pub weight: usize,
     pub sequence_ids: Vec<usize>,
@@ -64,7 +67,7 @@ impl POAEdgeData {
 
 type POAGraphType = DiGraph<POANodeData, POAEdgeData>;
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct POAGraph {
     pub graph: POAGraphType,
     pub sequences: Vec<Sequence>,

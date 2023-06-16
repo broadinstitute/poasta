@@ -20,6 +20,9 @@ pub enum PoastaError {
     /// Error variant when we couldn't read from a file
     FileReadError { source: io::Error },
 
+    /// Error variant when we could not serialize the graph to binary representation
+    SerializationError { source: bincode::Error },
+
     /// Other IO errors
     IOError(io::Error),
 
@@ -31,6 +34,7 @@ impl Error for PoastaError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match *self {
             Self::FileReadError { ref source } => Some(source),
+            Self::SerializationError { ref source } => Some(source),
             Self::IOError(ref source) => Some(source),
             _ => None
         }
@@ -50,6 +54,14 @@ impl From<io::Error> for PoastaError {
     }
 }
 
+impl From<bincode::Error> for PoastaError {
+    fn from(value: bincode::Error) -> Self {
+        Self::SerializationError {
+            source: value
+        }
+    }
+}
+
 
 impl Display for PoastaError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -64,6 +76,8 @@ impl Display for PoastaError {
                 write!(f, "Something went wrong with the alignment!"),
             Self::FileReadError { source: _ } =>
                 write!(f, "Could not read from file!"),
+            Self::SerializationError { source: _ } =>
+                write!(f, "Could not serialize the graph to file!"),
             Self::IOError(ref err) =>
                 err.fmt(f),
             Self::Other =>

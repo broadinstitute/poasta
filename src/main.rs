@@ -1,10 +1,10 @@
-extern crate petgraph;
-extern crate num;
 extern crate clap;
 extern crate noodles;
 extern crate anyhow;
 
+use std::fs::File;
 use std::path::PathBuf;
+use std::io::{stdout, IsTerminal, Write};
 
 use clap::{Parser, Subcommand, Args, ValueEnum};
 use noodles::fasta;
@@ -16,6 +16,10 @@ use poasta::graph::POAGraph;
 use poasta::wavefront::aligner::WavefrontPOAligner;
 use poasta::wavefront::compute::gap_affine::WFComputeGapAffine;
 use poasta::errors::PoastaError;
+
+
+trait Output: Write + IsTerminal { }
+impl<T> Output for T where T: Write + IsTerminal { }
 
 
 /// The various output formats supported by Poasta
@@ -71,31 +75,46 @@ struct AlignArgs {
 
 }
 
-fn main() -> Result<()> {
-    let args = CliArgs::parse();
+fn align(align_args: &AlignArgs) -> Result<()> {
+    // TODO: load graph from file if given
+    let mut graph = POAGraph::new();
+    let mut aligner: WavefrontPOAligner<WFComputeGapAffine<u32>> = WavefrontPOAligner::new("output");
 
-    match &args.command {
-        Some(CliSubcommand::Align(v)) => {
-            // TODO: load graph from file if given
-            let mut graph = POAGraph::new();
-            let mut aligner: WavefrontPOAligner<WFComputeGapAffine<u32>> = WavefrontPOAligner::new("output");
+    // Let's read the sequences from the given FASTA
+    let mut reader = fasta::reader::Builder::default().build_from_path(&align_args.sequences)
+        .with_context(|| "Could not read FASTA file!".to_string())?;
 
-            // Let's read the sequences from the given FASTA
-            let mut reader = fasta::reader::Builder::default().build_from_path(&v.sequences)
-                .with_context(|| "Could not read FASTA file!".to_string())?;
+    for result in reader.records() {
+        let record = result?;
+        let weights: Vec<usize> = vec![1; record.sequence().len()];
+        eprintln!("Aligning {}", record.name());
 
-            for result in reader.records() {
-                let record = result?;
-                let weights: Vec<usize> = vec![1; record.sequence().len()];
-                eprintln!("Aligning {}", record.name());
+        if graph.is_empty() {
+            graph.add_alignment_with_weights(record.name(), record.sequence(), None, &weights)?;
+        } else {
+            let alignment = aligner.align(&graph, record.sequence());
+            graph.add_alignment_with_weights(record.name(), record.sequence(), Some(&alignment), &weights)?;
+        }
+    }
 
-                if graph.is_empty() {
-                    graph.add_alignment_with_weights(record.name(), record.sequence(), None, &weights)?;
-                } else {
-                    let alignment = aligner.align(&graph, record.sequence());
-                    graph.add_alignment_with_weights(record.name(), record.sequence(), Some(&alignment), &weights)?;
-                }
+    // Determine where to write the graph to
+    let mut writer: Box<dyn Output> = if let Some(path) = &align_args.output {
+        let file = File::create(path)?;
+        Box::new(file) as Box<dyn Output>
+    } else {
+        Box::new(stdout()) as Box<dyn Output>
+    };
+
+    let output_type = align_args.output_type.unwrap_or(OutputType::POASTA);
+    match output_type {
+        OutputType::POASTA => {
+            if !writer.is_terminal() {
+                poasta::io::save_graph(&graph, writer)?
+            } else {
+                eprintln!("WARNING: not writing binary graph data to terminal standard output!");
             }
+        },
+        OutputType::DOT => {
             let transformed = graph.graph.map(
                 |ix, data|
                     format!("{:?} ({:?})", char::from(data.symbol), graph.get_node_rank(ix)),
@@ -104,7 +123,20 @@ fn main() -> Result<()> {
             );
 
             let dot = Dot::new(&transformed);
-            println!("{:?}", dot);
+            write!(writer, "{:?}", dot)?
+        }
+        _ => return Err(PoastaError::Other).with_context(|| "Other output formats not supported yet!".to_string())
+    }
+
+    Ok(())
+}
+
+fn main() -> Result<()> {
+    let args = CliArgs::parse();
+
+    match &args.command {
+        Some(CliSubcommand::Align(v)) => {
+            align(v)?
         },
         None => {
             return Err(PoastaError::Other).with_context(|| "No subcommand given.".to_string())
