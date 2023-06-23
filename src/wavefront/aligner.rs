@@ -17,17 +17,27 @@ pub struct WavefrontPOAligner<Compute>
         Compute: WFCompute,
 {
     compute: Compute,
-    debug_output_dir: PathBuf,
+    debug_output_dir: Option<PathBuf>,
+    num_seq_aligned: usize,
 }
 
 impl<Compute> WavefrontPOAligner<Compute>
     where
         Compute: WFCompute,
 {
-    pub fn new(debug_output_dir: impl Into<PathBuf>) -> Self {
+    pub fn new() -> Self {
+        Self {
+            compute: Compute::default(),
+            debug_output_dir: None,
+            num_seq_aligned: 1
+        }
+    }
+
+    pub fn new_with_debug_output(debug_output_dir: impl Into<PathBuf>) -> Self {
         WavefrontPOAligner {
             compute: Compute::default(),
-            debug_output_dir: debug_output_dir.into(),
+            debug_output_dir: Some(debug_output_dir.into()),
+            num_seq_aligned: 1
         }
     }
 
@@ -48,11 +58,13 @@ impl<Compute> WavefrontPOAligner<Compute>
             eprintln!("----- EXTEND: score {}", score);
             self.wf_extend(graph, seq);
 
-            let f_after_extend = self.debug_output_dir.join(format!("g{}.s{}.score{score}.after_extend.tsv", graph.max_rank(), seq.len()));
-            let mut fout = File::create(f_after_extend).unwrap();
-            let mut writer = BufWriter::new(fout);
-            self.compute.write_csv(&mut writer).unwrap();
-            drop(writer);
+            if let Some(debug_output_dir) = &self.debug_output_dir {
+                let f_after_extend = debug_output_dir.join(format!("seq{}.g{}.s{}.score{score}.after_extend.tsv",
+                                                                    self.num_seq_aligned, graph.max_rank(), seq.len()));
+                let fout = File::create(f_after_extend).unwrap();
+                let mut writer = BufWriter::new(fout);
+                self.compute.write_csv(&mut writer).unwrap();
+            }
 
             if let Some(end_point) = self.compute.reached_end(graph, seq.len()) {
                 eprintln!("Reached end point {:?}!", end_point);
@@ -64,13 +76,17 @@ impl<Compute> WavefrontPOAligner<Compute>
             eprintln!("----- NEXT: score {}", score);
             self.compute.next(graph, seq.len(), score);
 
-            let f_before_extend = self.debug_output_dir.join(format!("g{}.s{}.score{score}.before_extend.tsv", graph.max_rank(), seq.len()));
-            fout = File::create(f_before_extend).unwrap();
-            writer = BufWriter::new(fout);
-            self.compute.write_csv(&mut writer).unwrap();
+            if let Some(debug_output_dir) = &self.debug_output_dir {
+                let f_before_extend = debug_output_dir.join(format!("seq{}.g{}.s{}.score{score}.before_extend.tsv", self.num_seq_aligned, graph.max_rank(), seq.len()));
+                let fout = File::create(f_before_extend).unwrap();
+                let mut writer = BufWriter::new(fout);
+                self.compute.write_csv(&mut writer).unwrap();
+            }
         }
 
         eprintln!("Sequence length: {:?}", seq.len());
+        self.num_seq_aligned += 1;
+
         self.compute.backtrace(graph, reached_end.unwrap())
     }
 
@@ -120,5 +136,11 @@ impl<Compute> WavefrontPOAligner<Compute>
                 }
             }
         }
+    }
+}
+
+impl<Compute: WFCompute> Default for WavefrontPOAligner<Compute> {
+    fn default() -> Self {
+        Self::new()
     }
 }
