@@ -1,7 +1,3 @@
-extern crate clap;
-extern crate noodles;
-extern crate anyhow;
-
 use std::fs::File;
 use std::path::PathBuf;
 use std::io::{stdout, IsTerminal, Write};
