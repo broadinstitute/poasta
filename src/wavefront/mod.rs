@@ -1,5 +1,3 @@
-extern crate num;
-
 use std::fmt::Debug;
 use std::ops::{Index, IndexMut};
 
