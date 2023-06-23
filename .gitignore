@@ -6,3 +6,6 @@ graph.png
 output/
 .ipynb_checkpoints
 .DS_Store
+*.dot
+*.poasta
+/*.png
