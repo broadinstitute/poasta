@@ -393,7 +393,7 @@ impl<Offset: OffsetPrimitive> WFCompute for WFComputeGapAffine<Offset> {
 
                         if let NodeByRank::Node(node_ix) = graph.get_node_by_rank(curr_rank) {
                             alignment.push(AlignedPair::new(Some(node_ix), Some(offset as usize - 1)));
-                            eprintln!("{:?} (rank: {:?})", alignment.last().unwrap(), curr_rank);
+                            eprintln!("{:?} (rank: {:?}, symbol: {})", alignment.last().unwrap(), curr_rank, char::from(graph.graph[node_ix].symbol));
                         } else {
                             eprintln!("Ignoring start node.")
                         }
@@ -405,7 +405,7 @@ impl<Offset: OffsetPrimitive> WFCompute for WFComputeGapAffine<Offset> {
                 State::Deletion(_) => {
                     if let NodeByRank::Node(node_ix) = graph.get_node_by_rank(curr_rank) {
                         alignment.push(AlignedPair::new(Some(node_ix), None));
-                        eprintln!("{:?} (rank: {:?})", alignment.last().unwrap(), curr_rank);
+                        eprintln!("{:?} (rank: {:?}, symbol: {})", alignment.last().unwrap(), curr_rank, char::from(graph.graph[node_ix].symbol));
                     } else {
                         eprintln!("Ignoring start node.")
                     }
@@ -437,25 +437,19 @@ impl<Offset: OffsetPrimitive> WFCompute for WFComputeGapAffine<Offset> {
         writeln!(writer, "score\tstate\tk\toffset\trank\tprev")?;
 
         for (score, wf) in self.wavefronts.iter().enumerate() {
-            for (k, p) in (wf.wavefront_m.k_lo..=wf.wavefront_m.k_hi)
-                .zip(wf.wavefront_m.iter())
-            {
-                writeln!(writer, "{}\t{}\t{}\t{:?}\t{}\t{:?}", score, "match", k, p.offset(), p.rank(),
-                    wf.wavefront_m.get_pointer(k))?;
+            for p in wf.wavefront_m.iter() {
+                writeln!(writer, "{}\t{}\t{}\t{:?}\t{}\t{:?}", score, "match", p.diag(), p.offset(), p.rank(),
+                         wf.wavefront_m.get_pointer(p.diag()))?;
             }
 
-            for (k, p) in (wf.wavefront_d.k_lo..=wf.wavefront_d.k_hi)
-                .zip(wf.wavefront_d.iter())
-            {
-                writeln!(writer, "{}\t{}\t{}\t{:?}\t{}\t{:?}", score, "deletion", k, p.offset(), p.rank(),
-                         wf.wavefront_d.get_pointer(k))?;
+            for p in wf.wavefront_d.iter() {
+                writeln!(writer, "{}\t{}\t{}\t{:?}\t{}\t{:?}", score, "deletion", p.diag(), p.offset(), p.rank(),
+                         wf.wavefront_d.get_pointer(p.diag()))?;
             }
 
-            for (k, p) in (wf.wavefront_i.k_lo..=wf.wavefront_i.k_hi)
-                .zip(wf.wavefront_i.iter())
-            {
-                writeln!(writer, "{}\t{}\t{}\t{:?}\t{}\t{:?}", score, "insertion", k, p.offset(), p.rank(),
-                         wf.wavefront_i.get_pointer(k))?;
+            for p in wf.wavefront_i.iter() {
+                writeln!(writer, "{}\t{}\t{}\t{:?}\t{}\t{:?}", score, "insertion", p.diag(), p.offset(), p.rank(),
+                         wf.wavefront_i.get_pointer(p.diag()))?;
             }
         }
 
