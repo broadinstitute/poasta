@@ -1,70 +1,92 @@
-use std::error::Error;
 use std::fmt::Debug;
-use std::fs::File;
-use std::io::{BufWriter, Write};
 use crate::alignment::{AlignedPair, Alignment};
 
 use crate::graph::{NodeByRank, POAGraph};
-use crate::wavefront::Wavefront;
-use crate::wavefront::fr_points::{OffsetPrimitive, DiagIx, WFPoint, FRPoint, FRPointContainer, ExtendCandidate, State, PrevCandidate};
+use crate::wavefront::GraphWavefront;
+use crate::wavefront::offsets::{OffsetPrimitive, OffsetContainer, PrevCandidate, BacktraceState, OffsetCell, Backtrace};
 use super::WFCompute;
 
-
-
-#[derive(Debug, Clone, Default)]
-struct WavefrontSetGapAffine<Offset: OffsetPrimitive> {
-    wavefront_m: Wavefront<Offset>,
-    wavefront_i: Wavefront<Offset>,
-    wavefront_d: Wavefront<Offset>,
+/// A struct holding the query offsets when using gap-affine costs, thus holding offsets for
+/// the (mis)match, insertion, and deletion states.
+#[derive(Clone, Debug, Default)]
+struct GraphWavefrontGapAffine<Offset: OffsetPrimitive> {
+    wavefront_m: GraphWavefront<Offset>,
+    wavefront_i: GraphWavefront<Offset>,
+    wavefront_d: GraphWavefront<Offset>,
 }
 
-impl<Offset: OffsetPrimitive> WavefrontSetGapAffine<Offset> {
-    pub fn new() -> Self {
+impl<Offset: OffsetPrimitive> GraphWavefrontGapAffine<Offset> {
+    pub fn initial() -> Self {
         Self {
-            wavefront_m: Wavefront::initial(),
-            wavefront_i: Wavefront::new(),
-            wavefront_d: Wavefront::new()
+            wavefront_m: GraphWavefront::initial(),
+            wavefront_i: GraphWavefront::new(),
+            wavefront_d: GraphWavefront::new()
         }
     }
 
-    pub fn new_with_fr_points(k_lo: DiagIx, k_hi: DiagIx,
-                              fr_points_m: FRPointContainer<Offset>,
-                              fr_points_i: FRPointContainer<Offset>,
-                              fr_points_d: FRPointContainer<Offset>
-    ) -> Self {
+    pub fn new_with_offsets(offsets_m: OffsetContainer<Offset>, offsets_i: OffsetContainer<Offset>,
+                            offsets_d: OffsetContainer<Offset>) -> Self {
         Self {
-            wavefront_m: Wavefront::new_with_fr_points(k_lo, k_hi, fr_points_m),
-            wavefront_i: Wavefront::new_with_fr_points(k_lo, k_hi, fr_points_i),
-            wavefront_d: Wavefront::new_with_fr_points(k_lo, k_hi, fr_points_d)
+            wavefront_m: GraphWavefront::new_with_offsets(offsets_m),
+            wavefront_i: GraphWavefront::new_with_offsets(offsets_i),
+            wavefront_d: GraphWavefront::new_with_offsets(offsets_d),
         }
     }
 
-    pub fn extend_candidates(&self) -> impl Iterator<Item=FRPoint<Offset>> + '_ {
-        eprintln!("{:?}", self.wavefront_m);
-
-        self.wavefront_m.iter()
-    }
-
-    pub fn extend_point(&mut self, curr_score: i64, candidate: &ExtendCandidate<Offset>) -> bool {
-        self.wavefront_m.extend_candidate(curr_score, candidate)
-    }
-
-    pub fn reached_point(&self, point: &FRPoint<Offset>) -> bool {
-        if let Some(offset) = self.wavefront_m.get(point.diag()) {
-            offset >= point.offset()
+    pub fn reached(&self, node_rank: usize, offset: Offset) -> bool {
+        if let Some(node_offset) = self.wavefront_m.get(node_rank) {
+            offset >= node_offset
         } else {
             false
         }
     }
 
-    pub fn get_prev_point(&self, k: DiagIx, prev_state: &State) -> Option<&PrevCandidate<Offset>> {
+    pub fn extend_candidates(&self) -> impl DoubleEndedIterator<Item=(usize, Offset)> + '_ {
+        self.wavefront_m.iter_endpoints()
+    }
+
+    pub fn update_extended_path(&mut self, start_node: usize, path: Vec<(usize, usize)>) {
+        let Some(max_rank) = path.last().map(|v| v.0) else {
+            return
+        };
+
+        self.wavefront_m.resize(max_rank);
+
+        let mut prev_node = start_node;
+        let path_len = path.len();
+        for (i, (node, offset)) in path.into_iter().enumerate() {
+            let offset_conv = Offset::from(offset).unwrap();
+
+            // Mark last node in path as an alignment end-point
+            let new_cell = if i + 1 == path_len {
+                OffsetCell::new_endpoint(offset_conv, Backtrace::new(prev_node, BacktraceState::Extend))
+            } else {
+                OffsetCell::new_extended(offset_conv, Backtrace::new(prev_node, BacktraceState::Extend))
+            };
+            self.wavefront_m.set(node, new_cell);
+
+            prev_node = node
+        }
+    }
+
+    pub fn get_prev_point(&self, node: usize, prev_state: &BacktraceState) -> Option<&Backtrace> {
         match prev_state {
-            State::Start | State::Match(_) | State::Mismatch(_) =>
-                self.wavefront_m.get_pointer(k),
-            State::Deletion(_) =>
-                self.wavefront_d.get_pointer(k),
-            State::Insertion(_) =>
-                self.wavefront_i.get_pointer(k)
+            BacktraceState::End | BacktraceState::Mismatch | BacktraceState::Extend | BacktraceState::InsOpen | BacktraceState::DelOpen => {
+                eprintln!("Getting previous point for node {:?} with prev state = M ({:?})", node, prev_state);
+                eprintln!("M: {:?}", self.wavefront_m);
+                self.wavefront_m.get_backtrace(node)
+            }
+            BacktraceState::InsExt | BacktraceState::InsClose => {
+                eprintln!("Getting previous point for node {:?} with prev state = I ({:?})", node, prev_state);
+                eprintln!("I: {:?}", self.wavefront_i);
+                self.wavefront_i.get_backtrace(node)
+            }
+             BacktraceState::DelExt | BacktraceState::DelClose => {
+                 eprintln!("Getting previous point for node {:?} with prev state = D ({:?})", node, prev_state);
+                 eprintln!("D: {:?}", self.wavefront_d);
+                 self.wavefront_d.get_backtrace(node)
+             }
+            _ => None
         }
     }
 }
@@ -74,11 +96,12 @@ pub struct WFComputeGapAffine<Offset: OffsetPrimitive> {
     pub cost_gap_open: i64,
     pub cost_gap_extend: i64,
 
-    wavefronts: Vec<WavefrontSetGapAffine<Offset>>
+    wavefronts: Vec<GraphWavefrontGapAffine<Offset>>
 }
 
+
 impl<Offset: OffsetPrimitive> WFComputeGapAffine<Offset> {
-    fn get_prev_wf(&self, score: i64) -> Option<&WavefrontSetGapAffine<Offset>> {
+    fn get_prev_wf(&self, score: i64) -> Option<&GraphWavefrontGapAffine<Offset>> {
         if score >= 0 && score < self.wavefronts.len() as i64 {
             Some(&self.wavefronts[score as usize])
         } else {
@@ -86,65 +109,32 @@ impl<Offset: OffsetPrimitive> WFComputeGapAffine<Offset> {
         }
     }
 
-    fn get_lowest_successor_diag(&self, graph: &POAGraph,
-                                          wavefront: &Wavefront<Offset>) -> Option<DiagIx> {
-        wavefront.iter()
-            // For each FR point, identify the corresponding node in the graph, and find successor
-            // with the highest rank difference.
-            .filter_map(|point| {
-                let max_rank_diff = graph.neighbors_for_rank(point.rank())
-                    .map(|n| graph.get_node_rank(n))
-                    .map(|succ_rank| succ_rank - point.rank())  // To rank difference
-                    .max();
-
-                // Difference in rank is the same as difference in diagonal index
-                max_rank_diff.map(|v| point.diag() - v as DiagIx)
-            })
-            .min()
+    /// For all nodes with a defined offset in a wavefront, find their successors, and identify the node with highest rank
+    ///
+    /// This is used to know which nodes we have assess in a new wavefront that depends on the given wavefront.
+    ///
+    /// TODO: can potentially preprocess the graph and store highest successor rank per node
+    fn get_highest_successor_rank(&self, graph: &POAGraph, wavefront: &GraphWavefront<Offset>) -> Option<usize> {
+        wavefront.iter_nodes()
+            .filter_map(|node| {
+                graph.successors(node).max()
+            }).max()
     }
 
-    fn new_k_lo(&self, graph: &POAGraph, new_score: i64) -> DiagIx {
-        // Take into account that the new k can be quite a bit lower because of a successor
-        // with lower rank
-        let k_lo_mis = self.get_prev_wf(new_score - self.cost_mismatch)
-            .and_then(|prev_wf| self.get_lowest_successor_diag(graph, &prev_wf.wavefront_m));
-
-        let k_lo_gap_open = self.get_prev_wf(new_score - self.cost_gap_open - self.cost_gap_extend)
-            .and_then(|prev_wf| self.get_lowest_successor_diag(graph, &prev_wf.wavefront_m));
-
-        let k_lo_del_ext = self.get_prev_wf(new_score - self.cost_gap_extend)
-            .and_then(|prev_wf| self.get_lowest_successor_diag(graph, &prev_wf.wavefront_d));
-
-        let k_lo_ins_ext = self.get_prev_wf(new_score - self.cost_gap_extend)
-            .map(|prev_wf| prev_wf.wavefront_i.k_lo - 1);
-
-        let options = vec![k_lo_mis, k_lo_gap_open, k_lo_del_ext, k_lo_ins_ext];
-
-        options.into_iter()
-            .flatten()
-            .min().unwrap_or(-1)
-    }
-
-    fn new_k_hi(&self, new_score: i64) -> DiagIx {
-        // For the new k_hi, we don't need to take into account successors, because a successor node
-        // will always have a lower rank, not higher, because of topological order.
-        let k_hi_mis = self.get_prev_wf(new_score - self.cost_mismatch)
-            .map(|prev_wf| prev_wf.wavefront_m.k_hi);
-
-        let k_hi_gap_open = self.get_prev_wf(new_score - self.cost_gap_open - self.cost_gap_extend)
-            .map(|prev_wf| prev_wf.wavefront_m.k_hi);
-
-        let k_hi_del_ext = self.get_prev_wf(new_score - self.cost_gap_extend)
-            .map(|prev_wf| prev_wf.wavefront_d.k_hi);
-
-        let k_hi_ins_ext = self.get_prev_wf(new_score - self.cost_gap_extend)
-            .map(|prev_wf| prev_wf.wavefront_i.k_hi);
-
-        let options = vec![k_hi_mis, k_hi_gap_open, k_hi_del_ext, k_hi_ins_ext];
-
-        options.into_iter()
-            .flatten()
-            .max().unwrap_or(0) + 1
+    fn score_delta(&self, state: &BacktraceState) -> i64 {
+        match *state {
+            BacktraceState::Start => 0,
+            BacktraceState::End => 0,
+            BacktraceState::Extend => 0,
+            BacktraceState::Mismatch => self.cost_mismatch,
+            BacktraceState::InsOpen => self.cost_gap_open + self.cost_gap_extend,
+            BacktraceState::InsExt => self.cost_gap_extend,
+            BacktraceState::InsClose => 0,
+            BacktraceState::DelOpen => self.cost_gap_open + self.cost_gap_extend,
+            BacktraceState::DelExt => self.cost_gap_extend,
+            BacktraceState::DelClose => 0,
+            _ => panic!("Invalid backtrace state for gap-affine scoring!")
+        }
     }
 }
 
@@ -155,7 +145,7 @@ impl<Offset: OffsetPrimitive> Default for WFComputeGapAffine<Offset> {
             cost_gap_open: 6,
             cost_gap_extend: 2,
 
-            wavefronts: vec![WavefrontSetGapAffine::new()]
+            wavefronts: vec![GraphWavefrontGapAffine::initial()]
         }
     }
 }
@@ -163,296 +153,226 @@ impl<Offset: OffsetPrimitive> Default for WFComputeGapAffine<Offset> {
 impl<Offset: OffsetPrimitive> WFCompute for WFComputeGapAffine<Offset> {
     type OffsetType = Offset;
 
-    fn reached_end(&self, graph: &POAGraph, seq_length: usize) -> Option<FRPoint<Offset>> {
+    fn furthest_offsets(&self) -> Option<&OffsetContainer<Self::OffsetType>> {
+        self.wavefronts.last()
+            .and_then(|wf| wf.wavefront_m.get_offsets())
+    }
+
+    fn reached_end(&self, graph: &POAGraph, seq_length: usize) -> Option<usize> {
+        let seq_len_as_offset = Offset::from(seq_length).unwrap();
+
         self.wavefronts.last()
             .and_then(|wf| {
                 eprintln!("Last wavefront: {:?}", wf);
-                graph.end_nodes().into_iter()
-                    .map(|node| {
-                        let rank = graph.get_node_rank(*node);
-                        let diag = seq_length as DiagIx - rank as DiagIx;
-                        eprintln!("endpoint: rank: {:?}, {:?}", rank, (diag, Offset::from(seq_length).unwrap()));
-
-                        (diag, Offset::from(seq_length).unwrap())
+                graph.end_nodes().iter()
+                    .map(|v| {
+                        eprintln!("Looking for end point {:?}", (graph.get_node_rank(*v), seq_length));
+                        graph.get_node_rank(*v)
                     })
-                    .find(|p| {
-                        wf.reached_point(p)
-                    })
+                    .find(|node_rank|
+                        wf.reached(*node_rank, seq_len_as_offset))
             })
     }
 
     fn reset(&mut self) {
         self.wavefronts.clear();
-        self.wavefronts.push(WavefrontSetGapAffine::new());
+        self.wavefronts.push(GraphWavefrontGapAffine::initial());
     }
 
-    fn extend_candidates(&self) -> Vec<FRPoint<Offset>> {
+    fn extend_candidates(&self) -> Vec<(usize, Offset)> {
         match self.wavefronts.last() {
-            Some(v) => v.extend_candidates().collect(),
+            // Reverse to extend candidates with higher node rank first
+            Some(v) => v.extend_candidates().rev().collect(),
             None => vec![]
         }
     }
 
-    fn extend(&mut self, candidate: &ExtendCandidate<Offset>) -> bool {
-        let score = self.wavefronts.len() as i64 - 1;
-        if let Some(v) = self.wavefronts.last_mut() {
-            v.extend_point(score, candidate)
-        } else {
-            false
+    fn is_further(&self, node: usize, offset: usize) -> bool {
+        let offset_conv = Offset::from(offset).unwrap();
+        match self.wavefronts.last() {
+            Some(wf) => wf.wavefront_m.get(node).map_or(true, |furthest| furthest <= offset_conv),
+            None => true
+        }
+    }
+
+    fn update_extended_path(&mut self, start_node: usize, path: Vec<(usize, usize)>) {
+        if let Some(wf) = self.wavefronts.last_mut() {
+            wf.update_extended_path(start_node, path)
         }
     }
 
     fn next(&mut self, graph: &POAGraph, seq_len: usize, new_score: i64) {
         let seqlen_as_offset = Offset::from(seq_len).unwrap();
 
-        let k_lo = self.new_k_lo(graph, new_score);
-        let k_hi = self.new_k_hi(new_score);
-        eprintln!("new k_lo: {:?}, k_hi: {:?}", k_lo, k_hi);
+        // For which nodes can we open or extend an insertion?
+        let prev_wf_ext = self.get_prev_wf(new_score - self.cost_gap_extend);
+        let prev_wf_open = self.get_prev_wf(new_score - self.cost_gap_open - self.cost_gap_extend);
+        let max_ins_rank = vec![
+            prev_wf_ext.and_then(|prev_wf| prev_wf.wavefront_i.max_rank()),
+            prev_wf_open.and_then(|prev_wf| prev_wf.wavefront_m.max_rank())
+        ].into_iter().flatten().max();
 
-        let new_fr_i: FRPointContainer<Offset> = (k_lo..=k_hi)
-            .map(|k| {
-                let values: Vec<PrevCandidate<Offset>> = vec![
-                    self.get_prev_wf(new_score - self.cost_gap_extend)
-                        .and_then(|prev_wf| prev_wf.wavefront_i.get(k-1))
-                        .and_then(|offset|
-                            if offset < seqlen_as_offset {
-                                Some(PrevCandidate((k-1, offset), State::Insertion(new_score - self.cost_gap_extend)))
-                            } else {
-                                None
-                            }
-                        ),
-                    self.get_prev_wf(new_score - self.cost_gap_open - self.cost_gap_extend)
-                        .and_then(|prev_wf| prev_wf.wavefront_m.get(k-1))
-                        .and_then(|offset|
-                            if offset < seqlen_as_offset {
-                                Some(PrevCandidate((k-1, offset), State::Mismatch(new_score - self.cost_gap_open - self.cost_gap_extend)))
-                            } else {
-                                None
-                            }
-                        ),
-                ].into_iter().flatten().collect();
-                eprintln!("-I k: {:?}, prev options ({:?}, {:?}): {:?}", k,
-                          new_score - self.cost_gap_open - self.cost_gap_extend,
-                          new_score - self.cost_gap_extend, values);
-
-                values.into_iter()
+        let new_offsets_i: OffsetContainer<Offset> = if let Some(max_node) = max_ins_rank {
+            (0..=max_node).map(|node| {
+                vec![
+                    prev_wf_open
+                        .and_then(|prev_wf| prev_wf.wavefront_m.get_if_endpoint(node)
+                            .map(|v| PrevCandidate::new(v, Backtrace::new(node, BacktraceState::InsOpen)))),
+                    prev_wf_ext
+                        .and_then(|prev_wf| prev_wf.wavefront_i.get(node)
+                            .map(|v| PrevCandidate::new(v, Backtrace::new(node, BacktraceState::InsExt)))),
+                ].into_iter()
+                    .flatten()
                     .max()
-                    .map(|prev_max| {
-                        let new_offset = prev_max.offset() + Offset::one();
-                        prev_max.into_offset_with_bt(new_offset)
+                    .map(|candidate| {
+                        let offset = candidate.offset() + Offset::one();
+                        candidate.into_offset_with_bt(offset)
                     })
-            }).collect();
+            })
+            .collect()
+        } else {
+            OffsetContainer::default()
+        };
 
-        eprintln!("I_{}: {:?}", new_score, new_fr_i);
-        eprintln!();
+        eprintln!("New I (max rank: {:?}): {:?}", max_ins_rank, new_offsets_i);
 
-        let new_fr_d: FRPointContainer<Offset> = (k_lo..=k_hi)
-            .map(|k| {
-                let pred_candidates_d = (k+1..=k_hi)
-                    // Get previous furthest reaching points from source wavefront
-                    .filter_map(|k_prev| {
-                        self.get_prev_wf(new_score - self.cost_gap_extend)
-                            .and_then(|prev_wf| prev_wf.wavefront_d.get(k_prev))
-                            .map(|offset|
-                                PrevCandidate((k_prev, offset), State::Deletion(new_score - self.cost_gap_extend))
-                            )
+        // Find highest successor rank of source wavefronts which could end up in a deletion state
+        let max_del_rank = vec![
+            prev_wf_ext.and_then(|prev_wf| self.get_highest_successor_rank(graph, &prev_wf.wavefront_d)),
+            prev_wf_open.and_then(|prev_wf| self.get_highest_successor_rank(graph, &prev_wf.wavefront_m)),
+        ].into_iter().flatten().max();
+
+        let new_offsets_d: OffsetContainer<Offset> = if let Some(max_node) = max_del_rank {
+            (0..=max_node).map(|node| {
+                graph.predecessors(node)
+                    .filter_map(|pred| {
+                        vec![
+                            prev_wf_open.and_then(|prev_wf| prev_wf.wavefront_m.get_if_endpoint(pred)
+                                .map(|offset| PrevCandidate::new(offset, Backtrace::new(pred, BacktraceState::DelOpen)))),
+                            prev_wf_ext.and_then(|prev_wf| prev_wf.wavefront_d.get(pred)
+                                .map(|offset| PrevCandidate::new(offset, Backtrace::new(pred, BacktraceState::DelExt)))),
+                        ].into_iter().flatten().max()
                     })
-                    // Only include those that involve a valid edge
-                    .filter(|prev_fr_point| {
-                        let prev_rank = prev_fr_point.rank();
-                        let new_rank = (k, prev_fr_point.offset()).rank();
-
-                        if new_rank >= graph.max_rank() {
-                            return false
-                        }
-
-                        graph.is_neighbor_rank(prev_rank, new_rank)
-                    });
-
-                let pred_candidates_m = (k+1..=k_hi)
-                    // Get previous furthest reaching points from source wavefront
-                    .filter_map(|k_prev| {
-                        self.get_prev_wf(new_score - self.cost_gap_open - self.cost_gap_extend)
-                            .and_then(|prev_wf| prev_wf.wavefront_m.get(k_prev))
-                            .map(|offset|
-                                PrevCandidate((k_prev, offset), State::Mismatch(new_score - self.cost_gap_open - self.cost_gap_extend))
-                            )
-                    })
-                    // Only include those that involve a valid edge
-                    .filter(|prev_fr_point| {
-                        let prev_rank = prev_fr_point.rank();
-                        let new_rank = (k, prev_fr_point.offset()).rank();
-
-                        if new_rank >= graph.max_rank() {
-                            return false
-                        }
-
-                        graph.is_neighbor_rank(prev_rank, new_rank)
-                    });
-
-                pred_candidates_d.chain(pred_candidates_m)
                     .max()
-                    .map(|prev_max| {
-                        let new_offset = prev_max.offset();
-                        prev_max.into_offset_with_bt(new_offset)
+                    .map(|max_prev| {
+                        let offset = max_prev.offset();
+                        max_prev.into_offset_with_bt(offset)
                     })
-            }).collect();
+            })
+            .collect()
+        } else {
+            OffsetContainer::default()
+        };
 
-        eprintln!("D_{}: {:?}", new_score, new_fr_d);
-        eprintln!();
+        eprintln!("New D (max rank: {:?}): {:?}", max_del_rank, new_offsets_d);
 
-        let new_fr_m: FRPointContainer<Offset> = (k_lo..=k_hi)
-            .map(|k| {
-                // Previous was insertion/deletion state
-                let prev_indel: Vec<PrevCandidate<Offset>> = vec![
-                    new_fr_i[(k - k_lo) as usize].as_ref()
-                        .map(|offset|
-                                PrevCandidate((k, offset.offset), State::Insertion(new_score))),
-                    new_fr_d[(k - k_lo) as usize].as_ref()
-                        .map(|offset|
-                            PrevCandidate((k, offset.offset), State::Deletion(new_score)))
-                ].into_iter().flatten().collect();
+        // Find highest successor rank that could end up in a (mis)match state
+        let prev_wf_mis = self.get_prev_wf(new_score - self.cost_mismatch);
+        let max_mm_rank = vec![
+            max_ins_rank,
+            max_del_rank,
+            prev_wf_mis.and_then(|prev_wf| self.get_highest_successor_rank(graph, &prev_wf.wavefront_m))
+        ].into_iter().flatten().max();
 
-                // Previous was (mis)match state, check all possible predecessors
-                let prev_mis: Vec<PrevCandidate<Offset>> = (k..=k_hi)
-                    // Get previous furthest reaching points from source wavefront
-                    .filter_map(|k_prev| {
-                        self.get_prev_wf(new_score - self.cost_mismatch)
-                            .and_then(|prev_wf| prev_wf.wavefront_m.get(k_prev))
-                            .map(|offset|
-                                PrevCandidate((k_prev, offset), State::Mismatch(new_score - self.cost_mismatch)))
-                    })
-                    // Only include those that involve a valid edge
-                    .filter(|prev_fr_point| {
-                        let prev_rank = prev_fr_point.rank();
-                        // Offset plus one because we are performing a mismatch
-                        let new_point = (k, prev_fr_point.offset() + Offset::one());
-                        let new_rank = new_point.rank();
-
-                        if new_rank >= graph.max_rank() || new_point.offset() > seqlen_as_offset {
-                            false
+        let new_offsets_m: OffsetContainer<Offset> = if let Some(max_node) = max_mm_rank {
+            (0..=max_node).map(|node| {
+                // Candidates where the previous state was insertion or deletion
+                vec![
+                    new_offsets_i.get(node).and_then(|v| v.as_ref()).map(|v|
+                        PrevCandidate::new(v.offset(), Backtrace::new(node, BacktraceState::InsClose))),
+                    new_offsets_d.get(node).and_then(|v| v.as_ref()).map(|v|
+                        PrevCandidate::new(v.offset(), Backtrace::new(node, BacktraceState::DelClose)))
+                ].into_iter()
+                    // Combine with predecessors in (mis)match state
+                    .chain(graph.predecessors(node)
+                        .map(|pred| {
+                            prev_wf_mis.and_then(|prev_wf| prev_wf.wavefront_m.get_if_endpoint(pred)
+                                .map(|offset|
+                                    PrevCandidate::new(offset + Offset::one(), Backtrace::new(pred, BacktraceState::Mismatch))))
+                        })
+                    )
+                    .flatten()
+                    .max()
+                    .and_then(|max_prev| {
+                        // Prevent from going beyond the query length
+                        if max_prev.offset() >= seqlen_as_offset {
+                            None
                         } else {
-                            graph.is_neighbor_rank(prev_rank, new_rank)
+                            let offset = max_prev.offset();
+                            Some(max_prev.into_offset_with_bt(offset))
                         }
                     })
-                    .collect();
+            })
+            .collect()
+        } else {
+            OffsetContainer::default()
+        };
 
+        eprintln!("New M (max rank: {:?}): {:?}", max_mm_rank, new_offsets_m);
 
-                eprintln!("- prev options (k: {:?}-{:?}): {:?}, indel: {:?}",
-                    k, k_hi, prev_mis, prev_indel);
-
-                // In case of ties, max() returns the last element of an iterator.
-                // By listing previous candidates in order of insertion, deletion and (mis)match,
-                // we ensure that (mis)match state gets priority over deletions, which in turn gets
-                // priority over insertions
-                prev_indel.into_iter()
-                    .chain(prev_mis.into_iter())
-                    .max()
-                    .map(|prev_max| {
-                        let new_offset = match prev_max.1 {
-                            State::Match(_) | State::Mismatch(_) => prev_max.offset() + Offset::one(),
-                            _ => prev_max.offset()
-                        };
-                        prev_max.into_offset_with_bt(new_offset)
-                    })
-            }).collect();
-        eprintln!("M_{}: {:?}", new_score, new_fr_m);
-
-        self.wavefronts.push(WavefrontSetGapAffine::new_with_fr_points(k_lo, k_hi, new_fr_m, new_fr_i, new_fr_d));
+        self.wavefronts.push(GraphWavefrontGapAffine::new_with_offsets(
+            new_offsets_m, new_offsets_i, new_offsets_d));
     }
 
-    fn backtrace(&self, graph: &POAGraph, end_point: FRPoint<Offset>) -> Alignment {
+    fn backtrace(&self, graph: &POAGraph, seq: &[u8], end_node: usize) -> Alignment {
         let mut alignment: Alignment = vec![];
 
-        let mut curr_state = State::Match(self.wavefronts.len() as i64 - 1);
-        let mut curr_offset = end_point.offset();
-        let mut curr_diag = end_point.diag();
+        let mut curr_score = (self.wavefronts.len() - 1) as i64;
+        let mut curr_state = Backtrace::new(end_node, BacktraceState::End);
+        let mut curr_offset = seq.len();
+        let mut curr_node = end_node;
 
         loop {
-            let curr_score = curr_state.score();
-            let mut curr_rank = (curr_diag, curr_offset).rank();
+            eprintln!("Curr state: {:?}, score: {:?}, node: {:?}, qry offset: {:?}", curr_state.state(), curr_score, curr_node, curr_offset);
 
-            let curr_pointer = self.get_prev_wf(curr_score)
-                .and_then(|wf| wf.get_prev_point(curr_diag, &curr_state))
-                .unwrap();
-
-            let PrevCandidate(prev_point, prev_state) = curr_pointer;
-
-            eprintln!("Current (rank, offset): ({:?}, {:?}), diag: {:?}, state: {:?}", curr_rank, curr_offset, curr_diag, curr_state);
-            eprintln!("Prev (rank, offset): ({:?}, {:?}), diag: {:?}, state: {:?})", prev_point.rank(), prev_point.offset(), prev_point.diag(), prev_state);
-
-            let offset_diff: i64 = (curr_offset - prev_point.offset())
-                .try_into()
-                .unwrap_or_else(|_| panic!("Could not convert offset difference"));
-
-            match curr_state {
-                State::Start | State::Match(_) | State::Mismatch(_) => {
-                    for _ in 0..offset_diff {
-                        let offset: i64 = curr_offset.try_into()
-                            .unwrap_or_else(|_| panic!("Could not convert current offset"));
-
-                        if let NodeByRank::Node(node_ix) = graph.get_node_by_rank(curr_rank) {
-                            alignment.push(AlignedPair::new(Some(node_ix), Some(offset as usize - 1)));
-                            eprintln!("{:?} (rank: {:?}, symbol: {})", alignment.last().unwrap(), curr_rank, char::from(graph.graph[node_ix].symbol));
-                        } else {
-                            eprintln!("Ignoring start node.")
-                        }
-
-                        curr_offset = curr_offset - Offset::one();
-                        curr_rank = (curr_diag, curr_offset).rank();
+            match curr_state.state() {
+                BacktraceState::End => curr_offset -= 1,
+                BacktraceState::Mismatch | BacktraceState::Extend | BacktraceState::InsOpen | BacktraceState::DelOpen => {
+                    if let NodeByRank::Node(node_ix) = graph.get_node_by_rank(curr_node) {
+                        alignment.push(AlignedPair::new(Some(node_ix), Some(curr_offset)));
+                        eprintln!("{:?} (rank: {:?}, symbols: {}-{})", alignment.last().unwrap(), curr_node,
+                                  char::from(graph.graph[node_ix].symbol), char::from(seq[curr_offset]));
+                    } else {
+                        eprintln!("Ignoring start node.")
                     }
+
+                    curr_offset -= 1;
                 },
-                State::Deletion(_) => {
-                    if let NodeByRank::Node(node_ix) = graph.get_node_by_rank(curr_rank) {
+                BacktraceState::DelExt | BacktraceState::DelClose => {
+                    if let NodeByRank::Node(node_ix) = graph.get_node_by_rank(curr_node) {
                         alignment.push(AlignedPair::new(Some(node_ix), None));
-                        eprintln!("{:?} (rank: {:?}, symbol: {})", alignment.last().unwrap(), curr_rank, char::from(graph.graph[node_ix].symbol));
+                        eprintln!("{:?} (rank: {:?}, symbol: {})", alignment.last().unwrap(), curr_node, char::from(graph.graph[node_ix].symbol));
                     } else {
                         eprintln!("Ignoring start node.")
                     }
                 }
-                State::Insertion(_) => {
-                    let offset: i64 = curr_offset.try_into()
-                        .unwrap_or_else(|_| panic!("Could not convert current offset"));
-
-                    alignment.push(AlignedPair::new(None, Some(offset as usize - 1)));
-                    eprintln!("{:?} (rank: {:?})", alignment.last().unwrap(), curr_rank);
-                    curr_offset = curr_offset - Offset::one();
-                }
+                 BacktraceState::InsExt | BacktraceState::InsClose => {
+                    alignment.push(AlignedPair::new(None, Some(curr_offset)));
+                    eprintln!("{:?} (rank: {:?}, insertion: {})", alignment.last().unwrap(), curr_node, char::from(seq[curr_offset]));
+                    curr_offset -= 1;
+                },
+                _ => ()
             }
 
-            if *prev_state == State::Start {
+            let backtrace = self.get_prev_wf(curr_score)
+                .and_then(|wf| wf.get_prev_point(curr_node, curr_state.state()))
+                .unwrap();
+
+            if *backtrace.state() == BacktraceState::Start {
                 break;
             }
 
-            eprintln!("- Setting new node rank to {:?} (old: {:?})", prev_point.rank(), curr_rank);
-            curr_diag = prev_point.diag();
-            curr_state = prev_state.clone();
+            eprintln!("{:?}, thus score reduced with {}-{}={}", curr_state.state(), curr_score,
+                      self.score_delta(curr_state.state()),
+                      curr_score - self.score_delta(curr_state.state()));
+
+            curr_score -= self.score_delta(curr_state.state());
+            curr_node = curr_state.prev_node();
+            curr_state = backtrace.clone();
+
             eprintln!()
         }
 
         alignment.into_iter().rev().collect()
-    }
-
-    fn write_csv(&self, writer: &mut BufWriter<File>) -> Result<(), Box<dyn Error>> {
-        writeln!(writer, "score\tstate\tk\toffset\trank\tprev")?;
-
-        for (score, wf) in self.wavefronts.iter().enumerate() {
-            for p in wf.wavefront_m.iter() {
-                writeln!(writer, "{}\t{}\t{}\t{:?}\t{}\t{:?}", score, "match", p.diag(), p.offset(), p.rank(),
-                         wf.wavefront_m.get_pointer(p.diag()))?;
-            }
-
-            for p in wf.wavefront_d.iter() {
-                writeln!(writer, "{}\t{}\t{}\t{:?}\t{}\t{:?}", score, "deletion", p.diag(), p.offset(), p.rank(),
-                         wf.wavefront_d.get_pointer(p.diag()))?;
-            }
-
-            for p in wf.wavefront_i.iter() {
-                writeln!(writer, "{}\t{}\t{}\t{:?}\t{}\t{:?}", score, "insertion", p.diag(), p.offset(), p.rank(),
-                         wf.wavefront_i.get_pointer(p.diag()))?;
-            }
-        }
-
-        Ok(())
     }
 }

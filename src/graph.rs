@@ -291,10 +291,22 @@ impl POAGraph {
         self.graph[node].rank
     }
 
-    pub fn neighbors_for_rank(&self, rank: usize) -> Box<dyn Iterator<Item=NodeIndex> + '_> {
+    // TODO: come up with a way to get rid of the Box
+    pub fn predecessors(&self, rank: usize) -> Box<dyn Iterator<Item=usize> + '_> {
         match self.get_node_by_rank(rank) {
-            NodeByRank::Start => Box::new(self.start_nodes.clone().into_iter()),
-            NodeByRank::Node(node) => Box::new(self.graph.neighbors(node))
+            NodeByRank::Start => Box::new(vec![].into_iter()),
+            NodeByRank::Node(node) => Box::new(self.graph.neighbors_directed(node, Incoming)
+                .map(|v| self.graph[v].rank))
+        }
+    }
+
+    // TODO: come up with a way to get rid of the Box
+    pub fn successors(&self, rank: usize) -> Box<dyn Iterator<Item=usize> + '_> {
+        match self.get_node_by_rank(rank) {
+            NodeByRank::Start => Box::new(self.start_nodes.clone().into_iter()
+                .map(|v| self.graph[v].rank)),
+            NodeByRank::Node(node) => Box::new(self.graph.neighbors(node)
+                .map(|v| self.graph[v].rank))
         }
     }
 

@@ -1,192 +1,378 @@
 use std::fmt::Debug;
-use std::ops::{Index, IndexMut};
 
-pub mod fr_points;
+pub mod extend;
+pub mod offsets;
 pub mod aligner;
 pub mod compute;
 
-use fr_points::{DiagIx, OffsetPrimitive, FRPoint, FRPointContainer, WFPoint};
-use crate::wavefront::fr_points::{ExtendCandidate, OffsetWithBacktrace, PrevCandidate};
+use offsets::{OffsetPrimitive, OffsetContainer, OffsetCell, Backtrace};
 
 
-#[derive(Debug, Clone)]
-struct Wavefront<Offset: OffsetPrimitive> {
-    pub k_lo: DiagIx,
-    pub k_hi: DiagIx,
-
-    furthest_points: FRPointContainer<Offset>,
+/// A graph wavefront holds the furthest reaching query offsets for the nodes
+/// traversed so far at a given alignment score.
+///
+/// Certain alignment scores are unattainable with a given set of alignment costs. Those wavefronts
+/// will never have any offsets stored. This is reflected in our enum, with a special Null variant.
+///
+/// If offsets are available for a given score, then they are stored in a `Vec` in
+/// topological order, i.e., the offset at index 0 belongs to the node with rank 0.
+#[derive(Clone, Debug)]
+enum GraphWavefront<Offset: OffsetPrimitive> {
+    Null,
+    WithOffsets { offsets: OffsetContainer<Offset> }
 }
 
-impl<Offset: OffsetPrimitive> Wavefront<Offset> {
+impl<Offset: OffsetPrimitive> Default for GraphWavefront<Offset> {
+    fn default() -> Self {
+        Self::Null
+    }
+}
+
+impl<Offset: OffsetPrimitive> GraphWavefront<Offset> {
     pub fn new() -> Self {
-        Wavefront::default()
+        Self::default()
     }
 
     pub fn initial() -> Self {
-        Wavefront {
-            k_lo: 0,
-            k_hi: 0,
-            furthest_points: vec![Some(OffsetWithBacktrace::default())].into()
+        Self::WithOffsets {
+            offsets: vec![Some(OffsetCell::initial())]
         }
     }
 
-    pub fn new_with_fr_points(k_lo: DiagIx, k_hi: DiagIx,
-                              fr_points: FRPointContainer<Offset>) -> Self {
-        // Check which diagonal has first/last furthest point, and use that as k_lo and k_hi
-        // respectively
-        let mut actual_k_lo = None;
-        let mut actual_k_hi = None;
-
-        for (k, offset) in (k_lo..=k_hi).zip(&fr_points) {
-            if offset.is_some() {
-                if actual_k_lo.is_none() {
-                    actual_k_lo = Some(k);
-                }
-
-                actual_k_hi = Some(k);
-            }
-        }
-
-        if let (Some(new_k_lo), Some(new_k_hi)) = (actual_k_lo, actual_k_hi) {
-            let start = (new_k_lo - k_lo) as usize;
-            let end = (new_k_hi - k_lo) as usize;
-
-            Self {
-                k_lo: new_k_lo,
-                k_hi: new_k_hi,
-                furthest_points: fr_points.into_iter()
-                    .enumerate()
-                    .filter_map(|(i, p)| if i >= start && i <= end { Some(p) } else { None })
-                    .collect()
-            }
+    pub fn new_with_offsets(offsets: OffsetContainer<Offset>) -> Self {
+        if offsets.iter().any(|v| v.is_some()) {
+            Self::WithOffsets { offsets }
         } else {
-            Self::default()
+            Self::Null
         }
     }
 
-    fn diag_to_ix(&self, diag: DiagIx) -> Option<usize> {
-        eprintln!("to_ix, k_lo: {:?}, k_hi: {:?}, diag: {:?}, len: {:?}", self.k_lo, self.k_hi, diag, self.furthest_points.len());
-        if diag >= self.k_lo && diag <= self.k_hi {
-            Some((diag - self.k_lo) as usize)
-        } else {
-            None
+    pub fn resize(&mut self, max_rank: usize) {
+        match self {
+            Self::Null => (),
+            Self::WithOffsets { offsets} => offsets.resize(max_rank + 1, None)
         }
     }
 
-    fn ensure_size(&mut self, diag: DiagIx) {
-        let diff = if diag < self.k_lo {
-            (self.k_lo - diag) as usize
-        } else if diag > self.k_hi {
-            (diag - self.k_hi) as usize
-        } else {
-            0
-        };
-
-        eprintln!("k_lo: {:?}, k_hi: {:?}, requested: {:?}, diff: {:?}", self.k_lo, self.k_hi, diag, diff);
-
-        if diff != 0 {
-            self.furthest_points.reserve(self.furthest_points.len() + diff);
-            if diag < self.k_lo {
-                for _ in 0..diff {
-                    self.furthest_points.push_front(None);
-                }
-
-                self.k_lo -= diff as i64;
-            } else {
-                for _ in 0..diff {
-                    self.furthest_points.push_back(None);
-                }
-
-                self.k_hi += diff as i64;
-            }
-        }
-    }
-
-    pub fn extend_candidate(&mut self, curr_score: i64, candidate: &ExtendCandidate<Offset>) -> bool {
-        self.ensure_size(candidate.curr().diag());
-        let ix = self.diag_to_ix(candidate.curr().diag()).unwrap();
-
-        // Extend this candidate, increase the offset for this diagonal by one (done in
-        // `make_offset_with_bt`)
-        let offset_with_bt = candidate.make_offset_with_bt(curr_score);
-
-        match self.furthest_points[ix] {
-            Some(ref mut v) => {
-                if *v <= offset_with_bt {
-                    v.offset = offset_with_bt.offset;
-
-                    eprintln!("New Extended point: {:?}", offset_with_bt);
-                    if offset_with_bt.prev.is_some() {
-                        v.prev = offset_with_bt.prev;
-                    }
-                    eprintln!("Pointer for that diagonal: {:?}", v.prev);
-                    true
+    pub fn get(&self, node_rank: usize) -> Option<Offset> {
+        match self {
+            Self::Null => None,
+            Self::WithOffsets { offsets } => {
+                if node_rank < offsets.len() {
+                    offsets[node_rank].as_ref().map(|v| v.offset())
                 } else {
-                    eprintln!("EXTEND {:?} - not overriding existing FR point {:?}", offset_with_bt, *v);
-                    false
+                    None
                 }
-            },
-            None => {
-                eprintln!("Extended point (new diagonal): {:?}", offset_with_bt);
-                self.furthest_points[ix] = Some(offset_with_bt);
-                true
             }
         }
     }
 
-    pub fn get(&self, k: DiagIx) -> Option<Offset> {
-        if k >= self.k_lo && k <= self.k_hi {
-            self.furthest_points[(k - self.k_lo) as usize].as_ref().map(|v| v.offset)
-        } else {
-            None
+    pub fn get_if_endpoint(&self, node_rank: usize) -> Option<Offset> {
+        match self {
+            Self::Null => None,
+            Self::WithOffsets { offsets } => {
+                if node_rank < offsets.len() {
+                    // Only return offset if it's a current alignment "end point", to prevent
+                    // expanding from nodes that were "extended"
+                    offsets[node_rank].as_ref().and_then(|v| v.offset_if_endpoint())
+                } else {
+                    None
+                }
+            }
         }
     }
 
-    pub fn get_pointer(&self, k: DiagIx) -> Option<&PrevCandidate<Offset>> {
-        if k >= self.k_lo && k <= self.k_hi {
-            self.furthest_points[(k - self.k_lo) as usize].as_ref().and_then(|v| v.prev.as_ref())
-        } else {
-            None
+    pub fn get_backtrace(&self, node_rank: usize) -> Option<&Backtrace> {
+        match self {
+            Self::Null => None,
+            Self::WithOffsets { offsets } => {
+                if node_rank < offsets.len() {
+                    offsets[node_rank].as_ref().map(|v| v.backtrace())
+                } else {
+                    None
+                }
+            }
         }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item=FRPoint<Offset>> + '_ {
-        self.furthest_points.iter()
-            .zip(self.k_lo..=self.k_hi)
-            .filter_map(|v| match v {
-                (Some(offset), diag) => Some((diag, offset.offset)),
-                _ => None
-            })
+    pub fn get_offsets(&self) -> Option<&OffsetContainer<Offset>> {
+        match self {
+            Self::Null => None,
+            Self::WithOffsets { offsets } => Some(offsets)
+        }
+    }
+
+    pub fn set(&mut self, node: usize, offset: OffsetCell<Offset>) {
+        match self {
+            Self::Null => panic!("Can't extend a point in a null-wavefront!"),
+            Self::WithOffsets { offsets } => offsets[node] = Some(offset)
+        }
+    }
+
+    pub fn iter_nodes(&self) -> WavefrontNodeIterator<'_, Offset> {
+        WavefrontNodeIterator::new(self)
+    }
+
+    pub fn iter(&self) -> WavefrontOffsetIterator<'_, Offset> {
+        WavefrontOffsetIterator::new(self)
+    }
+
+    pub fn iter_endpoints(&self) -> WavefrontEndpointIterator<'_, Offset> {
+        WavefrontEndpointIterator::new(self)
+    }
+
+
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Null => 0,
+            Self::WithOffsets { offsets } => offsets.len()
+        }
+    }
+
+    pub fn max_rank(&self) -> Option<usize> {
+        match self {
+            Self::Null => None,
+            Self::WithOffsets { offsets } => Some(offsets.len() - 1)
+        }
+    }
+
+}
+
+/// Iterate over the node ranks that have an offset defined for a particular wavefront
+struct WavefrontNodeIterator<'a, Offset: OffsetPrimitive> {
+    /// Reference to the source wavefront
+    wavefront: &'a GraphWavefront<Offset>,
+
+    /// Current node rank
+    curr: usize,
+
+    /// To support iteration from the end we also have separate cursor starting from the back
+    curr_back: usize
+}
+
+impl<'a, Offset: OffsetPrimitive> WavefrontNodeIterator<'a, Offset> {
+    fn new(wavefront: &'a GraphWavefront<Offset>) -> Self {
+        Self { wavefront, curr: 0, curr_back: wavefront.len() }
     }
 }
 
-impl<Offset: OffsetPrimitive> Default for Wavefront<Offset> {
-    fn default() -> Self {
-        Wavefront {
-            k_lo: 0,
-            k_hi: 0,
-            furthest_points: vec![None].into(),
+impl<'a, Offset: OffsetPrimitive> Iterator for WavefrontNodeIterator<'a, Offset> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.wavefront {
+            GraphWavefront::Null => None,
+            GraphWavefront::WithOffsets { offsets } => {
+                while self.curr < self.curr_back && offsets[self.curr].is_none() {
+                    self.curr += 1;
+                }
+
+                if self.curr >= self.curr_back {
+                    None
+                } else {
+                    let to_return = self.curr;
+                    self.curr += 1;
+                    Some(to_return)
+                }
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, Some(self.wavefront.len()))
+    }
+}
+
+impl<'a, Offset: OffsetPrimitive> DoubleEndedIterator for WavefrontNodeIterator<'a, Offset> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        match self.wavefront {
+            GraphWavefront::Null => None,
+            GraphWavefront::WithOffsets { offsets } => {
+                if self.curr_back > 0 {
+                    self.curr_back -= 1;
+                }
+
+                while self.curr_back > 0 && offsets[self.curr_back].is_none() {
+                    self.curr_back -= 1;
+                }
+
+                if self.curr > 0 && self.curr_back < self.curr {
+                    None
+                } else {
+                    // The while-loop above doesn't check if index 0 is Some
+                    let to_return = offsets[self.curr_back].as_ref().map(|_| self.curr_back);
+
+                    if self.curr_back > 0 {
+                        self.curr_back -= 1;
+                    } else {
+                        // Trigger if-condition above to return None next iteration
+                        self.curr += 1;
+                    }
+
+                    to_return
+                }
+            }
         }
     }
 }
 
-impl<Offset: OffsetPrimitive> Index<DiagIx> for Wavefront<Offset> {
-    type Output = Option<OffsetWithBacktrace<Offset>>;
 
-    fn index(&self, index: DiagIx) -> &Self::Output {
-        assert!(index >= self.k_lo && index <= self.k_hi);
+/// Iterate over (node rank, offset) tuples defined in a wavefront
+struct WavefrontOffsetIterator<'a, Offset: OffsetPrimitive> {
+    wavefront: &'a GraphWavefront<Offset>,
 
-        &self.furthest_points[(index - self.k_lo) as usize]
+    /// Current node rank
+    curr: usize,
+
+    /// Separate cursor for double-ended iteration
+    curr_back: usize
+}
+
+impl<'a, Offset: OffsetPrimitive> WavefrontOffsetIterator<'a, Offset> {
+    fn new(wavefront: &'a GraphWavefront<Offset>) -> Self {
+        Self { wavefront, curr: 0, curr_back: wavefront.len() }
     }
 }
 
-impl<Offset: OffsetPrimitive> IndexMut<DiagIx> for Wavefront<Offset> {
-    fn index_mut(&mut self, index: DiagIx) -> &mut Self::Output {
-        assert!(index >= self.k_lo && index <= self.k_hi);
+impl<'a, Offset: OffsetPrimitive> Iterator for WavefrontOffsetIterator<'a, Offset> {
+    type Item = (usize, Offset);
 
-        &mut self.furthest_points[(index - self.k_lo) as usize]
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.wavefront {
+            GraphWavefront::Null => None,
+            GraphWavefront::WithOffsets { offsets } => {
+                while self.curr < self.curr_back && offsets[self.curr].is_none() {
+                    self.curr += 1;
+                }
+
+                if self.curr >= self.curr_back {
+                    None
+                } else {
+                    let to_return = offsets[self.curr].as_ref().map(|v| (self.curr, v.offset()));
+                    self.curr += 1;
+
+                    to_return
+                }
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, Some(self.wavefront.len()))
     }
 }
 
+impl<'a, Offset: OffsetPrimitive> DoubleEndedIterator for WavefrontOffsetIterator<'a, Offset> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        match self.wavefront {
+            GraphWavefront::Null => None,
+            GraphWavefront::WithOffsets { offsets } => {
+                if self.curr_back > 0 {
+                    self.curr_back -= 1;
+                }
 
+                while self.curr_back > 0 && offsets[self.curr_back].is_none() {
+                    self.curr_back -= 1;
+                }
 
+                if self.curr > 0 && self.curr_back < self.curr {
+                    None
+                } else {
+                    // The while-loop above doesn't check if index 0 is Some
+                    let to_return = offsets[self.curr_back].as_ref().map(|offset| (self.curr_back, offset.offset()));
+
+                    if self.curr_back > 0 {
+                        self.curr_back -= 1;
+                    } else {
+                        // Trigger if-condition above to return None next iteration
+                        self.curr += 1;
+                    }
+
+                    to_return
+                }
+            }
+        }
+    }
+
+}
+
+/// Iterate over (node rank, offset) tuples defined in a wavefront, but only those that are an
+/// alignment end-point
+struct WavefrontEndpointIterator<'a, Offset: OffsetPrimitive> {
+    wavefront: &'a GraphWavefront<Offset>,
+
+    /// Current node rank
+    curr: usize,
+
+    /// Separate cursor for double-ended iteration
+    curr_back: usize
+}
+
+impl<'a, Offset: OffsetPrimitive> WavefrontEndpointIterator<'a, Offset> {
+    fn new(wavefront: &'a GraphWavefront<Offset>) -> Self {
+        Self { wavefront, curr: 0, curr_back: wavefront.len() }
+    }
+}
+
+impl<'a, Offset: OffsetPrimitive> Iterator for WavefrontEndpointIterator<'a, Offset> {
+    type Item = (usize, Offset);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.wavefront {
+            GraphWavefront::Null => None,
+            GraphWavefront::WithOffsets { offsets } => {
+                while self.curr < offsets.len() && offsets[self.curr].as_ref().map(|v| v.offset_if_endpoint()).is_none() {
+                    self.curr += 1;
+                }
+
+                if self.curr >= self.curr_back {
+                    None
+                } else {
+                    let offset = offsets[self.curr].as_ref().and_then(|v| v.offset_if_endpoint());
+                    let to_return = offset.map(|v| (self.curr, v));
+                    self.curr += 1;
+
+                    to_return
+                }
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, Some(self.wavefront.len()))
+    }
+}
+
+impl<'a, Offset: OffsetPrimitive> DoubleEndedIterator for WavefrontEndpointIterator<'a, Offset> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        match self.wavefront {
+            GraphWavefront::Null => None,
+            GraphWavefront::WithOffsets { offsets } => {
+                if self.curr_back > 0 {
+                    self.curr_back -= 1;
+                }
+
+                while self.curr_back > 0 && offsets[self.curr_back].as_ref().and_then(|cell| cell.offset_if_endpoint()).is_none() {
+                    self.curr_back -= 1;
+                }
+
+                if self.curr > 0 && self.curr_back < self.curr {
+                    None
+                } else {
+                    let offset = offsets[self.curr_back].as_ref().and_then(|cell| cell.offset_if_endpoint());
+                    let to_return = offset.map(|v| (self.curr_back, v));
+
+                    if self.curr_back > 0 {
+                        self.curr_back -= 1;
+                    } else {
+                        // Trigger if-condition above to return None next iteration
+                        self.curr += 1;
+                    }
+
+                    to_return
+                }
+            }
+        }
+    }
+
+}
