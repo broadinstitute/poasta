@@ -1,7 +1,10 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::io;
+use std::sync::mpsc::SendError;
 use petgraph::algo::Cycle;
+
+use crate::debug::messages::DebugOutputMessage;
 
 #[derive(Debug)]
 pub enum PoastaError {
@@ -26,6 +29,9 @@ pub enum PoastaError {
     /// Other IO errors
     IOError(io::Error),
 
+    /// Debug output error
+    DebugError { source: SendError<DebugOutputMessage> },
+
     /// Other miscellaneous poasta errors
     Other,
 }
@@ -36,6 +42,7 @@ impl Error for PoastaError {
             Self::FileReadError { ref source } => Some(source),
             Self::SerializationError { ref source } => Some(source),
             Self::IOError(ref source) => Some(source),
+            Self::DebugError { ref source} => Some(source),
             _ => None
         }
     }
@@ -62,6 +69,12 @@ impl From<bincode::Error> for PoastaError {
     }
 }
 
+impl From<SendError<DebugOutputMessage>> for PoastaError {
+    fn from(value: SendError<DebugOutputMessage>) -> Self {
+        Self::DebugError { source: value }
+    }
+}
+
 
 impl Display for PoastaError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -80,6 +93,8 @@ impl Display for PoastaError {
                 write!(f, "Could not serialize the graph to file!"),
             Self::IOError(ref err) =>
                 err.fmt(f),
+            Self::DebugError { source: _ } =>
+                write!(f, "Could not log debug data!"),
             Self::Other =>
                 write!(f, "Poasta error!")
         }

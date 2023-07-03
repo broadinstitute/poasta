@@ -3,6 +3,7 @@ pub mod gap_affine;
 
 use crate::graph::POAGraph;
 use crate::alignment::Alignment;
+use crate::debug::DebugOutputWriter;
 use crate::wavefront::offsets::{OffsetPrimitive, OffsetContainer};
 
 pub trait WFCompute: Default {
@@ -18,4 +19,6 @@ pub trait WFCompute: Default {
     fn next(&mut self, graph: &POAGraph, seq_len: usize, new_score: i64);
 
     fn backtrace(&self, graph: &POAGraph, sequence: &[u8], end_node: usize) -> Alignment;
+
+    fn log_debug_data(&self, debug: &DebugOutputWriter);
 }

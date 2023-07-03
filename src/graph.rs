@@ -8,7 +8,7 @@ use crate::alignment::{Alignment, AlignedPair};
 /// A sequence aligned to the POA graph.
 ///
 /// Stores the sequence name and the start node in the graph.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sequence(String, NodeIndex);
 
 impl Sequence {
@@ -65,9 +65,9 @@ impl POAEdgeData {
     }
 }
 
-type POAGraphType = DiGraph<POANodeData, POAEdgeData>;
+pub type POAGraphType = DiGraph<POANodeData, POAEdgeData>;
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct POAGraph {
     pub graph: POAGraphType,
     pub sequences: Vec<Sequence>,

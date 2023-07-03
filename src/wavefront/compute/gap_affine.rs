@@ -1,5 +1,7 @@
 use std::fmt::Debug;
+use crate::debug::messages::DebugOutputMessage;
 use crate::alignment::{AlignedPair, Alignment};
+use crate::debug::DebugOutputWriter;
 
 use crate::graph::{NodeByRank, POAGraph};
 use crate::wavefront::GraphWavefront;
@@ -374,5 +376,14 @@ impl<Offset: OffsetPrimitive> WFCompute for WFComputeGapAffine<Offset> {
         }
 
         alignment.into_iter().rev().collect()
+    }
+
+    fn log_debug_data(&self, debug: &DebugOutputWriter) {
+        if let Some(wf) = self.wavefronts.last() {
+            let score = self.wavefronts.len() as i64 - 1;
+            debug.log(DebugOutputMessage::new_from_wavefront(score, "match", &wf.wavefront_m));
+            debug.log(DebugOutputMessage::new_from_wavefront(score, "insertion", &wf.wavefront_i));
+            debug.log(DebugOutputMessage::new_from_wavefront(score, "deletion", &wf.wavefront_d));
+        }
     }
 }

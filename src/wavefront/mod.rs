@@ -17,7 +17,7 @@ use offsets::{OffsetPrimitive, OffsetContainer, OffsetCell, Backtrace};
 /// If offsets are available for a given score, then they are stored in a `Vec` in
 /// topological order, i.e., the offset at index 0 belongs to the node with rank 0.
 #[derive(Clone, Debug)]
-enum GraphWavefront<Offset: OffsetPrimitive> {
+pub enum GraphWavefront<Offset: OffsetPrimitive> {
     Null,
     WithOffsets { offsets: OffsetContainer<Offset> }
 }
@@ -139,7 +139,7 @@ impl<Offset: OffsetPrimitive> GraphWavefront<Offset> {
 }
 
 /// Iterate over the node ranks that have an offset defined for a particular wavefront
-struct WavefrontNodeIterator<'a, Offset: OffsetPrimitive> {
+pub struct WavefrontNodeIterator<'a, Offset: OffsetPrimitive> {
     /// Reference to the source wavefront
     wavefront: &'a GraphWavefront<Offset>,
 
@@ -218,7 +218,7 @@ impl<'a, Offset: OffsetPrimitive> DoubleEndedIterator for WavefrontNodeIterator<
 
 
 /// Iterate over (node rank, offset) tuples defined in a wavefront
-struct WavefrontOffsetIterator<'a, Offset: OffsetPrimitive> {
+pub struct WavefrontOffsetIterator<'a, Offset: OffsetPrimitive> {
     wavefront: &'a GraphWavefront<Offset>,
 
     /// Current node rank
@@ -298,7 +298,7 @@ impl<'a, Offset: OffsetPrimitive> DoubleEndedIterator for WavefrontOffsetIterato
 
 /// Iterate over (node rank, offset) tuples defined in a wavefront, but only those that are an
 /// alignment end-point
-struct WavefrontEndpointIterator<'a, Offset: OffsetPrimitive> {
+pub struct WavefrontEndpointIterator<'a, Offset: OffsetPrimitive> {
     wavefront: &'a GraphWavefront<Offset>,
 
     /// Current node rank

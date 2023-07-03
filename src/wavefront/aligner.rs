@@ -1,39 +1,39 @@
 use crate::graph::POAGraph;
 use crate::alignment::Alignment;
+use crate::debug::DebugOutputWriter;
 
 use super::extend::ExtendPaths;
 use super::compute::WFCompute;
 
-use std::path::PathBuf;
-
 use num::Bounded;
+use crate::debug::messages::DebugOutputMessage;
 
 
-pub struct WavefrontPOAligner<Compute>
+pub struct WavefrontPOAligner<'a, Compute>
     where
         Compute: WFCompute,
 {
     compute: Compute,
-    debug_output_dir: Option<PathBuf>,
+    debug_output: Option<&'a DebugOutputWriter>,
     num_seq_aligned: usize,
 }
 
-impl<Compute> WavefrontPOAligner<Compute>
+impl<'a, Compute> WavefrontPOAligner<'a, Compute>
     where
         Compute: WFCompute,
 {
     pub fn new() -> Self {
         Self {
             compute: Compute::default(),
-            debug_output_dir: None,
+            debug_output: None,
             num_seq_aligned: 1
         }
     }
 
-    pub fn new_with_debug_output(debug_output_dir: impl Into<PathBuf>) -> Self {
+    pub fn new_with_debug_output(debug_writer: &'a DebugOutputWriter) -> Self {
         WavefrontPOAligner {
             compute: Compute::default(),
-            debug_output_dir: Some(debug_output_dir.into()),
+            debug_output: Some(debug_writer),
             num_seq_aligned: 1
         }
     }
@@ -62,6 +62,10 @@ impl<Compute> WavefrontPOAligner<Compute>
             score += 1;
             eprintln!("----- NEXT: score {}", score);
             self.compute.next(graph, seq.len(), score);
+
+            if let Some(debug) = self.debug_output {
+                self.compute.log_debug_data(debug);
+            }
         }
 
         eprintln!("Sequence length: {:?}", seq.len());
@@ -74,12 +78,16 @@ impl<Compute> WavefrontPOAligner<Compute>
         // Check if we can extend without mismatches along some paths in the graph. Traverse the
         // graph in a depth first manner, and update furthest reaching points accordingly.
         let candidates = self.compute.extend_candidates();
-        eprintln!("- Candidates: {:?}", candidates);
+        eprintln!("- Extend start points: {:?}", candidates);
 
         for (start_node, offset) in candidates {
             let mut extend_paths = ExtendPaths::new(graph, seq, start_node, offset);
 
             while let Some(path) = extend_paths.next(&self.compute) {
+                if let Some(debug) = self.debug_output {
+                    debug.log(DebugOutputMessage::new_extended_path(start_node, offset, path.clone()));
+                }
+
                 self.compute.update_extended_path(start_node, path);
             }
 
@@ -92,7 +100,7 @@ impl<Compute> WavefrontPOAligner<Compute>
     }
 }
 
-impl<Compute: WFCompute> Default for WavefrontPOAligner<Compute> {
+impl<'a, Compute: WFCompute> Default for WavefrontPOAligner<'a, Compute> {
     fn default() -> Self {
         Self::new()
     }

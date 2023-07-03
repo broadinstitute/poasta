@@ -1,4 +1,3 @@
-use std::fs;
 use std::fs::File;
 use std::path::PathBuf;
 use std::io::{stdout, IsTerminal, Write};
@@ -8,6 +7,8 @@ use noodles::fasta;
 use anyhow::{Result, Context};
 
 use petgraph::dot::Dot;
+use poasta::debug::DebugOutputWriter;
+use poasta::debug::messages::DebugOutputMessage;
 
 use poasta::graph::POAGraph;
 use poasta::wavefront::aligner::WavefrontPOAligner;
@@ -78,9 +79,9 @@ struct AlignArgs {
 }
 
 fn align(align_args: &AlignArgs) -> Result<()> {
-    if let Some(debug_output_dir) = &align_args.debug_output {
-        fs::create_dir_all(debug_output_dir)?;
-    }
+    let debug_writer = align_args.debug_output.as_ref().map(|v| {
+        DebugOutputWriter::new(v)
+    });
 
     let mut graph = if let Some(path) = &align_args.graph {
         let file_in = File::open(path)?;
@@ -89,8 +90,8 @@ fn align(align_args: &AlignArgs) -> Result<()> {
         POAGraph::new()
     };
 
-    let mut aligner: WavefrontPOAligner<WFComputeGapAffine<u32>> = if let Some(debug_output_dir) = &align_args.debug_output {
-        WavefrontPOAligner::new_with_debug_output(debug_output_dir)
+    let mut aligner: WavefrontPOAligner<WFComputeGapAffine<u32>> = if let Some(ref debug) = debug_writer {
+        WavefrontPOAligner::new_with_debug_output(debug)
     } else {
         WavefrontPOAligner::new()
     };
@@ -99,30 +100,23 @@ fn align(align_args: &AlignArgs) -> Result<()> {
     let mut reader = fasta::reader::Builder::default().build_from_path(&align_args.sequences)
         .with_context(|| "Could not read FASTA file!".to_string())?;
 
-    for (i, result) in reader.records().enumerate() {
+    for result in reader.records() {
         let record = result?;
         let weights: Vec<usize> = vec![1; record.sequence().len()];
         eprintln!("Aligning {}", record.name());
+
+        if let Some(ref debug) = debug_writer {
+            debug.log(DebugOutputMessage::NewSequence { seq_name: record.name().to_string() });
+            if !graph.is_empty() {
+                debug.log(DebugOutputMessage::new_from_graph(&graph));
+            }
+        }
 
         if graph.is_empty() {
             graph.add_alignment_with_weights(record.name(), record.sequence(), None, &weights)?;
         } else {
             let alignment = aligner.align(&graph, record.sequence());
             graph.add_alignment_with_weights(record.name(), record.sequence(), Some(&alignment), &weights)?;
-        }
-
-        if let Some(debug_output_dir) = &align_args.debug_output {
-            let transformed = graph.graph.map(
-                |ix, data|
-                    format!("{:?} ({:?})", char::from(data.symbol), graph.get_node_rank(ix)),
-                |_, data|
-                    format!("{}, {:?}", data.weight, data.sequence_ids)
-            );
-
-            let fname = debug_output_dir.join(format!("graph{i}.dot"));
-            let dot = Dot::new(&transformed);
-            let mut dot_file = File::create(fname)?;
-            write!(dot_file, "{:?}", dot)?
         }
     }
 
@@ -155,6 +149,11 @@ fn align(align_args: &AlignArgs) -> Result<()> {
             write!(writer, "{:?}", dot)?
         }
         _ => return Err(PoastaError::Other).with_context(|| "Other output formats not supported yet!".to_string())
+    }
+
+    if let Some(debug) = debug_writer {
+        eprintln!("Waiting for debug writer thread to finish...");
+        debug.join()?;
     }
 
     Ok(())

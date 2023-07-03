@@ -13,3 +13,4 @@ noodles = { version = "~0.41", features = ["fasta", "fastq"] }
 num = { version = "0.4" }
 petgraph = { version = "~0.6", features = ["serde-1"] }
 serde = { version = "~1.0", features = ["derive"] }
+serde_json = { version = "1.0.99", features = ["std"] }
