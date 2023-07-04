@@ -37,7 +37,7 @@ impl<Offset: OffsetPrimitive> GraphWavefrontGapAffine<Offset> {
 
     pub fn reached(&self, node_rank: usize, offset: Offset) -> bool {
         if let Some(node_offset) = self.wavefront_m.get(node_rank) {
-            offset >= node_offset
+            node_offset >= offset
         } else {
             false
         }
