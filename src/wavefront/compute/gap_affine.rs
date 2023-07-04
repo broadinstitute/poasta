@@ -48,7 +48,9 @@ impl<Offset: OffsetPrimitive> GraphWavefrontGapAffine<Offset> {
     }
 
     pub fn update_extended_path(&mut self, start_node: usize, path: Vec<(usize, usize)>) {
-        let Some(max_rank) = path.last().map(|v| v.0) else {
+        let Some(max_rank) = path.last().map(|v|
+                max(v.0, self.wavefront_m.len() - 1)
+        ) else {
             return
         };
 
