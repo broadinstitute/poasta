@@ -56,6 +56,9 @@ impl<Offset: OffsetPrimitive> GraphWavefrontGapAffine<Offset> {
 
         self.wavefront_m.resize(max_rank);
 
+        // Mark start node as extended
+        self.wavefront_m.set_cell_type(start_node, CellType::Extended);
+
         let mut prev_node = start_node;
         let path_len = path.len();
         for (i, (node, offset)) in path.into_iter().enumerate() {
