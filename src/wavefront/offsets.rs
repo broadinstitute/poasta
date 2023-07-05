@@ -37,6 +37,12 @@ pub enum BacktraceState {
     DelClose2
 }
 
+impl AsRef<BacktraceState> for BacktraceState {
+    fn as_ref(&self) -> &BacktraceState {
+        self
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Backtrace {
     prev_node: usize,
@@ -59,7 +65,38 @@ impl Backtrace {
     pub fn state(&self) -> &BacktraceState {
         &self.state
     }
+
+    pub fn align_state(&self) -> AlignState {
+        self.state().into()
+    }
 }
+
+pub enum AlignState {
+    Start,
+    End,
+    Match,
+    Mismatch,
+    Insertion,
+    Deletion
+}
+
+impl<T: AsRef<BacktraceState>> From<T> for AlignState {
+    fn from(value: T) -> Self {
+        match value.as_ref() {
+            BacktraceState::Start => AlignState::Start,
+            BacktraceState::End => AlignState::End,
+            BacktraceState::Mismatch => AlignState::Mismatch,
+            BacktraceState::Extend => AlignState::Match,
+            BacktraceState::InsOpen | BacktraceState::InsOpen2 => AlignState::Match,
+            BacktraceState::InsExt | BacktraceState::InsExt2 => AlignState::Insertion,
+            BacktraceState::InsClose | BacktraceState::InsClose2 => AlignState::Insertion,
+            BacktraceState::DelOpen | BacktraceState::DelOpen2 => AlignState::Match,
+            BacktraceState::DelExt | BacktraceState::DelExt2 => AlignState::Deletion,
+            BacktraceState::DelClose | BacktraceState::DelClose2 => AlignState::Deletion,
+        }
+    }
+}
+
 
 #[derive(Debug, Clone)]
 pub enum CellType {
@@ -85,6 +122,10 @@ impl<Offset: OffsetPrimitive> OffsetCell<Offset> {
 
     pub fn initial() -> Self {
         Self::new_endpoint(Offset::zero(), Backtrace::initial())
+    }
+
+    pub fn set_cell_type(&mut self, cell_type: CellType) {
+        self.cell_type = cell_type
     }
 
     pub fn is_endpoint(&self) -> bool {

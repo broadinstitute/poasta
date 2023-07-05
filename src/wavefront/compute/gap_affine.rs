@@ -1,3 +1,4 @@
+use std::cmp::max;
 use std::fmt::Debug;
 use crate::debug::messages::DebugOutputMessage;
 use crate::alignment::{AlignedPair, Alignment};
@@ -5,7 +6,7 @@ use crate::debug::DebugOutputWriter;
 
 use crate::graph::{NodeByRank, POAGraph};
 use crate::wavefront::GraphWavefront;
-use crate::wavefront::offsets::{OffsetPrimitive, OffsetContainer, PrevCandidate, BacktraceState, OffsetCell, Backtrace};
+use crate::wavefront::offsets::{OffsetPrimitive, OffsetContainer, PrevCandidate, BacktraceState, OffsetCell, Backtrace, CellType, AlignState};
 use super::WFCompute;
 
 /// A struct holding the query offsets when using gap-affine costs, thus holding offsets for
@@ -76,24 +77,24 @@ impl<Offset: OffsetPrimitive> GraphWavefrontGapAffine<Offset> {
         }
     }
 
-    pub fn get_prev_point(&self, node: usize, prev_state: &BacktraceState) -> Option<&Backtrace> {
-        match prev_state {
-            BacktraceState::End | BacktraceState::Mismatch | BacktraceState::Extend | BacktraceState::InsOpen | BacktraceState::DelOpen => {
-                eprintln!("Getting previous point for node {:?} with prev state = M ({:?})", node, prev_state);
+    pub fn get_prev_point(&self, node: usize, state: AlignState) -> Option<&Backtrace> {
+        match state {
+            AlignState::End | AlignState::Match | AlignState::Mismatch => {
+                eprintln!("Getting previous point for node {:?} with prev state = M", node);
                 eprintln!("M: {:?}", self.wavefront_m);
                 self.wavefront_m.get_backtrace(node)
-            }
-            BacktraceState::InsExt | BacktraceState::InsClose => {
-                eprintln!("Getting previous point for node {:?} with prev state = I ({:?})", node, prev_state);
+            },
+            AlignState::Insertion => {
+                eprintln!("Getting previous point for node {:?} with prev state = I", node);
                 eprintln!("I: {:?}", self.wavefront_i);
                 self.wavefront_i.get_backtrace(node)
             }
-             BacktraceState::DelExt | BacktraceState::DelClose => {
-                 eprintln!("Getting previous point for node {:?} with prev state = D ({:?})", node, prev_state);
-                 eprintln!("D: {:?}", self.wavefront_d);
-                 self.wavefront_d.get_backtrace(node)
-             }
-            _ => None
+            AlignState::Deletion => {
+                eprintln!("Getting previous point for node {:?} with prev state = D", node);
+                eprintln!("D: {:?}", self.wavefront_d);
+                self.wavefront_d.get_backtrace(node)
+            },
+            AlignState::Start => None
         }
     }
 }
@@ -124,7 +125,7 @@ impl<Offset: OffsetPrimitive> WFComputeGapAffine<Offset> {
     fn get_highest_successor_rank(&self, graph: &POAGraph, wavefront: &GraphWavefront<Offset>) -> Option<usize> {
         wavefront.iter_nodes()
             .filter_map(|node| {
-                graph.successors(node).max()
+                 graph.successors(node).max()
             }).max()
     }
 
@@ -222,12 +223,12 @@ impl<Offset: OffsetPrimitive> WFCompute for WFComputeGapAffine<Offset> {
         let new_offsets_i: OffsetContainer<Offset> = if let Some(max_node) = max_ins_rank {
             (0..=max_node).map(|node| {
                 vec![
-                    prev_wf_open
-                        .and_then(|prev_wf| prev_wf.wavefront_m.get_if_endpoint(node)
-                            .map(|v| PrevCandidate::new(v, Backtrace::new(node, BacktraceState::InsOpen)))),
                     prev_wf_ext
                         .and_then(|prev_wf| prev_wf.wavefront_i.get(node)
                             .map(|v| PrevCandidate::new(v, Backtrace::new(node, BacktraceState::InsExt)))),
+                    prev_wf_open
+                        .and_then(|prev_wf| prev_wf.wavefront_m.get_if_endpoint(node)
+                            .map(|v| PrevCandidate::new(v, Backtrace::new(node, BacktraceState::InsOpen)))),
                 ].into_iter()
                     .flatten()
                     .max()
@@ -254,10 +255,10 @@ impl<Offset: OffsetPrimitive> WFCompute for WFComputeGapAffine<Offset> {
                 graph.predecessors(node)
                     .filter_map(|pred| {
                         vec![
-                            prev_wf_open.and_then(|prev_wf| prev_wf.wavefront_m.get_if_endpoint(pred)
-                                .map(|offset| PrevCandidate::new(offset, Backtrace::new(pred, BacktraceState::DelOpen)))),
                             prev_wf_ext.and_then(|prev_wf| prev_wf.wavefront_d.get(pred)
                                 .map(|offset| PrevCandidate::new(offset, Backtrace::new(pred, BacktraceState::DelExt)))),
+                            prev_wf_open.and_then(|prev_wf| prev_wf.wavefront_m.get_if_endpoint(pred)
+                                .map(|offset| PrevCandidate::new(offset, Backtrace::new(pred, BacktraceState::DelOpen)))),
                         ].into_iter().flatten().max()
                     })
                     .max()
@@ -302,7 +303,7 @@ impl<Offset: OffsetPrimitive> WFCompute for WFComputeGapAffine<Offset> {
                     .max()
                     .and_then(|max_prev| {
                         // Prevent from going beyond the query length
-                        if max_prev.offset() >= seqlen_as_offset {
+                        if max_prev.offset() > seqlen_as_offset {
                             None
                         } else {
                             let offset = max_prev.offset();
@@ -325,27 +326,53 @@ impl<Offset: OffsetPrimitive> WFCompute for WFComputeGapAffine<Offset> {
         let mut alignment: Alignment = vec![];
 
         let mut curr_score = (self.wavefronts.len() - 1) as i64;
-        let mut curr_state = Backtrace::new(end_node, BacktraceState::End);
-        let mut curr_offset = seq.len();
+        let mut curr_state = self.get_prev_wf(curr_score)
+            .and_then(|wf| wf.get_prev_point(end_node, AlignState::End))
+            .unwrap();
         let mut curr_node = end_node;
+        let mut curr_offset = seq.len();
 
         loop {
-            eprintln!("Curr state: {:?}, score: {:?}, node: {:?}, qry offset: {:?}", curr_state.state(), curr_score, curr_node, curr_offset);
 
-            match curr_state.state() {
-                BacktraceState::End => curr_offset -= 1,
-                BacktraceState::Mismatch | BacktraceState::Extend | BacktraceState::InsOpen | BacktraceState::DelOpen => {
+            eprintln!("Curr state: {:?}, score: {:?}, node: {:?}, qry offset: {:?}", curr_state.state(), curr_score, curr_node, curr_offset);
+            let backtrace = self.get_prev_wf(curr_score)
+                .and_then(|wf| wf.get_prev_point(curr_node, curr_state.align_state()))
+                .unwrap();
+
+            let prev_score = curr_score - self.score_delta(backtrace.state());
+            eprintln!("new backtrace: {:?} at score {:?}", backtrace, prev_score);
+
+            match curr_state.align_state() {
+                AlignState::Match => {
                     if let NodeByRank::Node(node_ix) = graph.get_node_by_rank(curr_node) {
-                        alignment.push(AlignedPair::new(Some(node_ix), Some(curr_offset)));
+                        alignment.push(AlignedPair::new(Some(node_ix), Some(curr_offset - 1)));
                         eprintln!("{:?} (rank: {:?}, symbols: {}-{})", alignment.last().unwrap(), curr_node,
-                                  char::from(graph.graph[node_ix].symbol), char::from(seq[curr_offset]));
+                                  char::from(graph.graph[node_ix].symbol), char::from(seq[curr_offset - 1]));
+
+                        curr_offset -= 1;
                     } else {
                         eprintln!("Ignoring start node.")
                     }
-
-                    curr_offset -= 1;
                 },
-                BacktraceState::DelExt | BacktraceState::DelClose => {
+                AlignState::Mismatch => {
+                    match backtrace.state() {
+                        // When closing an insertion or deletion, don't move offset, and just move to
+                        // the next iteration
+                        BacktraceState::InsClose | BacktraceState::DelClose => (),
+                        _ => {
+                            if let NodeByRank::Node(node_ix) = graph.get_node_by_rank(curr_node) {
+                                alignment.push(AlignedPair::new(Some(node_ix), Some(curr_offset - 1)));
+                                eprintln!("{:?} (rank: {:?}, symbols: {}-{})", alignment.last().unwrap(), curr_node,
+                                          char::from(graph.graph[node_ix].symbol), char::from(seq[curr_offset - 1]));
+
+                                curr_offset -= 1;
+                            } else {
+                                eprintln!("Ignoring start node.")
+                            }
+                        }
+                    }
+                }
+                AlignState::Deletion => {
                     if let NodeByRank::Node(node_ix) = graph.get_node_by_rank(curr_node) {
                         alignment.push(AlignedPair::new(Some(node_ix), None));
                         eprintln!("{:?} (rank: {:?}, symbol: {})", alignment.last().unwrap(), curr_node, char::from(graph.graph[node_ix].symbol));
@@ -353,29 +380,24 @@ impl<Offset: OffsetPrimitive> WFCompute for WFComputeGapAffine<Offset> {
                         eprintln!("Ignoring start node.")
                     }
                 }
-                 BacktraceState::InsExt | BacktraceState::InsClose => {
-                    alignment.push(AlignedPair::new(None, Some(curr_offset)));
-                    eprintln!("{:?} (rank: {:?}, insertion: {})", alignment.last().unwrap(), curr_node, char::from(seq[curr_offset]));
+                AlignState::Insertion => {
+                    alignment.push(AlignedPair::new(None, Some(curr_offset - 1)));
+                    eprintln!("{:?} (rank: {:?}, insertion: {})", alignment.last().unwrap(), curr_node, char::from(seq[curr_offset - 1]));
                     curr_offset -= 1;
                 },
                 _ => ()
             }
 
-            let backtrace = self.get_prev_wf(curr_score)
-                .and_then(|wf| wf.get_prev_point(curr_node, curr_state.state()))
-                .unwrap();
-
             if *backtrace.state() == BacktraceState::Start {
                 break;
             }
 
-            eprintln!("{:?}, thus score reduced with {}-{}={}", curr_state.state(), curr_score,
-                      self.score_delta(curr_state.state()),
-                      curr_score - self.score_delta(curr_state.state()));
+            curr_score = prev_score;
+            eprintln!("{:?}, thus score reduced with {}, new score={}", curr_state.state(),
+                      self.score_delta(curr_state.state()), curr_score);
 
-            curr_score -= self.score_delta(curr_state.state());
+            curr_state = backtrace;
             curr_node = curr_state.prev_node();
-            curr_state = backtrace.clone();
 
             eprintln!()
         }

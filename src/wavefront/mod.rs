@@ -6,6 +6,7 @@ pub mod aligner;
 pub mod compute;
 
 use offsets::{OffsetPrimitive, OffsetContainer, OffsetCell, Backtrace};
+use crate::wavefront::offsets::CellType;
 
 
 /// A graph wavefront holds the furthest reaching query offsets for the nodes
@@ -106,6 +107,17 @@ impl<Offset: OffsetPrimitive> GraphWavefront<Offset> {
         match self {
             Self::Null => panic!("Can't extend a point in a null-wavefront!"),
             Self::WithOffsets { offsets } => offsets[node] = Some(offset)
+        }
+    }
+
+    pub fn set_cell_type(&mut self, node: usize, cell_type: CellType) {
+        match self {
+            Self::Null => panic!("Can't set cell type on a null wavefront!"),
+            Self::WithOffsets { offsets } => {
+                if let Some(ref mut cell) = offsets[node] {
+                    cell.set_cell_type(cell_type)
+                }
+            }
         }
     }
 
