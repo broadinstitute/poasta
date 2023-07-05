@@ -106,7 +106,12 @@ fn align(align_args: &AlignArgs) -> Result<()> {
         eprintln!("Aligning {}", record.name());
 
         if let Some(ref debug) = debug_writer {
-            debug.log(DebugOutputMessage::NewSequence { seq_name: record.name().to_string() });
+            debug.log(DebugOutputMessage::NewSequence {
+                seq_name: record.name().to_string(),
+                seq_length: record.sequence().len(),
+                max_rank: graph.max_rank()
+            });
+
             if !graph.is_empty() {
                 debug.log(DebugOutputMessage::new_from_graph(&graph));
             }

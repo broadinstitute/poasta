@@ -18,7 +18,7 @@ pub mod messages {
     #[derive(Debug, Serialize, Deserialize)]
     pub enum DebugOutputMessage {
         Empty,
-        NewSequence { seq_name: String },
+        NewSequence { seq_name: String, seq_length: usize, max_rank: usize },
         ExtendPath { start: (usize, usize), path: Vec<(usize, usize)> },
         CurrWavefront { score: i64, wf_type: String, node_offsets: Vec<(usize, usize, bool)> },
         IntermediateGraph { graph: Graph<String, String> },
@@ -94,6 +94,17 @@ impl DebugOutputWriter {
     }
 }
 
+fn write_msg(writer: &mut impl Write, msg: &messages::DebugOutputMessage) {
+    match serde_json::to_string(&msg) {
+        Ok(json) => {
+            if let Err(e) = writeln!(writer, "{}", json) {
+                eprintln!("Error writing message to debug output!\n{}", e);
+            }
+        },
+        Err(e) => eprintln!("Could not serialize debug data to JSON!\n{}", e)
+    }
+}
+
 struct DebugOutputWorker {
     thread: JoinHandle<Result<(), PoastaError>>,
 }
@@ -114,23 +125,16 @@ impl DebugOutputWorker {
 
                 match msg {
                     messages::DebugOutputMessage::Empty => (),
-                    messages::DebugOutputMessage::NewSequence { seq_name } => {
+                    messages::DebugOutputMessage::NewSequence { ref seq_name , seq_length: _, max_rank: _} => {
                         output_file = File::create(output_path.join(format!("{seq_name}.txt")))
                             .map(BufWriter::new)?;
+                        curr_seq_name = seq_name.clone();
 
-                        curr_seq_name = seq_name;
+                        write_msg(&mut output_file, &msg);
                     },
                     messages::DebugOutputMessage::ExtendPath { start: _, path: _ } |
-                    messages::DebugOutputMessage::CurrWavefront { score: _, wf_type: _, node_offsets: _ } => {
-                        match serde_json::to_string(&msg) {
-                            Ok(json) => {
-                                if let Err(e) = writeln!(output_file, "{}", json) {
-                                    eprintln!("Error writing message to debug output!\n{}", e);
-                                }
-                            },
-                            Err(e) => eprintln!("Could not serialize debug data to JSON!\n{}", e)
-                        }
-                    },
+                    messages::DebugOutputMessage::CurrWavefront { score: _, wf_type: _, node_offsets: _ } =>
+                        write_msg(&mut output_file, &msg),
                     messages::DebugOutputMessage::IntermediateGraph { graph } => {
                         let fname = output_path.join(format!("graph_for_{}.dot", &curr_seq_name));
                         let dot = Dot::new(&graph);
