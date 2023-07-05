@@ -63,14 +63,15 @@ impl<'a> ExtendPaths<'a> {
     /// Valid children are those that have a matching symbol in the query, and bring the alignment
     /// further (i.e., the query offset is equal or higher than the current highest value)
     fn next_valid_child<Compute: WFCompute>(&self, parent: &ExtendCandidate, compute: &Compute) -> Option<(usize, usize)> {
-        if parent.offset() >= self.seq.len() - 1 {
+        if parent.offset() >= self.seq.len() {
             return None
         }
 
         if let Some(child) = parent.children_iter().next() {
             let child_offset = parent.offset() + 1;
 
-            eprintln!("- checking rank {} vs child offset {} - 1 = {}, equal: {}", child, child_offset, child_offset-1,
+            eprintln!("- checking rank {} ({}) vs child offset {} - 1 = {} ({}), equal: {}", child, self.graph.get_symbol(child),
+                      child_offset, child_offset-1, char::from(self.seq[child_offset-1]),
                       self.graph.is_symbol_equal(child, self.seq[child_offset-1]));
             if self.graph.is_symbol_equal(child, self.seq[child_offset-1]) && compute.is_further(child, child_offset) {
                 eprintln!("- is further too");
@@ -95,7 +96,8 @@ impl<'a> ExtendPaths<'a> {
                 self.stack.push(ExtendCandidate(child, child_offset, child_succ));
             } else {
                 // If we reach here, we are about to move up the depth-first matches search tree,
-                // if we are at a leaf node, return the path and prepare for further exploration of the graph
+                // but first, if we are at a leaf node, return the path and prepare for further 
+                // exploration of the graph
                 let path_to_return = if self.has_new_path {
                     eprintln!("At leaf node, path: {:?}", self.curr_path);
                     Some(self.curr_path.clone())
