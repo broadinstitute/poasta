@@ -48,7 +48,7 @@ impl<'a> ExtendPaths<'a> {
             Err(_) => panic!("Could not obtain offset!")
         };
 
-        let succ_iter = RefCell::new(graph.successors(start_node));
+        let succ_iter = RefCell::new(Box::new(graph.successors(start_node)));
 
         Self {
             graph, seq,
@@ -92,11 +92,11 @@ impl<'a> ExtendPaths<'a> {
                 self.has_new_path = true;
 
                 self.curr_path.push((child, child_offset));
-                let child_succ = RefCell::new(self.graph.successors(child));
+                let child_succ = RefCell::new(Box::new(self.graph.successors(child)));
                 self.stack.push(ExtendCandidate(child, child_offset, child_succ));
             } else {
                 // If we reach here, we are about to move up the depth-first matches search tree,
-                // but first, if we are at a leaf node, return the path and prepare for further 
+                // but first, if we are at a leaf node, return the path and prepare for further
                 // exploration of the graph
                 let path_to_return = if self.has_new_path {
                     eprintln!("At leaf node, path: {:?}", self.curr_path);

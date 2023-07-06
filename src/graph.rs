@@ -22,17 +22,6 @@ impl Sequence {
 }
 
 
-/// The POA graph contains a virtual "start" node, which always has rank 0, and which connects to all
-/// other nodes with in-degree 0. When requesting the node index by rank, this enum thus indicates
-/// whether you requested an actual node or the virtual start node.
-///
-/// See also: [`POAGraph::get_node_by_rank`].
-pub enum NodeByRank {
-    Start,
-    Node(NodeIndex)
-}
-
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct POANodeData {
     pub symbol: u8,
@@ -63,6 +52,12 @@ impl POAEdgeData {
             sequence_ids: vec![sequence_id],
         }
     }
+
+    fn new_for_start() -> Self {
+        POAEdgeData {
+            weight: 0, sequence_ids: vec![]
+        }
+    }
 }
 
 pub type POAGraphType = DiGraph<POANodeData, POAEdgeData>;
@@ -72,7 +67,7 @@ pub struct POAGraph {
     pub graph: POAGraphType,
     pub sequences: Vec<Sequence>,
     topological_sorted: Vec<NodeIndex>,
-    start_nodes: Vec<NodeIndex>,
+    start_node: Option<NodeIndex>,
     end_nodes: Vec<NodeIndex>
 }
 
@@ -82,7 +77,7 @@ impl POAGraph {
             graph: POAGraphType::new(),
             sequences: Vec::new(),
             topological_sorted: Vec::new(),
-            start_nodes: Vec::new(),
+            start_node: None,
             end_nodes: Vec::new(),
         }
     }
@@ -256,16 +251,25 @@ impl POAGraph {
 
     fn post_process(&mut self) -> Result<(), PoastaError> {
         self.topological_sorted.clear();
-        self.start_nodes.clear();
+
+        if let Some(curr_start) = self.start_node {
+            self.graph.remove_node(curr_start);
+        }
+
+        // Create a special "start" node that has outgoing edges to all other nodes without other
+        // incoming edges
+        let start_node = self.graph.add_node(POANodeData::new(b'#'));
+        for node in self.graph.node_indices() {
+            if node != start_node && self.graph.neighbors_directed(node, Incoming).count() == 0 {
+                self.graph.add_edge(start_node, node, POAEdgeData::new_for_start());
+            }
+        }
+        self.start_node = Some(start_node);
 
         self.topological_sorted = toposort(&self.graph, None)?;
 
         for (rank, node) in self.topological_sorted.iter().enumerate() {
-            self.graph[*node].rank = rank + 1; // Rank zero is reserved for the special "start" node
-
-            if self.graph.neighbors_directed(*node, Incoming).count() == 0 {
-                self.start_nodes.push(*node);
-            }
+            self.graph[*node].rank = rank;
 
             if self.graph.neighbors(*node).count() == 0 {
                 self.end_nodes.push(*node);
@@ -276,56 +280,39 @@ impl POAGraph {
     }
 
     pub fn max_rank(&self) -> usize {
-        self.graph.node_count() + 1
+        self.graph.node_count()
     }
 
-    pub fn get_node_by_rank(&self, rank: usize) -> NodeByRank {
-        if rank == 0 {
-            NodeByRank::Start
-        } else {
-            NodeByRank::Node(self.topological_sorted[rank - 1])
-        }
+    pub fn get_node_by_rank(&self, rank: usize) -> NodeIndex {
+        self.topological_sorted[rank]
     }
 
     pub fn get_node_rank(&self, node: NodeIndex) -> usize {
         self.graph[node].rank
     }
 
-    // TODO: come up with a way to get rid of the Box
-    pub fn predecessors(&self, rank: usize) -> Box<dyn Iterator<Item=usize> + '_> {
-        match self.get_node_by_rank(rank) {
-            NodeByRank::Start => Box::new(vec![].into_iter()),
-            NodeByRank::Node(node) => Box::new(self.graph.neighbors_directed(node, Incoming)
-                .map(|v| self.graph[v].rank))
-        }
+    pub fn predecessors(&self, rank: usize) -> impl Iterator<Item=usize> + '_ {
+        self.graph.neighbors_directed(self.topological_sorted[rank], Incoming)
+            .map(|v| self.graph[v].rank)
     }
 
-    // TODO: come up with a way to get rid of the Box
-    pub fn successors(&self, rank: usize) -> Box<dyn Iterator<Item=usize> + '_> {
-        match self.get_node_by_rank(rank) {
-            NodeByRank::Start => Box::new(self.start_nodes.clone().into_iter()
-                .map(|v| self.graph[v].rank)),
-            NodeByRank::Node(node) => Box::new(self.graph.neighbors(node)
-                .map(|v| self.graph[v].rank))
-        }
+    pub fn successors(&self, rank: usize) -> impl Iterator<Item=usize> + '_ {
+        self.graph.neighbors(self.topological_sorted[rank])
+            .map(|v| self.graph[v].rank)
     }
 
     pub fn is_neighbor_rank(&self, from_rank: usize, to_canditate_rank: usize) -> bool {
-        match self.get_node_by_rank(from_rank) {
-            NodeByRank::Start => self.start_nodes.iter().any(|succ| self.graph[*succ].rank == to_canditate_rank),
-            NodeByRank::Node(node) => self.graph.neighbors(node).any(|succ| self.graph[succ].rank == to_canditate_rank)
-        }
+        self.successors(from_rank).any(|rank| rank == to_canditate_rank)
+    }
+
+    pub fn get_symbol(&self, rank: usize) -> char {
+        let node = self.topological_sorted[rank];
+        char::from(self.graph[node].symbol)
     }
 
     pub fn is_symbol_equal(&self, rank: usize, symbol: u8) -> bool {
-        match self.get_node_by_rank(rank) {
-            NodeByRank::Start => false,
-            NodeByRank::Node(node) => self.graph[node].symbol == symbol
-        }
-    }
-
-    pub fn start_nodes(&self) -> &Vec<NodeIndex> {
-        &self.start_nodes
+        let node = self.topological_sorted[rank];
+        self.graph[node].symbol == symbol
     }
 
     pub fn end_nodes(&self) -> &Vec<NodeIndex> {

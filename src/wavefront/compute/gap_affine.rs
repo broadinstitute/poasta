@@ -4,7 +4,7 @@ use crate::debug::messages::DebugOutputMessage;
 use crate::alignment::{AlignedPair, Alignment};
 use crate::debug::DebugOutputWriter;
 
-use crate::graph::{NodeByRank, POAGraph};
+use crate::graph::POAGraph;
 use crate::wavefront::GraphWavefront;
 use crate::wavefront::offsets::{OffsetPrimitive, OffsetContainer, PrevCandidate, BacktraceState, OffsetCell, Backtrace, CellType, AlignState};
 use super::WFCompute;
@@ -333,6 +333,9 @@ impl<Offset: OffsetPrimitive> WFCompute for WFComputeGapAffine<Offset> {
         let mut curr_offset = seq.len();
 
         loop {
+            if curr_score == 0 && curr_offset == 0 && curr_node == 0 {
+                break;
+            }
 
             eprintln!("Curr state: {:?}, score: {:?}, node: {:?}, qry offset: {:?}", curr_state.state(), curr_score, curr_node, curr_offset);
             let backtrace = self.get_prev_wf(curr_score)
@@ -344,15 +347,12 @@ impl<Offset: OffsetPrimitive> WFCompute for WFComputeGapAffine<Offset> {
 
             match curr_state.align_state() {
                 AlignState::Match => {
-                    if let NodeByRank::Node(node_ix) = graph.get_node_by_rank(curr_node) {
-                        alignment.push(AlignedPair::new(Some(node_ix), Some(curr_offset - 1)));
-                        eprintln!("{:?} (rank: {:?}, symbols: {}-{})", alignment.last().unwrap(), curr_node,
-                                  char::from(graph.graph[node_ix].symbol), char::from(seq[curr_offset - 1]));
+                    let node_ix = graph.get_node_by_rank(curr_node);
+                    alignment.push(AlignedPair::new(Some(node_ix), Some(curr_offset - 1)));
+                    eprintln!("{:?} (rank: {:?}, symbols: {}-{})", alignment.last().unwrap(), curr_node,
+                              char::from(graph.graph[node_ix].symbol), char::from(seq[curr_offset - 1]));
 
-                        curr_offset -= 1;
-                    } else {
-                        eprintln!("Ignoring start node.")
-                    }
+                    curr_offset -= 1;
                 },
                 AlignState::Mismatch => {
                     match backtrace.state() {
@@ -360,25 +360,19 @@ impl<Offset: OffsetPrimitive> WFCompute for WFComputeGapAffine<Offset> {
                         // the next iteration
                         BacktraceState::InsClose | BacktraceState::DelClose => (),
                         _ => {
-                            if let NodeByRank::Node(node_ix) = graph.get_node_by_rank(curr_node) {
-                                alignment.push(AlignedPair::new(Some(node_ix), Some(curr_offset - 1)));
-                                eprintln!("{:?} (rank: {:?}, symbols: {}-{})", alignment.last().unwrap(), curr_node,
-                                          char::from(graph.graph[node_ix].symbol), char::from(seq[curr_offset - 1]));
+                            let node_ix = graph.get_node_by_rank(curr_node);
+                            alignment.push(AlignedPair::new(Some(node_ix), Some(curr_offset - 1)));
+                            eprintln!("{:?} (rank: {:?}, symbols: {}-{})", alignment.last().unwrap(), curr_node,
+                                      char::from(graph.graph[node_ix].symbol), char::from(seq[curr_offset - 1]));
 
-                                curr_offset -= 1;
-                            } else {
-                                eprintln!("Ignoring start node.")
-                            }
+                            curr_offset -= 1;
                         }
                     }
                 }
                 AlignState::Deletion => {
-                    if let NodeByRank::Node(node_ix) = graph.get_node_by_rank(curr_node) {
-                        alignment.push(AlignedPair::new(Some(node_ix), None));
-                        eprintln!("{:?} (rank: {:?}, symbol: {})", alignment.last().unwrap(), curr_node, char::from(graph.graph[node_ix].symbol));
-                    } else {
-                        eprintln!("Ignoring start node.")
-                    }
+                    let node_ix = graph.get_node_by_rank(curr_node);
+                    alignment.push(AlignedPair::new(Some(node_ix), None));
+                    eprintln!("{:?} (rank: {:?}, symbol: {})", alignment.last().unwrap(), curr_node, char::from(graph.graph[node_ix].symbol));
                 }
                 AlignState::Insertion => {
                     alignment.push(AlignedPair::new(None, Some(curr_offset - 1)));
@@ -386,10 +380,6 @@ impl<Offset: OffsetPrimitive> WFCompute for WFComputeGapAffine<Offset> {
                     curr_offset -= 1;
                 },
                 _ => ()
-            }
-
-            if *backtrace.state() == BacktraceState::Start {
-                break;
             }
 
             curr_score = prev_score;
