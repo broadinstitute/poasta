@@ -1,16 +1,22 @@
-use petgraph::graph::NodeIndex;
+use crate::graphs::NodeIndexType;
 
 #[derive(Clone, Debug)]
-pub struct AlignedPair {
+pub struct AlignedPair<N>
+where
+    N: NodeIndexType
+{
     /// Represents the node rank in the graph
-    pub rpos: Option<NodeIndex>,
+    pub rpos: Option<N>,
 
     /// Query sequence position
     pub qpos: Option<usize>
 }
 
-impl AlignedPair {
-    pub fn new(rpos: Option<NodeIndex>, qpos: Option<usize>) -> Self {
+impl<N> AlignedPair<N>
+where
+    N: NodeIndexType
+{
+    pub fn new(rpos: Option<N>, qpos: Option<usize>) -> Self {
         Self { rpos, qpos }
     }
 
@@ -23,4 +29,4 @@ impl AlignedPair {
     }
 }
 
-pub type Alignment = Vec<AlignedPair>;
+pub type Alignment<N> = Vec<AlignedPair<N>>;

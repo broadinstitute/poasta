@@ -1,35 +1,53 @@
-use petgraph::prelude::*;
+use petgraph::graph::{DiGraph, IndexType as PetgraphIndexType, Neighbors};
+use petgraph::Incoming;
 use petgraph::algo::toposort;
-use serde::{Serialize, Deserialize};
+use petgraph::prelude::NodeIndex;
+use petgraph::visit::GraphBase;
+
+use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
 
 use crate::errors::PoastaError;
-use crate::alignment::{Alignment, AlignedPair};
+use crate::aligner::alignment::{AlignedPair, Alignment};
+use crate::graphs::{AlignableGraph, NodeIndexType};
 
 /// A sequence aligned to the POA graph.
 ///
 /// Stores the sequence name and the start node in the graph.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Sequence(String, NodeIndex);
+pub struct Sequence<N>(String, N)
+where
+    N: NodeIndexType
+;
 
-impl Sequence {
+impl<N> Sequence<N>
+where
+    N: NodeIndexType
+{
     pub fn name(&self) -> &String {
         &self.0
     }
 
-    pub fn start_node(&self) -> NodeIndex {
+    pub fn start_node(&self) -> N {
         self.1
     }
 }
 
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct POANodeData {
+pub struct POANodeData<N>
+where
+    N: NodeIndexType
+{
     pub symbol: u8,
-    pub aligned_nodes: Vec<NodeIndex>,
+    pub aligned_nodes: Vec<N>,
     pub rank: usize
 }
 
-impl POANodeData {
+impl<N> POANodeData<N>
+where
+    N: NodeIndexType
+{
     fn new(symbol: u8) -> Self {
         POANodeData {
             symbol,
@@ -60,24 +78,31 @@ impl POAEdgeData {
     }
 }
 
-pub type POAGraphType = DiGraph<POANodeData, POAEdgeData>;
+pub type POAGraphType<Ix> = DiGraph<POANodeData<NodeIndex<Ix>>, POAEdgeData, Ix>;
+type POANodeIndex<Ix> = <POAGraphType<Ix> as GraphBase>::NodeId;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub struct POAGraph {
-    pub graph: POAGraphType,
-    pub sequences: Vec<Sequence>,
-    topological_sorted: Vec<NodeIndex>,
-    start_node: Option<NodeIndex>,
-    end_nodes: Vec<NodeIndex>
+pub struct POAGraph<Ix = u32>
+where
+    Ix: PetgraphIndexType
+{
+    pub graph: POAGraphType<Ix>,
+    pub sequences: Vec<Sequence<POANodeIndex<Ix>>>,
+    topological_sorted: Vec<POANodeIndex<Ix>>,
+    start_node: Vec<POANodeIndex<Ix>>,
+    end_nodes: Vec<POANodeIndex<Ix>>,
 }
 
-impl POAGraph {
+impl<Ix> POAGraph<Ix>
+where
+    Ix: PetgraphIndexType + DeserializeOwned
+{
     pub fn new() -> Self {
         POAGraph {
-            graph: POAGraphType::new(),
+            graph: POAGraphType::<Ix>::default(),
             sequences: Vec::new(),
             topological_sorted: Vec::new(),
-            start_node: None,
+            start_node: Vec::new(),
             end_nodes: Vec::new(),
         }
     }
@@ -86,7 +111,7 @@ impl POAGraph {
         self.graph.node_count() == 0
     }
 
-    fn add_edge(&mut self, s: NodeIndex, t: NodeIndex, sequence_id: usize, weight: usize) {
+    fn add_edge(&mut self, s: POANodeIndex<Ix>, t: POANodeIndex<Ix>, sequence_id: usize, weight: usize) {
         // If edge exists, update sequence ID and weight of the existing one
         if let Some(e) = self.graph.find_edge(s, t) {
             let mut edge_data = self.graph.edge_weight_mut(e).unwrap();
@@ -103,7 +128,7 @@ impl POAGraph {
         weights: &[usize],
         start: usize,
         end: usize,
-    ) -> Option<(NodeIndex, NodeIndex)> {
+    ) -> Option<(POANodeIndex<Ix>, POANodeIndex<Ix>)> {
         let seq = sequence.as_ref();
 
         if start == end {
@@ -133,7 +158,7 @@ impl POAGraph {
         &mut self,
         sequence_name: &str,
         sequence: T,
-        alignment_opt: Option<&Alignment>,
+        alignment_opt: Option<&Alignment<POANodeIndex<Ix>>>,
         weights: &[usize]
     ) -> Result<(), PoastaError> {
         let seq = sequence.as_ref();
@@ -186,7 +211,7 @@ impl POAGraph {
             }
 
             let q = qpos.unwrap();
-            let mut curr: Option<NodeIndex> = None;
+            let mut curr: Option<POANodeIndex<Ix>> = None;
             let qsymbol = seq[q];
 
             if let Some(r) = rpos {
@@ -252,8 +277,8 @@ impl POAGraph {
     fn post_process(&mut self) -> Result<(), PoastaError> {
         self.topological_sorted.clear();
 
-        if let Some(curr_start) = self.start_node {
-            self.graph.remove_node(curr_start);
+        if let Some(curr_start) = self.start_node.first() {
+            self.graph.remove_node(*curr_start);
         }
 
         // Create a special "start" node that has outgoing edges to all other nodes without other
@@ -264,7 +289,7 @@ impl POAGraph {
                 self.graph.add_edge(start_node, node, POAEdgeData::new_for_start());
             }
         }
-        self.start_node = Some(start_node);
+        self.start_node.push(start_node);
 
         self.topological_sorted = toposort(&self.graph, None)?;
 
@@ -283,11 +308,11 @@ impl POAGraph {
         self.graph.node_count()
     }
 
-    pub fn get_node_by_rank(&self, rank: usize) -> NodeIndex {
+    pub fn get_node_by_rank(&self, rank: usize) -> POANodeIndex<Ix> {
         self.topological_sorted[rank]
     }
 
-    pub fn get_node_rank(&self, node: NodeIndex) -> usize {
+    pub fn get_node_rank(&self, node: POANodeIndex<Ix>) -> usize {
         self.graph[node].rank
     }
 
@@ -305,17 +330,35 @@ impl POAGraph {
         self.successors(from_rank).any(|rank| rank == to_canditate_rank)
     }
 
-    pub fn get_symbol(&self, rank: usize) -> char {
-        let node = self.topological_sorted[rank];
+    pub fn end_nodes(&self) -> &Vec<POANodeIndex<Ix>> {
+        &self.end_nodes
+    }
+}
+
+impl<Ix> AlignableGraph for POAGraph<Ix>
+where
+    Ix: PetgraphIndexType + DeserializeOwned,
+{
+    type NodeIndex = POANodeIndex<Ix>;
+    type SuccessorIterator<'a> = Neighbors<'a, POAEdgeData, Ix>;
+
+    fn start_nodes(&self) -> &Vec<Self::NodeIndex> {
+        &self.start_node
+    }
+
+    fn successors(&self, node: Self::NodeIndex) -> Self::SuccessorIterator<'_> {
+        self.graph.neighbors(node)
+    }
+
+    fn is_end(&self, node: Self::NodeIndex) -> bool {
+        self.end_nodes.iter().any(|v| *v == node)
+    }
+
+    fn get_symbol(&self, node: Self::NodeIndex) -> char {
         char::from(self.graph[node].symbol)
     }
 
-    pub fn is_symbol_equal(&self, rank: usize, symbol: u8) -> bool {
-        let node = self.topological_sorted[rank];
+    fn is_symbol_equal(&self, node: Self::NodeIndex, symbol: u8) -> bool {
         self.graph[node].symbol == symbol
-    }
-
-    pub fn end_nodes(&self) -> &Vec<NodeIndex> {
-        &self.end_nodes
     }
 }

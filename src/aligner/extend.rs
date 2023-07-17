@@ -1,22 +1,30 @@
 use std::cell::{RefCell, RefMut};
-use crate::wavefront::offsets::OffsetPrimitive;
-use crate::graph::POAGraph;
-use crate::wavefront::compute::WFCompute;
+use crate::graphs::{AlignableGraph, NodeIndexType};
+use crate::aligner::offsets::OffsetType;
+use crate::aligner::scoring::AlignmentStateTree;
+use crate::aligner::state::{AlignState, TreeIndexType};
 
 /// A node in the graph aligned to a certain offset in the query
 /// that we will try to extend from
-struct ExtendCandidate<'a>(usize, usize, RefCell<Box<dyn Iterator<Item=usize> + 'a>>);
+struct ExtendCandidate<'a, N, O>(N, O, RefCell<Box<dyn Iterator<Item=N> + 'a>>)
+where
+    N: NodeIndexType,
+    O: OffsetType;
 
-impl<'a> ExtendCandidate<'a> {
-    pub fn node(&self) -> usize {
+impl<'a, N, O> ExtendCandidate<'a, N, O>
+where
+    N: NodeIndexType,
+    O: OffsetType,
+{
+    pub fn node(&self) -> N {
         self.0
     }
 
-    pub fn offset(&self) -> usize {
+    pub fn offset(&self) -> O {
         self.1
     }
 
-    pub fn children_iter(&self) -> RefMut<Box<dyn Iterator<Item=usize> + 'a>> {
+    pub fn children_iter(&self) -> RefMut<Box<dyn Iterator<Item=N> + 'a>> {
         self.2.borrow_mut()
     }
 }
@@ -32,64 +40,74 @@ impl<'a> ExtendCandidate<'a> {
 ///
 /// See also: https://www.ics.uci.edu/~eppstein/PADS/ or
 /// https://networkx.org/documentation/stable/reference/algorithms/generated/networkx.algorithms.traversal.depth_first_search.dfs_labeled_edges.html
-pub struct ExtendPaths<'a> {
-    graph: &'a POAGraph,
+pub struct PathExtender<'a, G, N, O>
+where
+    G: AlignableGraph<NodeIndex=N>,
+    N: NodeIndexType,
+    O: OffsetType,
+{
+    graph: &'a G,
     seq: &'a [u8],
-    stack: Vec<ExtendCandidate<'a>>,
-    curr_path: Vec<(usize, usize)>,
-    has_new_path: bool
+    stack: Vec<ExtendCandidate<'a, N, O>>,
+    curr_path: Vec<(N, O)>,
+    has_new_path: bool,
 }
 
-impl<'a> ExtendPaths<'a> {
-    pub fn new<Offset: OffsetPrimitive>(graph: &'a POAGraph, seq: &'a [u8],
-               start_node: usize, offset: Offset) -> Self {
-        let offset_as_usize: usize = match offset.try_into() {
-            Ok(v) => v,
-            Err(_) => panic!("Could not obtain offset!")
-        };
-
+impl<'a, G, N, O> PathExtender<'a, G, N, O>
+where
+    G: AlignableGraph<NodeIndex=N>,
+    N: NodeIndexType,
+    O: OffsetType,
+{
+    pub fn new(graph: &'a G, seq: &'a [u8], start_node: N, offset: O) -> Self {
         let succ_iter = RefCell::new(Box::new(graph.successors(start_node)));
 
         Self {
-            graph, seq,
-            stack: vec![ExtendCandidate(start_node, offset_as_usize, succ_iter)],
+            graph,
+            seq,
+            stack: vec![ExtendCandidate(start_node, offset, succ_iter)],
             curr_path: vec![],
-            has_new_path: false
+            has_new_path: false,
         }
     }
 
     /// Find the next valid child of a given node
     ///
-    /// Valid children are those that have a matching symbol in the query, and bring the alignment
-    /// further (i.e., the query offset is equal or higher than the current highest value)
-    fn next_valid_child<Compute: WFCompute>(&self, parent: &ExtendCandidate, compute: &Compute) -> Option<(usize, usize)> {
-        if parent.offset() >= self.seq.len() {
+    /// Valid children are those that have a matching symbol in the query and that 
+    /// have not been visited before.
+    fn next_valid_child<T, Ix>(&self, parent: &ExtendCandidate<N, O>, tree: &T) -> Option<(N, O)>
+    where
+        T: AlignmentStateTree<N, O, Ix>,
+        Ix: TreeIndexType
+    {
+        if parent.offset().as_usize() >= self.seq.len() {
             return None
         }
 
-        if let Some(child) = parent.children_iter().next() {
-            let child_offset = parent.offset() + 1;
+        while let Some(child) = parent.children_iter().next() {
+            let child_offset = parent.offset().increase_one();
 
-            eprintln!("- checking rank {} ({}) vs child offset {} - 1 = {} ({}), equal: {}", child, self.graph.get_symbol(child),
-                      child_offset, child_offset-1, char::from(self.seq[child_offset-1]),
-                      self.graph.is_symbol_equal(child, self.seq[child_offset-1]));
-            if self.graph.is_symbol_equal(child, self.seq[child_offset-1]) && compute.is_further(child, child_offset) {
-                eprintln!("- is further too");
-                Some((child, child_offset))
-            } else {
-                None
+            if self.graph.is_symbol_equal(child, self.seq[child_offset.as_usize() - 1]) &&
+                !tree.visited(child, child_offset, AlignState::Match)
+            {
+                return Some((child, child_offset))
             }
-        } else {
-            None
         }
+
+        None
     }
 
-    pub fn next<Compute: WFCompute>(&mut self, compute: &Compute) -> Option<Vec<(usize, usize)>> {
+    pub fn next<T, Ix>(&mut self, tree: &mut T) -> Option<Vec<(N, O)>>
+    where
+        T: AlignmentStateTree<N, O, Ix>,
+        Ix: TreeIndexType
+    {
         while !self.stack.is_empty() {
             let parent = self.stack.last().unwrap();
-            if let Some((child, child_offset)) = self.next_valid_child(parent, compute) {
+            if let Some((child, child_offset)) = self.next_valid_child(parent, tree) {
                 // Going forward in the depth-first matches search tree, set flag that we have a new path
                 self.has_new_path = true;
+                tree.mark_visited(child, child_offset, AlignState::Match);
 
                 self.curr_path.push((child, child_offset));
                 let child_succ = RefCell::new(Box::new(self.graph.successors(child)));
@@ -99,7 +117,6 @@ impl<'a> ExtendPaths<'a> {
                 // but first, if we are at a leaf node, return the path and prepare for further
                 // exploration of the graph
                 let path_to_return = if self.has_new_path {
-                    eprintln!("At leaf node, path: {:?}", self.curr_path);
                     Some(self.curr_path.clone())
                 } else {
                     None
@@ -118,6 +135,5 @@ impl<'a> ExtendPaths<'a> {
         }
 
         None
-
     }
 }

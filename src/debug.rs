@@ -11,9 +11,7 @@ use crate::errors::PoastaError;
 pub mod messages {
     use serde::{Serialize, Deserialize};
     use petgraph::Graph;
-    use crate::graph::POAGraph;
-    use crate::wavefront::offsets::OffsetPrimitive;
-    use crate::wavefront::GraphWavefront;
+    use crate::graphs::poa::POAGraph;
 
     #[derive(Debug, Serialize, Deserialize)]
     pub enum DebugOutputMessage {
@@ -31,30 +29,6 @@ pub mod messages {
                  Self::ExtendPath { start: (start_node, offset_as_usize), path }
             } else {
                 panic!("Could not convert offset!")
-            }
-        }
-
-        pub fn new_from_wavefront<T: OffsetPrimitive>(score: i64, wf_type: &str, wf: &GraphWavefront<T>) -> Self {
-            let points: Option<Vec<(usize, usize, bool)>> = wf.get_offsets()
-                .map(|v| {
-                    v.iter()
-                        .enumerate()
-                        .filter_map(|(rank, cell)| {
-                            cell.as_ref().map(|inner| {
-                                if let Ok(offset) = inner.offset().try_into() {
-                                    (rank, offset, inner.is_endpoint())
-                                } else {
-                                    panic!("Could not convert offset!")
-                                }
-                            })
-                        })
-                        .collect()
-                });
-
-            if let Some(v) = points {
-                Self::CurrWavefront { score, wf_type: wf_type.to_string(), node_offsets: v }
-            } else {
-                Self::Empty
             }
         }
 

@@ -10,9 +10,9 @@ use petgraph::dot::Dot;
 use poasta::debug::DebugOutputWriter;
 use poasta::debug::messages::DebugOutputMessage;
 
-use poasta::graph::POAGraph;
-use poasta::wavefront::aligner::WavefrontPOAligner;
-use poasta::wavefront::compute::gap_affine::WFComputeGapAffine;
+use poasta::graphs::poa::POAGraph;
+use poasta::aligner::PoastaAligner;
+use poasta::aligner::scoring::gap_affine::GapAffine;
 use poasta::errors::PoastaError;
 use poasta::io::load_graph;
 
@@ -90,10 +90,12 @@ fn align(align_args: &AlignArgs) -> Result<()> {
         POAGraph::new()
     };
 
-    let mut aligner: WavefrontPOAligner<WFComputeGapAffine<u32>> = if let Some(ref debug) = debug_writer {
-        WavefrontPOAligner::new_with_debug_output(debug)
+    // TODO: make configurable through CLI
+    let scoring = GapAffine::new(4, 2, 6);
+    let mut aligner: PoastaAligner<GapAffine> = if let Some(ref debug) = debug_writer {
+        PoastaAligner::new_with_debug_output(scoring, debug)
     } else {
-        WavefrontPOAligner::new()
+        PoastaAligner::new(scoring)
     };
 
     // Let's read the sequences from the given FASTA
@@ -120,7 +122,7 @@ fn align(align_args: &AlignArgs) -> Result<()> {
         if graph.is_empty() {
             graph.add_alignment_with_weights(record.name(), record.sequence(), None, &weights)?;
         } else {
-            let alignment = aligner.align(&graph, record.sequence());
+            let alignment = aligner.align::<u32, u32, _, _, _>(&graph, record.sequence());
             graph.add_alignment_with_weights(record.name(), record.sequence(), Some(&alignment), &weights)?;
         }
     }
@@ -158,6 +160,7 @@ fn align(align_args: &AlignArgs) -> Result<()> {
 
     if let Some(debug) = debug_writer {
         eprintln!("Waiting for debug writer thread to finish...");
+        debug.log(DebugOutputMessage::Terminate);
         debug.join()?;
     }
 
