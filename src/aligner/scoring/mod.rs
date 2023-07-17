@@ -1,9 +1,12 @@
 pub mod gap_linear;
 pub mod gap_affine;
 
+use std::fmt::Display;
 use crate::aligner::offsets::OffsetType;
 use crate::aligner::state::{AlignState, StateTreeNode, TreeIndexType, Backtrace};
 use crate::graphs::{AlignableGraph, NodeIndexType};
+
+pub use gap_affine::GapAffine;
 
 
 pub trait AlignmentCosts: Copy {
@@ -39,7 +42,7 @@ pub trait AlignmentCostsTwoPiece: AlignmentCostsAffine {
 
 /// A trait that defines operations on the alignment state tree, and thus provides an interface
 /// to generate new alignment states based on current states.
-pub trait AlignmentStateTree<N, O, Ix>
+pub trait AlignmentStateTree<N, O, Ix>: Display
 where
     N: NodeIndexType,
     O: OffsetType,
@@ -47,6 +50,7 @@ where
 {
     fn add_node(&mut self, node: StateTreeNode<N, O, Ix>) -> Ix;
     fn get_node(&self, node_ix: Ix) -> &StateTreeNode<N, O, Ix>;
+    fn num_nodes(&self) -> usize;
 
     fn visited(&self, node: N, offset: O, state: AlignState) -> bool;
     fn mark_visited(&mut self, node: N, offset: O, state: AlignState);

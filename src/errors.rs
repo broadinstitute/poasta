@@ -1,5 +1,5 @@
 use std::error::Error;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::io;
 use std::sync::mpsc::SendError;
 use petgraph::algo::Cycle;
@@ -28,6 +28,9 @@ pub enum PoastaError {
 
     /// Other IO errors
     IOError(io::Error),
+
+    /// Other formatting errors
+    FormatError(std::fmt::Error),
 
     /// Debug output error
     DebugError { source: SendError<DebugOutputMessage> },
@@ -75,6 +78,11 @@ impl From<SendError<DebugOutputMessage>> for PoastaError {
     }
 }
 
+impl From<std::fmt::Error> for PoastaError {
+    fn from(value: std::fmt::Error) -> Self {
+        Self::FormatError(value)
+    }
+}
 
 impl Display for PoastaError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -92,7 +100,9 @@ impl Display for PoastaError {
             Self::SerializationError { source: _ } =>
                 write!(f, "Could not serialize the graph to file!"),
             Self::IOError(ref err) =>
-                err.fmt(f),
+                std::fmt::Display::fmt(err, f),
+            Self::FormatError(ref err) =>
+                std::fmt::Display::fmt(err, f),
             Self::DebugError { source: _ } =>
                 write!(f, "Could not log debug data!"),
             Self::Other =>

@@ -5,8 +5,16 @@ use std::hash::Hash;
 
 use petgraph::graph::IndexType;
 
-pub trait NodeIndexType: Copy + Hash + PartialOrd + Ord + PartialEq + Eq + Debug + Default { }
-impl<T: IndexType> NodeIndexType for T { }
+pub trait NodeIndexType: Copy + Hash + PartialOrd + Ord + PartialEq + Eq + Debug + Default {
+    fn index(&self) -> usize;
+}
+
+impl<T: IndexType> NodeIndexType for T {
+    #[inline(always)]
+    fn index(&self) -> usize {
+        self.index()
+    }
+}
 
 pub trait AlignableGraph {
     type NodeIndex: NodeIndexType;

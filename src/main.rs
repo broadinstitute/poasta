@@ -1,18 +1,20 @@
 use std::fs::File;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::io::{stdout, IsTerminal, Write};
 
 use clap::{Parser, Subcommand, Args, ValueEnum};
 use noodles::fasta;
 use anyhow::{Result, Context};
 
-use petgraph::dot::Dot;
+use petgraph::graph::IndexType;
+use serde::de::DeserializeOwned;
+use poasta::aligner::alignment::print_alignment;
 use poasta::debug::DebugOutputWriter;
 use poasta::debug::messages::DebugOutputMessage;
 
-use poasta::graphs::poa::POAGraph;
+use poasta::graphs::poa::{POAGraph, POAGraphWithIx};
 use poasta::aligner::PoastaAligner;
-use poasta::aligner::scoring::gap_affine::GapAffine;
+use poasta::aligner::scoring::{AlignmentCosts, GapAffine};
 use poasta::errors::PoastaError;
 use poasta::io::load_graph;
 
@@ -78,36 +80,26 @@ struct AlignArgs {
 
 }
 
-fn align(align_args: &AlignArgs) -> Result<()> {
-    let debug_writer = align_args.debug_output.as_ref().map(|v| {
-        DebugOutputWriter::new(v)
-    });
-
-    let mut graph = if let Some(path) = &align_args.graph {
-        let file_in = File::open(path)?;
-        load_graph(&file_in)?
-    } else {
-        POAGraph::new()
-    };
-
-    // TODO: make configurable through CLI
-    let scoring = GapAffine::new(4, 2, 6);
-    let mut aligner: PoastaAligner<GapAffine> = if let Some(ref debug) = debug_writer {
-        PoastaAligner::new_with_debug_output(scoring, debug)
-    } else {
-        PoastaAligner::new(scoring)
-    };
-
+fn perform_alignment<Ix, C>(
+    graph: &mut POAGraph<Ix>,
+    aligner: &mut PoastaAligner<C>,
+    debug_writer: Option<&DebugOutputWriter>,
+    sequences_fname: &Path
+) -> Result<()>
+where
+    Ix: IndexType + DeserializeOwned,
+    C: AlignmentCosts,
+{
     // Let's read the sequences from the given FASTA
-    let mut reader = fasta::reader::Builder::default().build_from_path(&align_args.sequences)
+    let mut reader = fasta::reader::Builder::default()
+        .build_from_path(sequences_fname)
         .with_context(|| "Could not read FASTA file!".to_string())?;
 
     for result in reader.records() {
         let record = result?;
         let weights: Vec<usize> = vec![1; record.sequence().len()];
-        eprintln!("Aligning {}", record.name());
 
-        if let Some(ref debug) = debug_writer {
+        if let Some(debug) = debug_writer {
             debug.log(DebugOutputMessage::NewSequence {
                 seq_name: record.name().to_string(),
                 seq_length: record.sequence().len(),
@@ -120,11 +112,54 @@ fn align(align_args: &AlignArgs) -> Result<()> {
         }
 
         if graph.is_empty() {
+            eprintln!("Creating initial graph from {}...", record.name());
             graph.add_alignment_with_weights(record.name(), record.sequence(), None, &weights)?;
         } else {
-            let alignment = aligner.align::<u32, u32, _, _, _>(&graph, record.sequence());
+            eprintln!("Aligning {}...", record.name());
+            let (score, alignment) = aligner.align::<u32, usize, _, _, _>(graph, record.sequence());
+            eprintln!("Done. Alignment Score: {:?}", score);
+            eprintln!();
+            if alignment.len() < 2000 {
+                eprintln!("{}", print_alignment(graph, record.sequence(), &alignment));
+                eprintln!();
+            }
+
             graph.add_alignment_with_weights(record.name(), record.sequence(), Some(&alignment), &weights)?;
         }
+    }
+
+    Ok(())
+}
+
+fn align_subcommand(align_args: &AlignArgs) -> Result<()> {
+    let debug_writer = align_args.debug_output.as_ref().map(|v| {
+        DebugOutputWriter::new(v)
+    });
+
+    let mut graph = if let Some(path) = &align_args.graph {
+        let file_in = File::open(path)?;
+        load_graph(&file_in)?
+    } else {
+        POAGraphWithIx::USIZE(POAGraph::new())
+    };
+
+    // TODO: make configurable through CLI
+    let scoring = GapAffine::new(4, 2, 6);
+    let mut aligner: PoastaAligner<GapAffine> = if let Some(ref debug) = debug_writer {
+        PoastaAligner::new_with_debug_output(scoring, debug)
+    } else {
+        PoastaAligner::new(scoring)
+    };
+
+    match graph {
+        POAGraphWithIx::U8(ref mut g) =>
+            perform_alignment(g, &mut aligner, debug_writer.as_ref(), align_args.sequences.as_ref())?,
+        POAGraphWithIx::U16(ref mut g) =>
+            perform_alignment(g, &mut aligner, debug_writer.as_ref(), align_args.sequences.as_ref())?,
+        POAGraphWithIx::U32(ref mut g) =>
+            perform_alignment(g, &mut aligner, debug_writer.as_ref(), align_args.sequences.as_ref())?,
+        POAGraphWithIx::USIZE(ref mut g) =>
+            perform_alignment(g, &mut aligner, debug_writer.as_ref(), align_args.sequences.as_ref())?,
     }
 
     // Determine where to write the graph to
@@ -145,15 +180,7 @@ fn align(align_args: &AlignArgs) -> Result<()> {
             }
         },
         OutputType::DOT => {
-            let transformed = graph.graph.map(
-                |ix, data|
-                    format!("{:?} ({:?})", char::from(data.symbol), graph.get_node_rank(ix)),
-                |_, data|
-                    format!("{}, {:?}", data.weight, data.sequence_ids)
-            );
-
-            let dot = Dot::new(&transformed);
-            write!(writer, "{:?}", dot)?
+            write!(writer, "{}", &graph)?
         }
         _ => return Err(PoastaError::Other).with_context(|| "Other output formats not supported yet!".to_string())
     }
@@ -172,7 +199,7 @@ fn main() -> Result<()> {
 
     match &args.command {
         Some(CliSubcommand::Align(v)) => {
-            align(v)?
+            align_subcommand(v)?
         },
         None => {
             return Err(PoastaError::Other).with_context(|| "No subcommand given.".to_string())

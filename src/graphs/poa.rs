@@ -12,6 +12,7 @@ use serde::de::DeserializeOwned;
 use crate::errors::PoastaError;
 use crate::aligner::alignment::{AlignedPair, Alignment};
 use crate::graphs::{AlignableGraph, NodeIndexType};
+use crate::io::graph::format_as_dot;
 
 /// A sequence aligned to the POA graph.
 ///
@@ -363,5 +364,34 @@ where
 
     fn is_symbol_equal(&self, node: Self::NodeIndex, symbol: u8) -> bool {
         self.graph[node].symbol == symbol
+    }
+}
+
+impl<Ix> Display for POAGraph<Ix>
+where
+    Ix: PetgraphIndexType
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        format_as_dot(f, self)
+    }
+}
+
+/// Wrapper with fixed node index types to make serialization to disk easier
+#[derive(Serialize, Deserialize)]
+pub enum POAGraphWithIx {
+    U8(POAGraph<u8>),
+    U16(POAGraph<u16>),
+    U32(POAGraph<u32>),
+    USIZE(POAGraph<usize>)
+}
+
+impl Display for POAGraphWithIx {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::U8(g) => format_as_dot(f, g),
+            Self::U16(g) => format_as_dot(f, g),
+            Self::U32(g) => format_as_dot(f, g),
+            Self::USIZE(g) => format_as_dot(f, g)
+        }
     }
 }

@@ -1,6 +1,8 @@
+use std::fmt::{Display, Formatter};
 use std::collections::HashSet;
 
 use crate::graphs::{AlignableGraph, NodeIndexType};
+use crate::io::state_tree::write_tree_gml;
 use crate::aligner::offsets::OffsetType;
 use crate::aligner::scoring::{AlignmentCosts, AlignmentCostsAffine, AlignmentCostsEdit, AlignmentCostsLinear, AlignmentStateTree};
 use crate::aligner::state::{AlignState, StateTree, StateTreeNode, Backtrace, TreeIndexType};
@@ -100,6 +102,10 @@ where
     #[inline(always)]
     fn get_node(&self, node_ix: Ix) -> &StateTreeNode<N, O, Ix> {
         self.tree.get_node(node_ix)
+    }
+
+    fn num_nodes(&self) -> usize {
+        self.tree.num_nodes()
     }
 
     fn visited(&self, node: N, offset: O, state: AlignState) -> bool {
@@ -235,5 +241,18 @@ where
         };
 
         new_states
+    }
+}
+
+impl<N, O, Ix> Display for GapAffineStateTree<N, O, Ix>
+    where
+        N: NodeIndexType,
+        O: OffsetType,
+        Ix: TreeIndexType,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write_tree_gml(f, self)?;
+
+        Ok(())
     }
 }

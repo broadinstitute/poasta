@@ -5,15 +5,15 @@ pub mod scoring;
 pub mod queue;
 pub mod alignment;
 
-use crate::debug::DebugOutputWriter;
-
-use extend::PathExtender;
-
 use crate::graphs::{AlignableGraph, NodeIndexType};
 use crate::aligner::offsets::OffsetType;
 use crate::aligner::state::{AlignState, StateTreeNode, Backtrace, TreeIndexType};
-use crate::aligner::queue::AlignStateQueue;
 use crate::aligner::scoring::AlignmentCosts;
+use crate::aligner::queue::AlignStateQueue;
+use crate::aligner::extend::PathExtender;
+
+use crate::debug::DebugOutputWriter;
+use crate::debug::messages::DebugOutputMessage;
 
 pub use alignment::{AlignedPair, Alignment};
 
@@ -32,7 +32,6 @@ where
 {
     costs: C,
     debug_output: Option<&'a DebugOutputWriter>,
-    num_seq_aligned: usize,
 }
 
 impl<'a, C> PoastaAligner<'a, C>
@@ -43,7 +42,6 @@ where
         Self {
             costs,
             debug_output: None,
-            num_seq_aligned: 1
         }
     }
 
@@ -51,11 +49,10 @@ where
         PoastaAligner {
             costs,
             debug_output: Some(debug_writer),
-            num_seq_aligned: 1
         }
     }
 
-    pub fn align<O, Ix, G, T, N>(&mut self, graph: &G, sequence: &T) -> Alignment<N>
+    pub fn align<O, Ix, G, T, N>(&mut self, graph: &G, sequence: &T) -> (usize, Alignment<N>)
     where
         O: OffsetType,
         Ix: TreeIndexType,
@@ -103,8 +100,9 @@ where
                 NewExtendedNodes(updated_queue) => current = updated_queue
             }
 
-            // If the end not reached yet, expand into next alignment states, including mismatches,
-            // and indels. New states to explore are queued per score.
+            // If the end not reached yet, expand into next alignment states, including mismatches
+            // and indels. New states to explore are queued per score, such that lower scores are
+            // explored first.
             for state_ix in current {
                 for (score_delta, new_state) in state_tree.generate_next(graph, seq.len(), state_ix) {
                     queue.enqueue(score_delta - 1, new_state);
@@ -114,9 +112,13 @@ where
             score += 1;
         }
 
-        eprintln!("Alignment score: {:?}", score);
+        let alignment = self.backtrace(&state_tree, reached_end_state);
 
-        self.backtrace(&state_tree, reached_end_state)
+        if let Some(debug) = self.debug_output {
+            debug.log(DebugOutputMessage::new_from_state_tree(&state_tree));
+        }
+
+        (score, alignment)
     }
 
     fn extend<O, Ix, G, N, T>(
@@ -225,35 +227,28 @@ where
                     match bt {
                         Backtrace::SingleStep(_) => {
                             alignment.push(AlignedPair { rpos: Some(state.node()), qpos: Some(state.offset().as_usize() - 1) });
-                            eprintln!("{:?} (node: {:?}, offset: {:?})", alignment.last().unwrap(), state.node(), state.offset());
                         },
                         Backtrace::ExtraMatches(_, matching_nodes) => {
                             let mut offset = state.offset().as_usize();
                             alignment.push(AlignedPair { rpos: Some(state.node()), qpos: Some(offset - 1) });
-                            eprintln!("{:?} (node: {:?}, offset: {:?})", alignment.last().unwrap(), state.node(), offset);
 
                             for ext_match in matching_nodes.iter().rev() {
                                 offset -= 1;
                                 alignment.push(AlignedPair { rpos: Some(*ext_match), qpos: Some(offset - 1) });
-                                eprintln!("{:?} (node: {:?}, offset: {:?})", alignment.last().unwrap(), ext_match, offset);
                             }
                         },
                         // On indel close we don't have to do anything, the next iteration will take care of the indel
-                        Backtrace::ClosedIndel(_) => {
-                            eprintln!("Indel close (node: {:?}, offset: {:?})", state.node(), state.offset());
-                        }
+                        Backtrace::ClosedIndel(_) => (),
                     }
                 },
                 AlignState::Insertion => {
                     alignment.push(AlignedPair { rpos: None, qpos: Some(state.offset().as_usize() - 1) });
-                    eprintln!("{:?} (node: {:?}, offset: {:?})", alignment.last().unwrap(), state.node(), state.offset());
                 },
                 AlignState::Deletion => {
                     alignment.push(AlignedPair { rpos: Some(state.node()), qpos: None });
-                    eprintln!("{:?} (rank: {:?}, offset: {:?})", alignment.last().unwrap(), state.node(), state.offset());
                 },
                 AlignState::Start | AlignState::Insertion2 | AlignState::Deletion2 =>
-                    eprintln!("Unexpected align state in backtrace!")
+                    panic!("Unexpected align state in backtrace!")
             }
 
             let prev_node = bt.prev();

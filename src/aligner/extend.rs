@@ -16,10 +16,6 @@ where
     N: NodeIndexType,
     O: OffsetType,
 {
-    pub fn node(&self) -> N {
-        self.0
-    }
-
     pub fn offset(&self) -> O {
         self.1
     }

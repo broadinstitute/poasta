@@ -99,6 +99,10 @@ where
         (0..self.nodes.len()).map(|ix| Ix::new(ix))
     }
 
+    pub fn num_nodes(&self) -> usize {
+        self.nodes.len()
+    }
+
     #[inline(always)]
     pub fn get_node(&self, ix: Ix) -> &StateTreeNode<N, O, Ix> {
         &self.nodes[ix.index()]
