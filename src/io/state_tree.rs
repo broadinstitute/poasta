@@ -27,6 +27,7 @@ where
         let ix = Ix::new(i);
         writeln!(writer, "  node [")?;
         writeln!(writer, "    id {:?}", i)?;
+        writeln!(writer, "    label {}", i)?;
         writeln!(writer, "    graph_node_ix {}", tree.get_node(ix).node().index())?;
         writeln!(writer, "    offset {:?}", tree.get_node(ix).offset())?;
         writeln!(writer, "    state \"{:?}\"", tree.get_node(ix).state())?;

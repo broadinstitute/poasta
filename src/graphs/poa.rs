@@ -92,7 +92,7 @@ where
     pub graph: POAGraphType<Ix>,
     pub sequences: Vec<Sequence<POANodeIndex<Ix>>>,
     topological_sorted: Vec<POANodeIndex<Ix>>,
-    start_node: Vec<POANodeIndex<Ix>>,
+    start_nodes: Vec<POANodeIndex<Ix>>,
     end_nodes: Vec<POANodeIndex<Ix>>,
 }
 
@@ -105,7 +105,7 @@ where
             graph: POAGraphType::<Ix>::default(),
             sequences: Vec::new(),
             topological_sorted: Vec::new(),
-            start_node: Vec::new(),
+            start_nodes: Vec::new(),
             end_nodes: Vec::new(),
         }
     }
@@ -280,9 +280,10 @@ where
     fn post_process(&mut self) -> Result<(), PoastaError> {
         self.topological_sorted.clear();
 
-        for start_ix in self.start_node.iter() {
+        for start_ix in self.start_nodes.iter() {
             self.graph.remove_node(*start_ix);
         }
+        self.start_nodes.clear();
 
         // Create a special "start" node that has outgoing edges to all other nodes without other
         // incoming edges
@@ -293,7 +294,7 @@ where
                 self.graph.add_edge(start_node, node, POAEdgeData::new_for_start());
             }
         }
-        self.start_node.push(start_node);
+        self.start_nodes.push(start_node);
 
         self.topological_sorted = toposort(&self.graph, None)?;
 
@@ -347,7 +348,7 @@ where
     type SuccessorIterator<'a> = Neighbors<'a, POAEdgeData, Ix>;
 
     fn start_nodes(&self) -> &Vec<Self::NodeIndex> {
-        &self.start_node
+        &self.start_nodes
     }
 
     fn successors(&self, node: Self::NodeIndex) -> Self::SuccessorIterator<'_> {
