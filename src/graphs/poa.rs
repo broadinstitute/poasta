@@ -1,7 +1,9 @@
-use petgraph::graph::{DiGraph, IndexType as PetgraphIndexType, Neighbors};
+use std::fmt::{Display, Formatter};
+use petgraph::graph::{IndexType as PetgraphIndexType};
 use petgraph::Incoming;
 use petgraph::algo::toposort;
-use petgraph::prelude::NodeIndex;
+use petgraph::prelude::{NodeIndex, StableDiGraph};
+use petgraph::stable_graph::Neighbors;
 use petgraph::visit::GraphBase;
 
 use serde::{Deserialize, Serialize};
@@ -78,7 +80,7 @@ impl POAEdgeData {
     }
 }
 
-pub type POAGraphType<Ix> = DiGraph<POANodeData<NodeIndex<Ix>>, POAEdgeData, Ix>;
+pub type POAGraphType<Ix> = StableDiGraph<POANodeData<NodeIndex<Ix>>, POAEdgeData, Ix>;
 type POANodeIndex<Ix> = <POAGraphType<Ix> as GraphBase>::NodeId;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -277,14 +279,15 @@ where
     fn post_process(&mut self) -> Result<(), PoastaError> {
         self.topological_sorted.clear();
 
-        if let Some(curr_start) = self.start_node.first() {
-            self.graph.remove_node(*curr_start);
+        for start_ix in self.start_node.iter() {
+            self.graph.remove_node(*start_ix);
         }
 
         // Create a special "start" node that has outgoing edges to all other nodes without other
         // incoming edges
         let start_node = self.graph.add_node(POANodeData::new(b'#'));
-        for node in self.graph.node_indices() {
+        let all_nodes: Vec<NodeIndex<Ix>> = self.graph.node_indices().collect();
+        for node in all_nodes.into_iter() {
             if node != start_node && self.graph.neighbors_directed(node, Incoming).count() == 0 {
                 self.graph.add_edge(start_node, node, POAEdgeData::new_for_start());
             }
