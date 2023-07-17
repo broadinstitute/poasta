@@ -107,7 +107,7 @@ where
             });
 
             if !graph.is_empty() {
-                debug.log(DebugOutputMessage::new_from_graph(&graph));
+                debug.log(DebugOutputMessage::new_from_graph(graph));
             }
         }
 

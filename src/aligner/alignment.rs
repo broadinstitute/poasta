@@ -39,9 +39,9 @@ where
 {
     let seq = sequence.as_ref();
 
-    let mut graph_chars = Vec::new();
-    let mut aln_chars = Vec::new();
-    let mut query_chars = Vec::new();
+    let mut graph_chars = Vec::with_capacity(aln.len());
+    let mut aln_chars = Vec::with_capacity(aln.len());
+    let mut query_chars = Vec::with_capacity(aln.len());
 
     for pair in aln {
         if pair.is_aligned() {
