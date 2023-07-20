@@ -39,7 +39,7 @@ where
         let ix = Ix::new(i);
         if let Some(bt) = tree.get_node(ix).backtrace() {
             match bt {
-                Backtrace::SingleStep(parent) => {
+                Backtrace::Step(parent) => {
                     writeln!(writer, "  edge [")?;
                     writeln!(writer, "    source {:?}", parent)?;
                     writeln!(writer, "    target {:?}", ix)?;
@@ -55,19 +55,6 @@ where
                     writeln!(writer, "    ext_matching_nodes \"_networkx_list_start\"")?;
                     writeln!(writer, "  ]")?;
                 },
-                Backtrace::ExtraMatches(parent, matches) => {
-                    writeln!(writer, "  edge [")?;
-                    writeln!(writer, "    source {:?}", parent)?;
-                    writeln!(writer, "    target {:?}", ix)?;
-                    writeln!(writer, "    type \"extend_matches\"")?;
-                    if matches.len() <= 1 {
-                        writeln!(writer, "    ext_matching_nodes \"_networkx_list_start\"")?;
-                    }
-                    for node in matches {
-                        writeln!(writer, "    ext_matching_nodes {:?}", node.index())?;
-                    }
-                    writeln!(writer, "  ]")?;
-                }
             }
         }
     }

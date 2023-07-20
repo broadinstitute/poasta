@@ -13,10 +13,22 @@ impl<Ix: TreeIndexType> AlignStateQueue<Ix> {
 
     pub fn enqueue(&mut self, score_delta: u8, tree_node_ix: Ix) {
         if self.queue.len() <= score_delta as usize {
-            self.queue.resize(score_delta as usize + 1, Vec::default());
+            if let Some(last) = self.queue.back() {
+                self.queue.resize(score_delta as usize + 1, Vec::with_capacity(last.len()));
+            } else {
+                self.queue.resize(score_delta as usize + 1, Vec::default());
+            }
         }
 
         self.queue[score_delta as usize].push(tree_node_ix);
+    }
+
+    pub fn add_additional(&mut self, additional: Vec<Ix>) {
+        if let Some(front) = self.queue.front_mut() {
+            front.extend(additional.into_iter())
+        } else {
+            self.queue.push_back(additional)
+        }
     }
 
     pub fn pop_current(&mut self) -> Option<Vec<Ix>> {
@@ -24,6 +36,6 @@ impl<Ix: TreeIndexType> AlignStateQueue<Ix> {
     }
 
     pub fn next(&mut self) {
-        self.queue.remove(0);
+        self.queue.pop_front();
     }
 }

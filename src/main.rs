@@ -119,10 +119,8 @@ where
             let (score, alignment) = aligner.align::<u32, usize, _, _, _>(graph, record.sequence());
             eprintln!("Done. Alignment Score: {:?}", score);
             eprintln!();
-            if alignment.len() < 2000 {
-                eprintln!("{}", print_alignment(graph, record.sequence(), &alignment));
-                eprintln!();
-            }
+            eprintln!("{}", print_alignment(graph, record.sequence(), &alignment));
+            eprintln!();
 
             graph.add_alignment_with_weights(record.name(), record.sequence(), Some(&alignment), &weights)?;
         }

@@ -1,9 +1,11 @@
 use std::fmt::{Display, Formatter};
-use std::collections::HashSet;
+
+use ahash::AHashSet;
 
 use crate::graphs::{AlignableGraph, NodeIndexType};
 use crate::io::state_tree::write_tree_gml;
 use crate::aligner::offsets::OffsetType;
+use crate::aligner::queue::AlignStateQueue;
 use crate::aligner::scoring::{AlignmentCosts, AlignmentCostsAffine, AlignmentCostsEdit, AlignmentCostsLinear, AlignmentStateTree};
 use crate::aligner::state::{AlignState, StateTree, StateTreeNode, Backtrace, TreeIndexType};
 
@@ -67,9 +69,9 @@ where
 {
     costs: GapAffine,
     tree: StateTree<N, O, Ix>,
-    visited_m: HashSet<(N, O)>,
-    visited_d: HashSet<(N, O)>,
-    visited_i: HashSet<(N, O)>,
+    visited_m: AHashSet<(N, O)>,
+    visited_d: AHashSet<(N, O)>,
+    visited_i: AHashSet<(N, O)>,
 }
 
 impl<N, O, Ix> GapAffineStateTree<N, O, Ix>
@@ -82,9 +84,9 @@ where
         Self {
             costs,
             tree: StateTree::new(),
-            visited_m: HashSet::default(),
-            visited_d: HashSet::default(),
-            visited_i: HashSet::default()
+            visited_m: AHashSet::default(),
+            visited_d: AHashSet::default(),
+            visited_i: AHashSet::default()
         }
     }
 }
@@ -155,30 +157,32 @@ where
 
     fn generate_next<G>(
         &mut self,
+        queue: &mut AlignStateQueue<Ix>,
         graph: &G,
         seq_len: usize,
         curr_ix: Ix
-    ) -> Vec<(u8, Ix)>
+    )
     where
         G: AlignableGraph<NodeIndex=N>,
         Ix: TreeIndexType,
     {
-        let mut new_states = Vec::default();
+        let seq_len_as_o = O::new(seq_len);
+
         match self.get_node(curr_ix).state() {
             AlignState::Start | AlignState::Match | AlignState::Mismatch  => {
                 // For each successor we can either enter a mismatch state or open a deletion
                 for succ in graph.successors(self.get_node(curr_ix).node()) {
                     // Mismatch, only if there's still query sequence to match
-                    if self.get_node(curr_ix).offset().as_usize() < seq_len {
+                    if self.get_node(curr_ix).offset() < seq_len_as_o {
                         let key_mismatch = (succ, self.get_node(curr_ix).offset().increase_one());
                         if !self.visited_m.contains(&key_mismatch) {
                             self.visited_m.insert(key_mismatch);
 
                             let new_state = StateTreeNode::new(
                                 succ, self.get_node(curr_ix).offset().increase_one(),
-                                AlignState::Mismatch, Backtrace::SingleStep(curr_ix));
+                                AlignState::Mismatch, Backtrace::Step(curr_ix));
                             let new_ix = self.tree.add_node(new_state);
-                            new_states.push((self.costs.mismatch(), new_ix));
+                            queue.enqueue(self.costs.mismatch() - 1, new_ix);
                         }
                     }
 
@@ -188,13 +192,13 @@ where
                         self.visited_d.insert(key_del);
 
                         let new_state = StateTreeNode::new(
-                            succ, self.get_node(curr_ix).offset(), AlignState::Deletion, Backtrace::SingleStep(curr_ix));
+                            succ, self.get_node(curr_ix).offset(), AlignState::Deletion, Backtrace::Step(curr_ix));
                         let new_ix = self.tree.add_node(new_state);
-                        new_states.push((self.costs.gap_open() + self.costs.gap_extend(), new_ix));
+                        queue.enqueue(self.costs.gap_open() + self.costs.gap_extend() - 1, new_ix);
                     }
                 }
 
-                if self.get_node(curr_ix).offset().as_usize() < seq_len {
+                if self.get_node(curr_ix).offset() < seq_len_as_o {
                     // Open insertion
                     let key_ins = (self.get_node(curr_ix).node(), self.get_node(curr_ix).offset().increase_one());
                     if !self.visited_i.contains(&key_ins) {
@@ -202,9 +206,9 @@ where
 
                         let new_state = StateTreeNode::new(
                             self.get_node(curr_ix).node(), self.get_node(curr_ix).offset().increase_one(),
-                            AlignState::Insertion, Backtrace::SingleStep(curr_ix));
+                            AlignState::Insertion, Backtrace::Step(curr_ix));
                         let new_ix = self.tree.add_node(new_state);
-                        new_states.push((self.costs.gap_open() + self.costs.gap_extend(), new_ix));
+                        queue.enqueue(self.costs.gap_open() + self.costs.gap_extend() - 1, new_ix);
                     }
                 }
             },
@@ -217,30 +221,28 @@ where
 
                         let new_state = StateTreeNode::new(
                             succ, self.get_node(curr_ix).offset(),
-                            AlignState::Deletion, Backtrace::SingleStep(curr_ix));
+                            AlignState::Deletion, Backtrace::Step(curr_ix));
                         let new_ix = self.tree.add_node(new_state);
-                        new_states.push((self.costs.cost_gap_extend, new_ix));
+                        queue.enqueue(self.costs.gap_extend() - 1, new_ix);
                     }
                 }
             },
             AlignState::Insertion => {
-                if self.get_node(curr_ix).offset().as_usize() < seq_len {
+                if self.get_node(curr_ix).offset() < seq_len_as_o {
                     let key_ins = (self.get_node(curr_ix).node(), self.get_node(curr_ix).offset().increase_one());
                     if !self.visited_i.contains(&key_ins) {
                         self.visited_i.insert(key_ins);
 
                         let new_state = StateTreeNode::new(
                             self.get_node(curr_ix).node(), self.get_node(curr_ix).offset().increase_one(),
-                            AlignState::Insertion, Backtrace::SingleStep(curr_ix));
+                            AlignState::Insertion, Backtrace::Step(curr_ix));
                         let new_ix = self.tree.add_node(new_state);
-                        new_states.push((self.costs.cost_gap_extend, new_ix));
+                        queue.enqueue(self.costs.gap_extend() - 1, new_ix);
                     }
                 }
             }
             _ => panic!("Invalid alignment state for gap affine!")
         };
-
-        new_states
     }
 }
 

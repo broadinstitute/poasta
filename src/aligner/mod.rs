@@ -4,6 +4,7 @@ pub mod extend;
 pub mod scoring;
 pub mod queue;
 pub mod alignment;
+pub mod visited;
 
 use crate::graphs::{AlignableGraph, NodeIndexType};
 use crate::aligner::offsets::OffsetType;
@@ -52,12 +53,12 @@ where
         }
     }
 
-    pub fn align<O, Ix, G, T, N>(&mut self, graph: &G, sequence: &T) -> (usize, Alignment<N>)
+    pub fn align<O, Ix, G, S, N>(&mut self, graph: &G, sequence: &S) -> (usize, Alignment<N>)
     where
         O: OffsetType,
         Ix: TreeIndexType,
         G: AlignableGraph<NodeIndex=N>,
-        T: AsRef<[u8]>,
+        S: AsRef<[u8]>,
         N: NodeIndexType,
     {
         let seq = sequence.as_ref();
@@ -92,21 +93,19 @@ where
             current.extend(new_states.into_iter());
 
             // Try to extend the alignment along matching sequence in the graph
-            match self.extend(graph, seq, &mut state_tree, &current) {
+            match self.extend(graph, seq, &mut state_tree, &mut current) {
                 ReachedEnd(end) => {
                     reached_end_state = end;
                     break;
                 },
-                NewExtendedNodes(updated_queue) => current = updated_queue
+                NewExtendedNodes(additional_nodes) => current.extend(additional_nodes.into_iter())
             }
 
             // If the end not reached yet, expand into next alignment states, including mismatches
             // and indels. New states to explore are queued per score, such that lower scores are
             // explored first.
             for state_ix in current {
-                for (score_delta, new_state) in state_tree.generate_next(graph, seq.len(), state_ix) {
-                    queue.enqueue(score_delta - 1, new_state);
-                }
+                state_tree.generate_next(&mut queue, graph, seq.len(), state_ix);
             }
 
             score += 1;
@@ -126,7 +125,7 @@ where
         graph: &G,
         seq: &[u8],
         tree: &mut T,
-        queue: &[Ix]
+        queue: &mut [Ix]
     ) -> ExtendResult<Ix>
     where
         O: OffsetType,
@@ -152,38 +151,30 @@ where
         }
 
         // Let's try to extend along matching sequence in the graph
-        let mut updated_queue = Vec::new();
-        for node_ix in queue.iter() {
+        let mut additional_states = Vec::with_capacity(queue.len());
+        for node_ix in queue.iter_mut() {
             let node = tree.get_node(*node_ix);
 
             match node.state() {
                 AlignState::Start | AlignState::Match | AlignState::Mismatch => {
-                    let mut path_extender = PathExtender::new(graph, seq, node.node(), node.offset());
+                    let path_extender = PathExtender::new(graph, seq, tree, *node_ix);
 
-                    let mut extended = false;
-                    while let Some(path) = path_extender.next(tree) {
-                        let new_ix = tree.add_extended_path(*node_ix, path);
-
-                        updated_queue.push(new_ix);
-                        extended = true;
-                    }
-
-                    if !extended {
-                        // We tried extending from the current node but could not find a matching path.
-                        // To make sure we don't lose it in our queue, add it to the vector to return
-                        updated_queue.push(*node_ix);
+                    let mut first = true;
+                    for new_tree_ix in path_extender {
+                        if first {
+                            *node_ix = new_tree_ix;
+                            first = false;
+                        } else {
+                            additional_states.push(new_tree_ix)
+                        }
                     }
                 },
-                _ => {
-                    // For all states other than the (mis)match state, we don't need to extend,
-                    // but we do want to keep them in our queue
-                    updated_queue.push(*node_ix);
-                }
+                AlignState::Deletion | AlignState::Deletion2 | AlignState::Insertion | AlignState::Insertion2 => ()
             }
         }
 
         // Check if one of our extended paths have reached the end
-        if let Some(end) = updated_queue.iter()
+        if let Some(end) = queue.iter().chain(additional_states.iter())
             .find(|ix| {
                 let node = tree.get_node(**ix);
                 match node.state() {
@@ -197,7 +188,7 @@ where
             return ReachedEnd(*end);
         }
 
-        NewExtendedNodes(updated_queue)
+        NewExtendedNodes(additional_states)
     }
 
     fn backtrace<O, Ix, N, T>(
@@ -225,17 +216,8 @@ where
             match state.state() {
                 AlignState::Match | AlignState::Mismatch => {
                     match bt {
-                        Backtrace::SingleStep(_) => {
+                        Backtrace::Step(_) => {
                             alignment.push(AlignedPair { rpos: Some(state.node()), qpos: Some(state.offset().as_usize() - 1) });
-                        },
-                        Backtrace::ExtraMatches(_, matching_nodes) => {
-                            let mut offset = state.offset().as_usize();
-                            alignment.push(AlignedPair { rpos: Some(state.node()), qpos: Some(offset - 1) });
-
-                            for ext_match in matching_nodes.iter().rev() {
-                                offset -= 1;
-                                alignment.push(AlignedPair { rpos: Some(*ext_match), qpos: Some(offset - 1) });
-                            }
                         },
                         // On indel close we don't have to do anything, the next iteration will take care of the indel
                         Backtrace::ClosedIndel(_) => (),

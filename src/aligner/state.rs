@@ -124,7 +124,7 @@ where
     graph_node: N,
     offset: O,
     state: AlignState,
-    backtrace: Option<Backtrace<N, Ix>>,
+    backtrace: Option<Backtrace<Ix>>,
 }
 
 impl<N, O, Ix> StateTreeNode<N, O, Ix>
@@ -137,7 +137,7 @@ where
         Self { graph_node, offset: O::zero(), state: AlignState::Start, backtrace: None }
     }
 
-    pub fn new(graph_node: N, offset: O, state: AlignState, backtrace: Backtrace<N, Ix>) -> Self {
+    pub fn new(graph_node: N, offset: O, state: AlignState, backtrace: Backtrace<Ix>) -> Self {
         Self { graph_node, offset, state, backtrace: Some(backtrace) }
     }
 
@@ -153,40 +153,33 @@ where
         self.state
     }
 
-    pub fn backtrace(&self) -> Option<&Backtrace<N, Ix>> {
+    pub fn backtrace(&self) -> Option<&Backtrace<Ix>> {
         self.backtrace.as_ref()
     }
 }
 
-pub enum Backtrace<N, Ix>
+pub enum Backtrace<Ix>
 where
-    N: NodeIndexType,
     Ix: TreeIndexType
 {
     /// Represents a single alignment step with no extra matching nodes. The only data stored in this
     /// variant is the index to the previous node in the alignment state tree.
-    SingleStep(Ix),
+    Step(Ix),
 
     /// Represents closing an indel, with the only data stored is the index of the align tree
     /// state node that represents the still open indel. It's a special backtrace state because it doesn't output
     /// any alignment characters.
     ClosedIndel(Ix),
-
-    /// Represents a backtrace step after "Extend", with extra matching nodes between the current
-    /// alignment state tree node and the previous node stored in a vector.
-    ExtraMatches(Ix, Vec<N>),
 }
 
-impl<N, Ix> Backtrace<N, Ix>
+impl<Ix> Backtrace<Ix>
 where
-    N: NodeIndexType,
     Ix: TreeIndexType,
 {
     pub fn prev(&self) -> Ix {
         match *self {
-            Self::SingleStep(prev) => prev,
+            Self::Step(prev) => prev,
             Self::ClosedIndel(prev) => prev,
-            Self::ExtraMatches(prev, _) => prev,
         }
     }
 }

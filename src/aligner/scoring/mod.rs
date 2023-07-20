@@ -7,6 +7,7 @@ use crate::aligner::state::{AlignState, StateTreeNode, TreeIndexType, Backtrace}
 use crate::graphs::{AlignableGraph, NodeIndexType};
 
 pub use gap_affine::GapAffine;
+use crate::aligner::queue::AlignStateQueue;
 
 
 pub trait AlignmentCosts: Copy {
@@ -57,25 +58,24 @@ where
 
     fn close_indels_for(&mut self, node_indices: &[Ix]) -> Vec<Ix>;
 
-    fn add_extended_path(&mut self, start_ix: Ix, path: Vec<(N, O)>) -> Ix {
-        let last = path.last().unwrap();
+    fn add_extended_path(&mut self, start_ix: Ix, path: impl Iterator<Item=(N, O)>) -> Ix {
+        let mut parent_tree_node = start_ix;
+        for (node, offset) in path {
+            let new_state = StateTreeNode::new(node, offset, AlignState::Match,
+                Backtrace::Step(parent_tree_node));
+            parent_tree_node = self.add_node(new_state)
+        }
 
-        // Store matching nodes other than the last with the edge to the parent state
-        let edge_nodes: Vec<N> = path[..path.len()-1].iter()
-            .map(|v| v.0)
-            .collect();
-
-        let new_state = StateTreeNode::new(last.0, last.1, AlignState::Match,
-                                           Backtrace::ExtraMatches(start_ix, edge_nodes));
-        self.add_node(new_state)
+        parent_tree_node
     }
 
     fn generate_next<G>(
         &mut self,
+        queue: &mut AlignStateQueue<Ix>,
         graph: &G,
         seq_len: usize,
         curr_ix: Ix,
-    ) -> Vec<(u8, Ix)>
+    )
     where
         G: AlignableGraph<NodeIndex=N>;
 }

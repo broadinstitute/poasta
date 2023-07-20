@@ -4,7 +4,7 @@ use std::hash::Hash;
 use num::{FromPrimitive, Unsigned, One, Bounded};
 
 pub trait OffsetType: FromPrimitive + Unsigned + PartialEq + Eq +
-    Default + Copy + Hash + Debug + Bounded
+    PartialOrd + Default + Copy + Hash + Debug + Bounded
 {
     fn new(value: usize) -> Self;
     fn as_usize(&self) -> usize;
