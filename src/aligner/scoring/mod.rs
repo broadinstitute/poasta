@@ -17,8 +17,9 @@ pub trait AlignmentCosts: Copy {
         O: OffsetType,
         Ix: TreeIndexType;
 
-    fn to_new_state_tree<N, O, Ix>(&self) -> Self::StateTreeType<N, O, Ix>
+    fn to_new_state_tree<G, N, O, Ix>(&self, graph: &G) -> Self::StateTreeType<N, O, Ix>
     where
+        G: AlignableGraph<NodeIndex=N>,
         N: NodeIndexType,
         O: OffsetType,
         Ix: TreeIndexType;

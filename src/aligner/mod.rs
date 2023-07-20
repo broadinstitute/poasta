@@ -67,7 +67,7 @@ where
         assert!(seq.len() - 1 < max_offset, "Sequence is too long for Offset integer type!");
 
         let mut queue = AlignStateQueue::new();
-        let mut state_tree: <C as AlignmentCosts>::StateTreeType<N, O, Ix> = self.costs.to_new_state_tree();
+        let mut state_tree: <C as AlignmentCosts>::StateTreeType<N, O, Ix> = self.costs.to_new_state_tree(graph);
 
         // Add graph start nodes to queue
         for start_node in graph.start_nodes().iter() {

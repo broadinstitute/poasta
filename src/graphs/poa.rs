@@ -3,7 +3,7 @@ use petgraph::graph::{IndexType as PetgraphIndexType};
 use petgraph::Incoming;
 use petgraph::algo::toposort;
 use petgraph::prelude::{NodeIndex, StableDiGraph};
-use petgraph::stable_graph::Neighbors;
+use petgraph::stable_graph::{Neighbors, NodeIndices};
 use petgraph::visit::GraphBase;
 
 use serde::{Deserialize, Serialize};
@@ -345,7 +345,16 @@ where
     Ix: PetgraphIndexType + DeserializeOwned,
 {
     type NodeIndex = POANodeIndex<Ix>;
+    type NodeIterator<'a> = NodeIndices<'a, POANodeData<POANodeIndex<Ix>>, Ix>;
     type SuccessorIterator<'a> = Neighbors<'a, POAEdgeData, Ix>;
+
+    fn all_nodes(&self) -> Self::NodeIterator<'_> {
+        self.graph.node_indices()
+    }
+
+    fn node_count(&self) -> usize {
+        self.graph.node_count()
+    }
 
     fn start_nodes(&self) -> &Vec<Self::NodeIndex> {
         &self.start_nodes

@@ -18,9 +18,13 @@ impl<T: IndexType> NodeIndexType for T {
 
 pub trait AlignableGraph {
     type NodeIndex: NodeIndexType;
+    type NodeIterator<'a>: Iterator<Item=Self::NodeIndex> + 'a
+        where Self: 'a;
     type SuccessorIterator<'a>: Iterator<Item=Self::NodeIndex> + 'a
         where Self: 'a;
 
+    fn all_nodes(&self) -> Self::NodeIterator<'_>;
+    fn node_count(&self) -> usize;
     fn start_nodes(&self) -> &Vec<Self::NodeIndex>;
     fn successors(&self, node: Self::NodeIndex) -> Self::SuccessorIterator<'_>;
 
