@@ -54,23 +54,29 @@ def load_spoa_matrix(fname):
     return xlabels, ylabels, pandas.DataFrame({"rank": row_data, "offset": col_data, "score": score_data})
 
 
-poasta_node_label = re.compile(r"'(\w)' \((\d+)\)")
-spoa_node_label = re.compile(r"(\d+) - (\w)")
+poasta_node_label = re.compile(r"'(\w|#)' \((\d+)\)")
 
 
 def load_graph(fname):
     g = nx.nx_agraph.read_dot(fname)
+    tsorted = list(nx.topological_sort(g))
 
     g.graph['rankdir'] = 'TB'
     g.graph['graph']['rankdir'] = 'TB'
 
-    for n, ndata in g.nodes(data=True):
+    node_ix_to_rank = {}
+
+    for rank, n in enumerate(tsorted):
+        print(rank, n)
+        ndata = g.nodes[n]
+        ndata['rank'] = rank
+
         if (match := poasta_node_label.search(ndata['label'])):
-            ndata['rank'] = int(match.group(2))
+            node_ix = int(match.group(2))
+            ndata['node_ix'] = node_ix
+            node_ix_to_rank[node_ix] = rank
+
             ndata['symbol'] = match.group(1)
-        elif (match := spoa_node_label.search(ndata['label'])):
-            ndata['rank'] = int(match.group(1)) + 1
-            ndata['symbol'] = match.group(2)
         else:
             print("Could not parse node label:", ndata['label'], file=sys.stderr)
 
@@ -81,7 +87,7 @@ def load_graph(fname):
 
     g.remove_edges_from(edges_to_delete)
 
-    return g
+    return g, node_ix_to_rank
 
 
 def poa_graph_layout(g):
@@ -110,113 +116,76 @@ def poa_matrix_discontinuieties(g):
     return list(sorted(hlines))
 
 
-@dataclass
-class PoastaIteration:
-    score: Optional[int] = 0
-    extend_paths: Optional[list[tuple]] = field(default_factory=list)
-    wavefronts: Optional[dict[str, dict[str, list[int | bool]]]] = field(default_factory=dict)
+def state_tree_to_df(tree):
+    root = next(nx.topological_sort(tree))
 
-    def to_dataframe(self, kind):
-        nodes = []
-        offsets = []
-        is_endpoints = []
+    print("root", tree.nodes[root])
 
-        if kind == "deletion":
-            nodes.append(0)
-            offsets.append(None)
-            is_endpoints.append(False)
+    data = [
+        {"graph_ix": tree.nodes[root]['graph_node_ix'],
+         "offset": tree.nodes[root]['offset'],
+         "matrix": "Match",
+         "score": 0}
+    ]
+    scores = {root: 0}
 
-        for rank, (offset, is_endpoint) in self.wavefronts[kind].items():
-            nodes.append(rank)
-            offsets.append(offset)
-            is_endpoints.append(is_endpoint)
+    for prev, curr in nx.bfs_edges(tree, root):
+        prev_offset = tree.nodes[prev]['offset']
+        prev_state = tree.nodes[prev]['state']
+        prev_score = scores[prev]
 
-        return pandas.DataFrame({
-            "score": pandas.Series([self.score] * len(nodes), dtype=int),
-            "kind": pandas.Series([kind] * len(nodes)),
-            "rank": pandas.Series(nodes, dtype=int),
-            "offset": pandas.Series(offsets, dtype=float),
-            "is_endpoint": pandas.Series(is_endpoints, dtype=bool),
+        curr_offset = tree.nodes[curr]['offset']
+        curr_state = tree.nodes[curr]['state']
+
+        match prev_state:
+            case "Start" | "Match" | "Mismatch":
+                score_delta = {
+                    "Match": 0,
+                    "Mismatch": 4,
+                    "Deletion": 8,
+                    "Insertion": 8
+                }
+            case "Deletion":
+                score_delta = {
+                    "Match": 0,
+                    "Deletion": 2,
+                }
+            case "Insertion":
+                score_delta = {
+                    "Match": 0,
+                    "Insertion": 2,
+                }
+
+        curr_score = prev_score + score_delta[curr_state]
+        scores[curr] = curr_score
+
+        if curr_state == "Match":
+            edge_data = tree.edges[prev, curr]
+            o = prev_offset + 1
+
+            if edge_data['type'] == "extend_matches" and edge_data['ext_matching_nodes'] != "_networkx_list_start":
+                for n in edge_data['ext_matching_nodes']:
+                    data.append({
+                        "graph_ix": n,
+                        "offset": o,
+                        "score": curr_score,
+                        "matrix": "Match"
+                    })
+
+                    o += 1
+
+        data.append({
+            "graph_ix": tree.nodes[curr]['graph_node_ix'],
+            "offset": curr_offset,
+            "matrix": {
+                "Start": "Match",
+                "Mismatch": "Match",
+            }.get(curr_state, curr_state),
+            "score": curr_score
         })
 
-    def to_dataframe_after_extend(self, kind):
-        if kind == "match":
-            # Apply offsets from path extension
-            data = self.wavefronts.get(kind, {}).copy()
-            for path in self.extend_paths:
-                for node, offset in path[:-1]:
-                    data[int(node)] = (int(offset), False)
+    return pandas.DataFrame(data).set_index('matrix')
 
-                data[int(path[-1][0])] = (int(path[-1][1]), True)
-
-        else:
-            data = self.wavefronts.get(kind, {})
-
-        nodes = []
-        offsets = []
-        is_endpoints = []
-
-        if kind == "deletion":
-            nodes.append(0)
-            offsets.append(None)
-            is_endpoints.append(False)
-
-        for rank, (offset, is_endpoint) in data.items():
-            nodes.append(rank)
-            offsets.append(offset)
-            is_endpoints.append(is_endpoint)
-
-        return pandas.DataFrame({
-            "score": pandas.Series([self.score] * len(nodes), dtype=int),
-            "kind": pandas.Series([kind] * len(nodes)),
-            "rank": pandas.Series(nodes, dtype=int),
-            "offset": pandas.Series(offsets, dtype=float),
-            "is_endpoint": pandas.Series(is_endpoints, dtype=bool),
-        })
-
-
-@dataclass
-class PoastaAlignment:
-    seq_name: Optional[str] = None
-    seq_length: Optional[int] = 0
-    max_rank: Optional[int] = 0
-    iterations: list[PoastaIteration] = field(default_factory=list)
-
-
-def load_poasta_log(logfile):
-    alignment = PoastaAlignment()
-    curr_iteration = PoastaIteration(score=0)
-    curr_iteration.wavefronts["match"] = {0: (0, True)}
-
-    with open(logfile) as f:
-        for line in f:
-            line = line.strip()
-
-            if not line:
-                continue
-
-            entry = json.loads(line)
-            kind, data = next(iter(entry.items()))
-
-            if kind == "NewSequence":
-                alignment.seq_name = data['seq_name']
-                alignment.seq_length = data['seq_length']
-                alignment.max_rank = data['max_rank']
-            elif kind == "ExtendPath":
-                curr_iteration.extend_paths.append([data['start'], *data['path']])
-            elif kind == "CurrWavefront":
-                if curr_iteration.score != data['score']:
-                    alignment.iterations.append(curr_iteration)
-                    curr_iteration = PoastaIteration(score=int(data['score']))
-
-                curr_iteration.wavefronts[data['wf_type']] = defaultdict(dict)
-
-                for rank, offset, is_endpoint in data['node_offsets']:
-                    curr_iteration.wavefronts[data['wf_type']][int(rank)] = (int(offset), bool(is_endpoint))
-
-        alignment.iterations.append(curr_iteration)
-
-    return alignment
 
 
 def main():
@@ -224,7 +193,7 @@ def main():
 
     parser.add_argument('graph', type=Path,
                         help="The graph used for alignment in DOT format")
-    parser.add_argument('poasta_log', type=Path,
+    parser.add_argument('poasta_aln_tree', type=Path,
                         help="The POASTA debug log for a specific sequence")
     parser.add_argument('-o', '--output', type=Path, required=True,
                         help="Output directory")
@@ -238,110 +207,98 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
 
     print("Loading graph...", file=sys.stderr)
-    g = load_graph(args.graph)
+    g, node_ix_to_rank = load_graph(args.graph)
     graph_layout = poa_graph_layout(g)
 
     print("Loading poasta data...", file=sys.stderr)
-    alignment = load_poasta_log(args.poasta_log)
+    tree = nx.read_gml(args.poasta_aln_tree)
+    tree_score_df = state_tree_to_df(tree)
+    print(tree_score_df['graph_ix'].map(node_ix_to_rank))
+    for gix in tree_score_df['graph_ix'].unique():
+        if gix not in node_ix_to_rank:
+            print(gix)
+
+    tree_score_df['rank'] = tree_score_df['graph_ix'].map(node_ix_to_rank).astype(int)
 
     print("Creating plots...", file=sys.stderr)
-    iter_dfs_after_ext = defaultdict(list)
+    max_score = int(tree_score_df['score'].max())
+    max_rank = int(tree_score_df['rank'].max()) + 1
+    max_offset = int(tree_score_df['offset'].max()) + 1
+    xlabels = list(range(max_offset))
+    yticks = numpy.arange(max_rank) + 0.5
 
-    max_score = alignment.iterations[-1].score
-    xlabels = list(range(alignment.seq_length + 1))
-    yticks = numpy.arange(alignment.max_rank) + 0.5
-    ylabels = ["0 (S)", *(f"{ndata['rank']} ({ndata['symbol']})" for n, ndata in g.nodes(data=True))]
+    nodes_sorted = [n for n in sorted(g.nodes(data=True), key=lambda d: d[1]['rank'])]
+    ylabels = [f"{ndata['rank']} ({ndata['symbol']})" for n, ndata in nodes_sorted]
     hlines = poa_matrix_discontinuieties(g)
 
-    xlabels_score = [str(i.score) for i in alignment.iterations]
+    xlabels_score = [f"{score:g}" for score in tree_score_df['score'].unique()]
 
-    for aln_iter in alignment.iterations:
-        fig, axes = plt.subplots(3, 5, figsize=(20, 20), width_ratios=[2, 8.75, 0.25, 8.75, 0.25],
+    for score in tree_score_df['score'].unique():
+        fig, axes = plt.subplots(1, 3, figsize=(8, 6), width_ratios=[1, 8.75, 0.25],
                                  constrained_layout=True)
 
-        for row, kind in enumerate(["insertion", "deletion", "match"]):
-            nx.draw(g, pos=graph_layout, ax=axes[row, 0], node_size=75,
+        for row, kind in enumerate(["Match"]):
+            nx.draw(g, pos=graph_layout, ax=axes[0], node_size=75,
                     labels={n: ndata['symbol'] for n, ndata in g.nodes(data=True)},
                     font_size=6)
 
-            df_after_ext = aln_iter.to_dataframe_after_extend(kind)
-            iter_dfs_after_ext[kind].append(df_after_ext)
-            df = pandas.concat(iter_dfs_after_ext[kind], ignore_index=True).set_index(['rank', 'offset'])
+            score_df = tree_score_df.loc[kind].copy()
+            score_df = (score_df[score_df['score'] <= score]
+                        .set_index(['rank', 'offset']))
 
-            print("Processing score", aln_iter.score, f"({kind})", file=sys.stderr)
-            if len(df) > 0:
+            print("Processing score", score, f"({kind})", file=sys.stderr)
+            if len(score_df) > 0:
                 # Only keep cells with lowest score
-                deduplicated = df[~df.index.duplicated(keep='first')].reset_index()
-                seaborn.heatmap(deduplicated.pivot(index="rank", columns="offset", values="score"),
+                duplicated = score_df.index.duplicated(keep=False)
+                if numpy.count_nonzero(duplicated) > 0:
+                    print("DUPLICATED:", file=sys.stderr)
+                    print(score_df[duplicated], file=sys.stderr)
+
+                # deduplicated = df[~df.index.duplicated(keep='first')].reset_index()
+                deduplicated = score_df.reset_index()
+
+                # Make heatmap DF
+                pivot = deduplicated.pivot(index="rank", columns="offset", values="score")
+
+                # Ensure rows/cols exists even when no data exists for those
+                rows = pivot.index.union(list(range(max_rank + 1)), sort=True)
+                cols = pivot.columns.union(list(range(max_offset)), sort=True)
+
+                pivot = pivot.reindex(index=rows, columns=cols).sort_index()
+                if kind == "Match":
+                    print(score_df)
+                    print(pivot.index)
+                    print(pivot.columns)
+                    print(pivot)
+
+                seaborn.heatmap(pivot,
                                 cmap="plasma", vmin=0, vmax=max_score,
                                 xticklabels=xlabels, yticklabels=ylabels,
                                 annot=True, fmt="g", annot_kws={"fontsize": "x-small"},
-                                ax=axes[row, 1], cbar_ax=axes[row, 2])
-
-            if kind == "match":
-                for path in aln_iter.extend_paths:
-                    path_x = numpy.array([p[1] + 0.6 for p in path])
-                    path_y = numpy.array([p[0] + 0.6 for p in path])
-
-                    axes[row, 1].plot(path_x, path_y, color='white', marker='o', alpha=0.5)
+                                ax=axes[1], cbar_ax=axes[2])
 
             for y in hlines:
-                axes[row, 1].axhline(y, color='black')
+                axes[1].axhline(y, color='black')
 
-            axes[row, 0].set_axis_on()
-            axes[row, 0].yaxis.set_visible(True)
-            axes[row, 0].invert_yaxis()
-            axes[row, 0].tick_params(axis="y", left=True, labelleft=True)
-            axes[row, 0].set_ylim(0, len(ylabels))
-            axes[row, 0].set_yticks(numpy.arange(len(ylabels)) + 0.5)
-            axes[row, 0].set_yticklabels(ylabels)
-            axes[row, 0].set_ylabel("Rank (node)")
-            axes[row, 1].set_title(f"{kind.upper()} matrix")
-            axes[row, 1].sharey(axes[row, 0])
-            axes[row, 1].set_yticks(yticks)
-            axes[row, 1].set_yticklabels(ylabels)
-            axes[row, 1].tick_params(left=False, labelleft=False)
-            axes[row, 1].set_ylabel("")
-            axes[row, 1].set_ylim(0, len(ylabels))
-            axes[row, 1].invert_yaxis()
-            axes[row, 2].set_ylabel("Score")
-            axes[row, 2].yaxis.set_ticks_position('left')
-            axes[row, 2].yaxis.set_label_position('left')
+            axes[0].set_axis_on()
+            axes[0].yaxis.set_visible(True)
+            axes[0].invert_yaxis()
+            axes[0].tick_params(axis="y", left=True, labelleft=True)
+            axes[0].set_ylim(0, len(ylabels))
+            axes[0].set_yticks(yticks)
+            axes[0].set_yticklabels(ylabels)
+            axes[0].set_ylabel("Rank (node)")
+            axes[1].set_title(f"{kind.upper()} matrix")
+            axes[1].sharey(axes[0])
+            axes[1].set_yticks(yticks)
+            axes[1].set_yticklabels(ylabels)
+            axes[1].tick_params(left=False, labelleft=False)
+            axes[1].set_ylabel("")
+            axes[1].set_ylim(0, len(ylabels))
+            axes[1].invert_yaxis()
+            axes[2].set_ylabel("Score")
 
-            if len(df) > 0:
-                seaborn.heatmap(df.reset_index().pivot(index="rank", columns="score", values="offset"),
-                                cmap="plasma", vmin=0, vmax=alignment.seq_length + 1,
-                                xticklabels=xlabels_score,
-                                annot=True, fmt="g", annot_kws={"fontsize": "x-small"},
-                                ax=axes[row, 3], cbar_ax=axes[row, 4])
-
-            axes[row, 3].set_title(f"{kind.upper()} wavefront")
-            axes[row, 3].set_ylim(0, len(ylabels))
-            axes[row, 3].sharey(axes[row, 0])
-            axes[row, 3].set_ylabel("")
-            axes[row, 3].tick_params(left=True, labelleft=False)
-            axes[row, 4].set_ylabel("Offset")
-
-            # Highlight alignment end points
-            scatter_x = []
-            scatter_y = []
-            for record in df_after_ext[df_after_ext['is_endpoint']].itertuples():
-                scatter_x.append(record.offset + 0.5)
-                scatter_y.append(record.rank + 0.5)
-
-            axes[row, 1].scatter(scatter_x, scatter_y, s=150, facecolors='none', edgecolors='white', alpha=0.5)
-
-            scatter_x = []
-            scatter_y = []
-            df = df.reset_index()
-            score_to_x = {s: x for x, s in enumerate(df['score'].unique())}
-            for record in df[df['is_endpoint']].itertuples():
-                scatter_x.append(score_to_x[record.score] + 0.5)
-                scatter_y.append(record.rank + 0.5)
-
-            axes[row, 3].scatter(scatter_x, scatter_y, s=100, facecolors='none', edgecolors='white', alpha=0.5)
-
-        fig.savefig(args.output / "score{}.after_extend.png".format(aln_iter.score), dpi=300)
+        fig.savefig(args.output / "score{}.png".format(score), dpi=300)
         plt.close(fig)
 
 
