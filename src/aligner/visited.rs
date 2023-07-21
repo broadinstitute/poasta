@@ -1,5 +1,5 @@
-use std::collections::{BTreeSet, HashSet};
-use ahash::AHashSet;
+use std::collections::{HashSet};
+use rustc_hash::FxHashSet;
 use crate::aligner::offsets::OffsetType;
 use crate::graphs::{AlignableGraph, NodeIndexType};
 
@@ -24,7 +24,7 @@ impl<N, O> VisitedSet<N, O> for HashSet<(N, O)>
 }
 
 pub struct VisitedSetPerNode<O> {
-    visited: Vec<AHashSet<O>>
+    visited: Vec<FxHashSet<O>>
 }
 
 impl<O> VisitedSetPerNode<O>
@@ -36,7 +36,7 @@ where
         G: AlignableGraph,
     {
         Self {
-            visited: vec![AHashSet::new(); graph.node_count()]
+            visited: vec![FxHashSet::default(); graph.node_count()]
         }
     }
 }
@@ -55,7 +55,6 @@ where
     }
 }
 
-#[cfg(feature = "ahash")]
 mod ahash_set {
     use ahash::AHashSet;
     use crate::aligner::offsets::OffsetType;
