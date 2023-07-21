@@ -78,7 +78,7 @@ where
 
         let mut score = 0;
         let reached_end_state;
-        loop {
+        'main: loop {
             let Some(mut current) = queue.pop_current() else {
                 panic!("Empty queue?")
             };
@@ -105,7 +105,10 @@ where
             // and indels. New states to explore are queued per score, such that lower scores are
             // explored first.
             for state_ix in current {
-                state_tree.generate_next(&mut queue, graph, seq.len(), state_ix);
+                if let Some(end) = state_tree.generate_next(&mut queue, graph, seq.len(), state_ix) {
+                    reached_end_state = end;
+                    break 'main;
+                }
             }
 
             score += 1;
@@ -116,6 +119,9 @@ where
         if let Some(debug) = self.debug_output {
             debug.log(DebugOutputMessage::new_from_state_tree(&state_tree));
         }
+
+        let dp_cells = ((seq.len() + 1) * graph.node_count()) * 3;
+        eprintln!("States explored: {:?}, {:.1}% of DP cells ({})", state_tree.num_nodes(), (state_tree.num_nodes() as f64 * 100.0) / dp_cells as f64, dp_cells);
 
         (score, alignment)
     }

@@ -76,7 +76,7 @@ where
         graph: &G,
         seq_len: usize,
         curr_ix: Ix,
-    )
+    ) -> Option<Ix>
     where
         G: AlignableGraph<NodeIndex=N>;
 }

@@ -60,7 +60,6 @@ impl AlignmentCostsAffine for GapAffine {
     }
 }
 
-
 pub struct GapAffineStateTree<N, O, Ix>
 where
     N: NodeIndexType,
@@ -88,6 +87,15 @@ where
             visited_d: VisitedSetPerNode::new(graph),
             visited_i: VisitedSetPerNode::new(graph),
         }
+    }
+
+    #[inline]
+    fn is_end_node<G>(&self, graph: &G, seq_len: usize, state: Ix) -> bool
+    where
+        G: AlignableGraph<NodeIndex=N>
+    {
+        let node = self.tree.get_node(state);
+        node.offset().as_usize() == seq_len && graph.is_end(node.node())
     }
 }
 
@@ -157,12 +165,13 @@ where
         graph: &G,
         seq_len: usize,
         curr_ix: Ix
-    )
+    ) -> Option<Ix>
     where
         G: AlignableGraph<NodeIndex=N>,
         Ix: TreeIndexType,
     {
         let seq_len_as_o = O::new(seq_len);
+        assert!(curr_ix.index() < self.tree.num_nodes());
 
         match self.get_node(curr_ix).state() {
             AlignState::Start | AlignState::Match | AlignState::Mismatch  => {
@@ -178,6 +187,11 @@ where
                                 succ, new_offset,
                                 AlignState::Mismatch, Backtrace::Step(curr_ix));
                             let new_ix = self.tree.add_node(new_state);
+
+                            if self.is_end_node(graph, seq_len, new_ix) {
+                                return Some(new_ix)
+                            }
+
                             queue.enqueue(self.costs.mismatch() - 1, new_ix);
                         }
                     }
@@ -190,6 +204,7 @@ where
                         let new_state = StateTreeNode::new(
                             succ, offset, AlignState::Deletion, Backtrace::Step(curr_ix));
                         let new_ix = self.tree.add_node(new_state);
+
                         queue.enqueue(self.costs.gap_open() + self.costs.gap_extend() - 1, new_ix);
                     }
                 }
@@ -205,6 +220,7 @@ where
                             curr_node, new_offset,
                             AlignState::Insertion, Backtrace::Step(curr_ix));
                         let new_ix = self.tree.add_node(new_state);
+
                         queue.enqueue(self.costs.gap_open() + self.costs.gap_extend() - 1, new_ix);
                     }
                 }
@@ -241,6 +257,8 @@ where
             }
             _ => panic!("Invalid alignment state for gap affine!")
         };
+
+        None
     }
 }
 

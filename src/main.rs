@@ -95,6 +95,7 @@ where
         .build_from_path(sequences_fname)
         .with_context(|| "Could not read FASTA file!".to_string())?;
 
+    let mut i = 1;
     for result in reader.records() {
         let record = result?;
         let weights: Vec<usize> = vec![1; record.sequence().len()];
@@ -112,18 +113,20 @@ where
         }
 
         if graph.is_empty() {
-            eprintln!("Creating initial graph from {}...", record.name());
+            // eprintln!("Creating initial graph from {}...", record.name());
             graph.add_alignment_with_weights(record.name(), record.sequence(), None, &weights)?;
         } else {
-            eprintln!("Aligning {}...", record.name());
+            eprint!("Aligning #{i} {}... ", record.name());
             let (score, alignment) = aligner.align::<u32, usize, _, _, _>(graph, record.sequence());
-            eprintln!("Done. Alignment Score: {:?}", score);
-            eprintln!();
-            eprintln!("{}", print_alignment(graph, record.sequence(), &alignment));
-            eprintln!();
+            // eprintln!("Done. Alignment Score: {:?}", score);
+            // eprintln!();
+            // eprintln!("{}", print_alignment(graph, record.sequence(), &alignment));
+            // eprintln!();
 
             graph.add_alignment_with_weights(record.name(), record.sequence(), Some(&alignment), &weights)?;
         }
+
+        i += 1;
     }
 
     Ok(())
