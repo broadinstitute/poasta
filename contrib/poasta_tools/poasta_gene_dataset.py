@@ -9,32 +9,11 @@ RefSeq genomes, and use this script to extract specific gene sequences from them
 
 import argparse
 import gzip
-import shlex
-from pathlib import Path
-import subprocess
 import re
+from pathlib import Path
 from tqdm import tqdm
 
 import skbio
-
-
-def get_aliases(gene):
-    proc = subprocess.Popen(
-        "esearch -db gene -query {} | efetch -format docsum "
-        "| xtract -pattern DocumentSummary -element OtherAliases".format(
-            shlex.quote(f"{gene}[Gene Name]")),
-        shell=True, stdout=subprocess.PIPE,
-    )
-
-    all_aliases = set()
-    for line in proc.stdout:
-        if not line.strip():
-            continue
-
-        all_aliases.update((v.strip().decode('ascii') for v in line.split(b',')))
-
-    return all_aliases
-
 
 gene_name_re = re.compile(r"\[gene=(.*?)\]")
 
@@ -74,47 +53,6 @@ def main():
     )
 
     args = parser.parse_args()
-
-    asm_summary_cols = [
-        'asm_accession',
-        'bioproject',
-        'biosample',
-        'wgs_master',
-        'refseq_category',
-        'taxid',
-        'species_taxid',
-        'organism_name',
-        'infraspecific_name',
-        'isolate',
-        'version_status',
-        'assembly_level',
-        'release_type',
-        'genome_rep',
-        'seq_rel_date',
-        'asm_name',
-        'asm_submitter',
-        'gbrs_paired_asm',
-        'paired_asm_comp',
-        'ftp_path',
-        'excluded_from_refseq',
-        'relation_to_type_material',
-        'asm_not_live_date',
-        'assembly_type',
-        'group',
-        'genome_size',
-        'genome_size_ungapped',
-        'gc_percent',
-        'replicon_count',
-        'scaffold_count',
-        'contig_count',
-        'annotation_provider',
-        'annotation_name',
-        'annotation_date',
-        'total_gene_count',
-        'protein_coding_gene_count',
-        'non_coding_gene_count',
-        'pubmed_id',
-    ]
 
     for gene in args.genes:
         extract_genes(gene, args.refseq, args.output_dir / gene)
