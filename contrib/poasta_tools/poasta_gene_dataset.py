@@ -10,33 +10,28 @@ RefSeq genomes, and use this script to extract specific gene sequences from them
 import argparse
 import gzip
 import shlex
-from xml.etree.ElementTree import XMLPullParser
 from pathlib import Path
 import subprocess
 import re
-import tqdm
+from tqdm import tqdm
 
-import pandas
 import skbio
 
 
 def get_aliases(gene):
     proc = subprocess.Popen(
-        "esearch -db gene -query {} | efetch -format docsum".format(shlex.quote(f"{gene}[Gene Name]")),
+        "esearch -db gene -query {} | efetch -format docsum "
+        "| xtract -pattern DocumentSummary -element OtherAliases".format(
+            shlex.quote(f"{gene}[Gene Name]")),
         shell=True, stdout=subprocess.PIPE,
     )
 
     all_aliases = set()
-    xmlparser = XMLPullParser(events=('end'))
     for line in proc.stdout:
-        xmlparser.feed(line)
+        if not line.strip():
+            continue
 
-        for event, elem in xmlparser.read_events():
-            if event == 'end' and elem.tag == 'DocumentSummary':
-                other = elem.find('OtherAliases').text
-                all_aliases.update((v.strip() for v in other.split(',')))
-
-                elem.clear()
+        all_aliases.update((v.strip().decode('ascii') for v in line.split(b',')))
 
     return all_aliases
 
@@ -46,20 +41,17 @@ gene_name_re = re.compile(r"\[gene=(.*?)\]")
 
 def extract_genes(gene_name, refseq_dir, output_dir):
     output_dir.mkdir(parents=True, exist_ok=True)
-    aliases = get_aliases(gene_name)
-    aliases.add(gene_name)
-    print("Searching for gene", gene_name, f" (all aliases: {aliases})")
+    print("Searching for gene", gene_name)
 
+    num_files_to_search = len(list(refseq_dir.glob("*_cds_from_genomic.fna.gz")))
     with gzip.open(output_dir / f"{gene_name}_sequences.fna.gz", "wt") as o:
-        for fname in tqdm(refseq_dir.glob("*_cds_from_genomic.fna.gz")):
+        for fname in tqdm(refseq_dir.glob("*_cds_from_genomic.fna.gz"), total=num_files_to_search):
             with gzip.open(fname, "rt") as f:
-                for r in skbio.io.read(f, "fasta", validate=False):
+                for r in skbio.io.read(f, "fasta"):
                     if (match := gene_name_re.search(r.metadata['description'])):
-                        print("Found gene name:", match)
                         entry_gene = match.group(1)
 
-                        if entry_gene.strip() in aliases:
-                            print("writing..")
+                        if entry_gene.strip() == gene_name:
                             skbio.io.write(r, "fasta", into=o)
 
 
@@ -123,9 +115,6 @@ def main():
         'non_coding_gene_count',
         'pubmed_id',
     ]
-
-    df = pandas.read_csv(args.refseq / "assembly_summary.txt", sep='\t',
-                         names=asm_summary_cols)
 
     for gene in args.genes:
         extract_genes(gene, args.refseq, args.output_dir / gene)
