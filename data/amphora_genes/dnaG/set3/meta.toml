@@ -1,0 +1,64 @@
+[clustering]
+max_dist = 0.1
+
+[graph]
+num_seqs = 50
+avg_pairwise_dist = 0.0155569
+species = {
+    "Escherichia coli" = 32
+    "Escherichia fergusonii" = 3
+    "Shigella flexneri" = 2
+    "Escherichia albertii" = 2
+    "Shigella boydii" = 2
+    "Escherichia coli O127:H6 str. E2348/69" = 1
+    "Escherichia coli H20" = 1
+    "Escherichia coli O15:H11" = 1
+    "Shigella dysenteriae" = 1
+    "Shigella boydii Sb227" = 1
+    "Shigella flexneri 5 str. 8401" = 1
+    "Escherichia coli O157:H7 str. EDL933" = 1
+    "Escherichia coli O18ac:H14" = 1
+    "Escherichia coli O99:H6" = 1
+}
+
+[align]
+num_seqs = 357
+avg_min_dist_to_graph = 0.00524231
+species = {
+    "Escherichia coli" = 240
+    "Escherichia albertii" = 32
+    "Escherichia fergusonii" = 25
+    "Shigella flexneri" = 9
+    "Escherichia marmotae" = 8
+    "Shigella dysenteriae" = 8
+    "Shigella boydii" = 5
+    "Escherichia coli O157:H7" = 2
+    "Escherichia coli SMS-3-5" = 1
+    "Escherichia coli KO11FL" = 1
+    "Escherichia coli O150:H6" = 1
+    "Escherichia coli IAI39" = 1
+    "Escherichia coli O4:H5" = 1
+    "Escherichia coli O2:K1:H5" = 1
+    "Escherichia fergusonii ATCC 35469" = 1
+    "Escherichia coli O1:H42" = 1
+    "Escherichia coli O170:H18" = 1
+    "Escherichia coli PCN033" = 1
+    "Escherichia coli O19:H7" = 1
+    "Escherichia sp. HH154_1D" = 1
+    "Escherichia coli O78" = 1
+    "Escherichia fergusonii ECD227" = 1
+    "Shigella boydii CDC 3083-94" = 1
+    "Escherichia albertii KF1" = 1
+    "Escherichia ruysiae" = 1
+    "Escherichia coli O83:H1 str. NRG 857C" = 1
+    "Escherichia coli O158:H23" = 1
+    "Escherichia coli CFT073" = 1
+    "Escherichia sp. KS167_9B" = 1
+    "Shigella sp. PIB" = 1
+    "Escherichia coli 042" = 1
+    "Escherichia coli O8:H8" = 1
+    "Escherichia coli O152:H23" = 1
+    "Escherichia sp. E4742" = 1
+    "Escherichia coli O167:H26" = 1
+    "Escherichia sp. HH091_1A" = 1
+}

@@ -1,0 +1,73 @@
+[clustering]
+max_dist = 0.1
+
+[graph]
+num_seqs = 5
+avg_pairwise_dist = 0.0684627
+species = {
+    "Xanthomonas campestris pv. campestris" = 1
+    "Xanthomonas vasicola" = 1
+    "Xanthomonas cucurbitae" = 1
+    "Xanthomonas oryzae pv. oryzicola" = 1
+    "Xanthomonas campestris pv. incanae" = 1
+}
+
+[align]
+num_seqs = 117
+avg_min_dist_to_graph = 0.0486726
+species = {
+    "Xanthomonas campestris pv. campestris" = 7
+    "Xanthomonas oryzae pv. oryzicola" = 7
+    "Xanthomonas campestris" = 7
+    "Xanthomonas campestris pv. incanae" = 7
+    "Xanthomonas oryzae pv. oryzae" = 5
+    "Xanthomonas oryzae" = 5
+    "Xanthomonas arboricola" = 5
+    "Xanthomonas fragariae" = 4
+    "Xanthomonas arboricola pv. juglandis" = 4
+    "Xanthomonas campestris pv. raphani" = 3
+    "Xanthomonas citri pv. phaseoli var. fuscans" = 3
+    "Xanthomonas citri pv. vignicola" = 3
+    "Xanthomonas euroxanthea" = 3
+    "Xanthomonas citri pv. aurantifolii" = 3
+    "Xanthomonas prunicola" = 3
+    "Xanthomonas citri pv. malvacearum" = 3
+    "Xanthomonas citri pv. citri" = 2
+    "Xanthomonas hortorum pv. pelargonii" = 2
+    "Xanthomonas hydrangeae" = 2
+    "Xanthomonas cucurbitae" = 2
+    "Xanthomonas hortorum pv. gardneri" = 2
+    "Xanthomonas arboricola pv. corylina" = 2
+    "Xanthomonas hortorum" = 2
+    "Xanthomonas phaseoli pv. dieffenbachiae LMG 695" = 1
+    "Xanthomonas campestris pv. campestris str. CFBP 1869" = 1
+    "Xanthomonas arboricola pv. pruni" = 1
+    "Xanthomonas citri" = 1
+    "Xanthomonas campestris pv. badrii" = 1
+    "Xanthomonas axonopodis pv. citrumelo F1" = 1
+    "Xanthomonas cassavae CFBP 4642" = 1
+    "Xanthomonas perforans" = 1
+    "Xanthomonas phaseoli pv. phaseoli" = 1
+    "Xanthomonas citri pv. glycines str. 8ra" = 1
+    "Xanthomonas campestris pv. campestris str. CN16" = 1
+    "Xanthomonas vasicola pv. arecae" = 1
+    "Xanthomonas citri pv. punicae" = 1
+    "Xanthomonas campestris pv. vesicatoria str. 85-10" = 1
+    "Xanthomonas vasicola" = 1
+    "Xanthomonas hortorum pv. vitians" = 1
+    "Xanthomonas citri pv. mangiferaeindicae" = 1
+    "Xanthomonas citri pv. fuscans" = 1
+    "Xanthomonas campestris pv. raphani 756C" = 1
+    "Xanthomonas sp. CPBF 426" = 1
+    "Xanthomonas vesicatoria" = 1
+    "Xanthomonas campestris pv. campestris str. CN03" = 1
+    "Xanthomonas campestris pv. musacearum NCPPB 4379" = 1
+    "Xanthomonas axonopodis pv. vasculorum" = 1
+    "Xanthomonas vesicatoria ATCC 35937" = 1
+    "Xanthomonas sp. MLO165" = 1
+    "Xanthomonas citri pv. anacardii CFBP 2913" = 1
+    "Xanthomonas hortorum pv. carotae str. M081" = 1
+    "Xanthomonas euvesicatoria pv. alfalfae" = 1
+    "Xanthomonas euvesicatoria pv. allii CFBP 6369" = 1
+    "Xanthomonas phaseoli pv. manihotis" = 1
+}

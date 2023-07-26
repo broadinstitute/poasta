@@ -1,0 +1,23 @@
+[clustering]
+max_dist = 0.01
+
+[graph]
+num_seqs = 5
+avg_pairwise_dist = 0.0121124
+species = {
+    "Staphylococcus aureus" = 5
+}
+
+[align]
+num_seqs = 150
+avg_min_dist_to_graph = 0.00648957
+species = {
+    "Staphylococcus aureus" = 143
+    "Staphylococcus aureus subsp. aureus ECT-R 2" = 1
+    "Staphylococcus aureus subsp. aureus LGA251" = 1
+    "Staphylococcus aureus subsp. aureus Z172" = 1
+    "Staphylococcus aureus subsp. aureus 71193" = 1
+    "Staphylococcus aureus RF122" = 1
+    "Staphylococcus aureus subsp. aureus ST772-MRSA-V" = 1
+    "Staphylococcus aureus subsp. aureus JKD6159" = 1
+}
