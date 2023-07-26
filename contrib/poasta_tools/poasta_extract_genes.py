@@ -23,15 +23,22 @@ def extract_genes(gene_name, refseq_dir, output_dir):
     print("Searching for gene", gene_name)
 
     num_files_to_search = len(list(refseq_dir.glob("*_cds_from_genomic.fna.gz")))
-    with gzip.open(output_dir / f"{gene_name}_sequences.fna.gz", "wt") as o:
+    with (gzip.open(output_dir / f"{gene_name}_sequences.fna.gz", "wt") as o,
+          open(output_dir / f"{gene_name}_accession_map.tsv", "w") as acc_o):
         for fname in tqdm(refseq_dir.glob("*_cds_from_genomic.fna.gz"), total=num_files_to_search):
+            parts = fname.name.split('_', maxsplit=2)
+            accession = "_".join(parts[:2])
+            asm_name = parts[2].replace("_cds_from_genomic.fna.gz", "")
+
             with gzip.open(fname, "rt") as f:
                 for r in skbio.io.read(f, "fasta"):
                     if (match := gene_name_re.search(r.metadata['description'])):
                         entry_gene = match.group(1)
 
                         if entry_gene.strip() == gene_name:
+                            r.metadata['description'] += f" [accession={accession}] [asm_name={asm_name}]"
                             skbio.io.write(r, "fasta", into=o)
+                            print(r.metadata['id'], accession, sep='\t', file=acc_o)
 
 
 def main():
