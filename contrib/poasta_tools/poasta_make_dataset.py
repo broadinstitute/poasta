@@ -49,6 +49,8 @@ def create_dataset(asm_summary, acc_map, output_dir, dmatrix, sequences_fasta, m
 
     accessions_graph = []
     accessions_align = []
+    lengths_graph = []
+    lengths_align = []
 
     with (gzip.open(sequences_fasta, "rt") as ifasta,
           gzip.open(output_dir / "graph_seq.fna.gz", "wt") as graph_out,
@@ -60,45 +62,50 @@ def create_dataset(asm_summary, acc_map, output_dir, dmatrix, sequences_fasta, m
             if r.metadata['id'] in graph_ids:
                 skbio.io.write(r, "fasta", into=graph_out)
                 accessions_graph.append(accession)
+                lengths_graph.append(len(r))
             elif r.metadata['id'] in align_ids:
                 skbio.io.write(r, "fasta", into=align_out)
                 accessions_align.append(accession)
+                lengths_align.append(len(r))
 
     with open(output_dir / "meta.toml", "w") as meta_out:
-        print("[clustering]", file=meta_out)
-        print(f"max_dist = {max_dist:g}", file=meta_out)
+        print(f"clustering_max_dist = {max_dist:g}", file=meta_out)
         print(file=meta_out)
 
-        print("[graph]", file=meta_out)
+        print("[graph_set]", file=meta_out)
+        print('fname = "graph_seq.fna.gz"', file=meta_out)
         print(f"num_seqs = {len(graph_ix)}", file=meta_out)
+        print(f"avg_seq_len = {sum(lengths_graph)/len(graph_ix):.1f}", file=meta_out)
         avg_dist = dmatrix.iloc[graph_ix, graph_ix].mean(axis=None)
         print(f"avg_pairwise_dist = {avg_dist:g}", file=meta_out)
-        print("species = {", file=meta_out)
+        print(file=meta_out)
+        print("[graph_set.species]", file=meta_out)
 
         species_graph = asm_summary.loc[accessions_graph, 'organism_name'].value_counts().sort_values(ascending=False)
         print(species_graph)
         for ix in species_graph.index:
             count = species_graph.loc[ix]
-            print(f'    "{ix}" = {count}', file=meta_out)
-
-        print('}', file=meta_out)
+            print(f'"{ix}" = {count}', file=meta_out)
 
         print(file=meta_out)
-        print("[align]", file=meta_out)
+        print("[align_set]", file=meta_out)
+        print('fname = "align_seq.fna.gz"', file=meta_out)
         print(f"num_seqs = {len(align_ix)}", file=meta_out)
+        print(f"avg_seq_len = {sum(lengths_align)/len(align_ix):.1f}", file=meta_out)
 
-        avg_min_dist = dmatrix.iloc[graph_ix, align_ix].min(axis=0).mean(axis=None)
+        avg_dist = dmatrix.iloc[align_ix, align_ix].mean(axis=None)
+        avg_min_dist = dmatrix.iloc[align_ix, graph_ix].min(axis=0).mean(axis=None)
+        print(f"avg_pairwise_dist = {avg_dist:g}", file=meta_out)
         print(f"avg_min_dist_to_graph = {avg_min_dist:g}", file=meta_out)
         print(f"avg_min_dist_to_graph = {avg_min_dist:g}")
+        print(file=meta_out)
 
-        print("species = {", file=meta_out)
+        print("[align_set.species]", file=meta_out)
 
         species_align = asm_summary.loc[accessions_align, 'organism_name'].value_counts().sort_values(ascending=False)
         for ix in species_align.index:
             count = species_align.loc[ix]
-            print(f'    "{ix}" = {count}', file=meta_out)
-
-        print('}', file=meta_out)
+            print(f'"{ix}" = {count}', file=meta_out)
 
 
 def load_assembly_summary_meta(fname):
