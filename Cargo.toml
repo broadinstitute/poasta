@@ -11,6 +11,7 @@ ahash = { version = "0.8.3" }
 anyhow = "1.0.71"
 bincode = "1.3.3"
 clap = { version = "4.3", features = ["derive"] }
+flate2 = "1.0.26"
 noodles = { version = "0.45", features = ["fasta", "fastq"] }
 num = { version = "0.4" }
 petgraph = { version = "~0.6", features = ["serde-1"] }

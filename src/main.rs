@@ -1,6 +1,7 @@
+use std::fs;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::io::{stdout, IsTerminal, Write};
+use std::io::{stdout, IsTerminal, Write, BufReader};
 
 use clap::{Parser, Subcommand, Args, ValueEnum};
 use noodles::fasta;
@@ -8,6 +9,8 @@ use anyhow::{Result, Context};
 
 use petgraph::graph::IndexType;
 use serde::de::DeserializeOwned;
+use flate2::read::GzDecoder;
+
 use poasta::aligner::alignment::print_alignment;
 use poasta::debug::DebugOutputWriter;
 use poasta::debug::messages::DebugOutputMessage;
@@ -91,9 +94,20 @@ where
     C: AlignmentCosts,
 {
     // Let's read the sequences from the given FASTA
-    let mut reader = fasta::reader::Builder::default()
-        .build_from_path(sequences_fname)
-        .with_context(|| "Could not read FASTA file!".to_string())?;
+    let is_gzipped = sequences_fname.file_name()
+        .map(|v| v.to_string_lossy().ends_with(".gz"))
+        .unwrap_or(false);
+
+    // Check if we have a gzipped file
+    let reader_inner: Box<dyn std::io::BufRead> = if is_gzipped {
+        Box::new(File::open(sequences_fname)
+            .map(GzDecoder::new)
+            .map(BufReader::new)?)
+    } else {
+        Box::new(File::open(sequences_fname)
+            .map(BufReader::new)?)
+    };
+    let mut reader = fasta::Reader::new(reader_inner);
 
     let mut i = 1;
     for result in reader.records() {
@@ -165,6 +179,10 @@ fn align_subcommand(align_args: &AlignArgs) -> Result<()> {
 
     // Determine where to write the graph to
     let mut writer: Box<dyn Output> = if let Some(path) = &align_args.output {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?
+        }
+
         let file = File::create(path)?;
         Box::new(file) as Box<dyn Output>
     } else {

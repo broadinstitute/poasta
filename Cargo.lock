@@ -466,6 +466,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "clap",
+ "flate2",
  "noodles",
  "num",
  "petgraph",
