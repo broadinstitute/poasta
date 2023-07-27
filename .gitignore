@@ -10,4 +10,6 @@ output/
 *.poasta
 /*.png
 debug_test/
+debug_presentation/
 __pycache__
+
