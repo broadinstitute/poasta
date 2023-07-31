@@ -356,6 +356,10 @@ where
         self.graph.node_count()
     }
 
+    fn edge_count(&self) -> usize {
+        self.graph.edge_count()
+    }
+
     fn start_nodes(&self) -> &Vec<Self::NodeIndex> {
         &self.start_nodes
     }

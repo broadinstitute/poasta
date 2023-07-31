@@ -25,6 +25,7 @@ pub trait AlignableGraph {
 
     fn all_nodes(&self) -> Self::NodeIterator<'_>;
     fn node_count(&self) -> usize;
+    fn edge_count(&self) -> usize;
     fn start_nodes(&self) -> &Vec<Self::NodeIndex>;
     fn successors(&self, node: Self::NodeIndex) -> Self::SuccessorIterator<'_>;
 
