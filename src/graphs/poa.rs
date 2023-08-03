@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter};
 use petgraph::graph::{IndexType as PetgraphIndexType};
-use petgraph::Incoming;
+use petgraph::{Direction, Incoming};
 use petgraph::algo::toposort;
 use petgraph::prelude::{NodeIndex, StableDiGraph};
 use petgraph::stable_graph::{Neighbors, NodeIndices};
@@ -116,7 +116,7 @@ where
     }
 
     pub fn is_empty(&self) -> bool {
-        self.graph.node_count() <= 1  // Only start node present
+        self.node_count() == 0
     }
 
     pub(crate) fn add_edge(&mut self, s: POANodeIndex<Ix>, t: POANodeIndex<Ix>, sequence_id: usize, weight: usize) {
@@ -359,11 +359,12 @@ where
     }
 
     fn node_count(&self) -> usize {
-        self.graph.node_count()
+        self.graph.node_count() - 1
     }
 
     fn edge_count(&self) -> usize {
-        self.graph.edge_count()
+        // Exclude edges from start node
+        self.graph.edge_count() - self.graph.neighbors_directed(self.start_nodes[0], Direction::Outgoing).count()
     }
 
     fn start_nodes(&self) -> &Vec<Self::NodeIndex> {
