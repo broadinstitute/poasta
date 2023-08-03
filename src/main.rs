@@ -19,6 +19,7 @@ use poasta::graphs::poa::{POAGraph, POAGraphWithIx};
 use poasta::aligner::PoastaAligner;
 use poasta::aligner::scoring::{AlignmentCosts, GapAffine};
 use poasta::errors::PoastaError;
+use poasta::io::graph::load_graph_from_fasta_msa;
 use poasta::io::load_graph;
 
 
@@ -152,8 +153,15 @@ fn align_subcommand(align_args: &AlignArgs) -> Result<()> {
     });
 
     let mut graph = if let Some(path) = &align_args.graph {
-        let file_in = File::open(path)?;
-        load_graph(&file_in)?
+        let fasta_extensions = vec![".fa", ".fa.gz", ".fna", ".fna.gz", ".fasta", ".fasta.gz"];
+        let path_as_str = path.to_string_lossy();
+        eprintln!("Ext: {:?}, {:?}", path, path_as_str.ends_with(".fa"));
+        if fasta_extensions.into_iter().any(|ext| path_as_str.ends_with(ext)) {
+            load_graph_from_fasta_msa(path)?
+        } else {
+            let file_in = File::open(path)?;
+            load_graph(&file_in)?
+        }
     } else {
         POAGraphWithIx::USIZE(POAGraph::new())
     };

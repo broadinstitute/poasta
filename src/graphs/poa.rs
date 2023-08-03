@@ -4,7 +4,7 @@ use petgraph::Incoming;
 use petgraph::algo::toposort;
 use petgraph::prelude::{NodeIndex, StableDiGraph};
 use petgraph::stable_graph::{Neighbors, NodeIndices};
-use petgraph::visit::GraphBase;
+use petgraph::visit::{GraphBase, EdgeRef};
 
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
@@ -18,7 +18,7 @@ use crate::io::graph::format_as_dot;
 ///
 /// Stores the sequence name and the start node in the graph.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Sequence<N>(String, N)
+pub struct Sequence<N>(pub(crate) String, pub(crate) N)
 where
     N: NodeIndexType
 ;
@@ -51,7 +51,7 @@ impl<N> POANodeData<N>
 where
     N: NodeIndexType
 {
-    fn new(symbol: u8) -> Self {
+    pub(crate) fn new(symbol: u8) -> Self {
         POANodeData {
             symbol,
             aligned_nodes: Vec::new(),
@@ -82,14 +82,14 @@ impl POAEdgeData {
 }
 
 pub type POAGraphType<Ix> = StableDiGraph<POANodeData<NodeIndex<Ix>>, POAEdgeData, Ix>;
-type POANodeIndex<Ix> = <POAGraphType<Ix> as GraphBase>::NodeId;
+pub(crate) type POANodeIndex<Ix> = <POAGraphType<Ix> as GraphBase>::NodeId;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct POAGraph<Ix = u32>
 where
     Ix: PetgraphIndexType
 {
-    pub graph: POAGraphType<Ix>,
+    pub(crate) graph: POAGraphType<Ix>,
     pub sequences: Vec<Sequence<POANodeIndex<Ix>>>,
     topological_sorted: Vec<POANodeIndex<Ix>>,
     start_nodes: Vec<POANodeIndex<Ix>>,
@@ -101,24 +101,29 @@ where
     Ix: PetgraphIndexType + DeserializeOwned
 {
     pub fn new() -> Self {
-        POAGraph {
+        let mut graph = POAGraph {
             graph: POAGraphType::<Ix>::default(),
             sequences: Vec::new(),
             topological_sorted: Vec::new(),
             start_nodes: Vec::new(),
             end_nodes: Vec::new(),
-        }
+        };
+
+        let start_node = graph.graph.add_node(POANodeData::new(b'#'));
+        graph.start_nodes.push(start_node);
+
+        graph
     }
 
     pub fn is_empty(&self) -> bool {
-        self.graph.node_count() == 0
+        self.graph.node_count() <= 1  // Only start node present
     }
 
-    fn add_edge(&mut self, s: POANodeIndex<Ix>, t: POANodeIndex<Ix>, sequence_id: usize, weight: usize) {
+    pub(crate) fn add_edge(&mut self, s: POANodeIndex<Ix>, t: POANodeIndex<Ix>, sequence_id: usize, weight: usize) {
         // If edge exists, update sequence ID and weight of the existing one
         if let Some(e) = self.graph.find_edge(s, t) {
             let mut edge_data = self.graph.edge_weight_mut(e).unwrap();
-            edge_data.sequence_ids.push(self.sequences.len());
+            edge_data.sequence_ids.push(sequence_id);
             edge_data.weight += weight;
         } else {
             self.graph.add_edge(s, t, POAEdgeData::new(sequence_id, weight));
@@ -277,27 +282,28 @@ where
         Ok(())
     }
 
-    fn post_process(&mut self) -> Result<(), PoastaError> {
+    pub(crate) fn post_process(&mut self) -> Result<(), PoastaError> {
         self.topological_sorted.clear();
 
-        for start_ix in self.start_nodes.iter() {
-            self.graph.remove_node(*start_ix);
+        // By repeatedly immediately calling next() on the Edges iterator returned by edges(), we
+        // ensure that the returned EdgeIndex is always valid. If using normal iteration, the removal
+        // of an edge might invalidate following edge indices.
+        while let Some(e) = self.graph.edges(self.start_nodes[0]).next() {
+            self.graph.remove_edge(e.id());
         }
-        self.start_nodes.clear();
 
-        // Create a special "start" node that has outgoing edges to all other nodes without other
-        // incoming edges
-        let start_node = self.graph.add_node(POANodeData::new(b'#'));
+        // Connect nodes with no incoming edges to the start node
+        let start_node = &self.start_nodes[0];
         let all_nodes: Vec<NodeIndex<Ix>> = self.graph.node_indices().collect();
         for node in all_nodes.into_iter() {
-            if node != start_node && self.graph.neighbors_directed(node, Incoming).count() == 0 {
-                self.graph.add_edge(start_node, node, POAEdgeData::new_for_start());
+            if node != *start_node && self.graph.neighbors_directed(node, Incoming).count() == 0 {
+                self.graph.add_edge(*start_node, node, POAEdgeData::new_for_start());
             }
         }
-        self.start_nodes.push(start_node);
 
         self.topological_sorted = toposort(&self.graph, None)?;
 
+        self.end_nodes.clear();
         for (rank, node) in self.topological_sorted.iter().enumerate() {
             self.graph[*node].rank = rank;
 

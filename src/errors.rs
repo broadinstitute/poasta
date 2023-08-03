@@ -98,7 +98,7 @@ impl Display for PoastaError {
             Self::FileReadError { source: _ } =>
                 write!(f, "Could not read from file!"),
             Self::SerializationError { source: _ } =>
-                write!(f, "Could not serialize the graph to file!"),
+                write!(f, "Error loading/saving the graph from a POASTA graph file!"),
             Self::IOError(ref err) =>
                 std::fmt::Display::fmt(err, f),
             Self::FormatError(ref err) =>
