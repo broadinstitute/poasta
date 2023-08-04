@@ -1,6 +1,8 @@
 <h1 align="center">🍝 POASTA</h1>
 <h2 align="center">Fast, gap-affine sequence-to-graph and partial order aligner</h2>
 
+<p>&nbsp;</p>
+
 POASTA is a fast and optimal partial order aligner that support gap-affine alignment penalties. Inspired by 
 a recent [algorithm for pairwise alignment](https://github.com/smarco/WFA2-lib), it can exploit exact matches
 between the query and the graph, greatly speeding up the alignment process.
