@@ -3,7 +3,7 @@
 
 <p>&nbsp;</p>
 
-POASTA is a fast and optimal partial order aligner that support gap-affine alignment penalties. Inspired by 
+POASTA is a fast and optimal partial order aligner that supports gap-affine alignment penalties. Inspired by 
 a recent [algorithm for pairwise alignment](https://github.com/smarco/WFA2-lib), it can exploit exact matches
 between the query and the graph, greatly speeding up the alignment process.
 
@@ -109,7 +109,7 @@ Note that we did not specify an output file for `poasta align` (we did not use t
 is given, standard output will be used, so the output can be directly piped to `dot` to create the visualization.
 
 
+## Related repositories
 
-
-
-
+* [poa-bench](https://github.com/broadinstitute/poa-bench) - Benchmark POASTA against other POA tools
+* [spoa-rs](https://github.com/broadinstitute/spoa-rs) - Rust bindings to SPOA
