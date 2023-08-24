@@ -318,32 +318,6 @@ where
     pub fn max_rank(&self) -> usize {
         self.graph.node_count()
     }
-
-    pub fn get_node_by_rank(&self, rank: usize) -> POANodeIndex<Ix> {
-        self.topological_sorted[rank]
-    }
-
-    pub fn get_node_rank(&self, node: POANodeIndex<Ix>) -> usize {
-        self.graph[node].rank
-    }
-
-    pub fn predecessors(&self, rank: usize) -> impl Iterator<Item=usize> + '_ {
-        self.graph.neighbors_directed(self.topological_sorted[rank], Incoming)
-            .map(|v| self.graph[v].rank)
-    }
-
-    pub fn successors(&self, rank: usize) -> impl Iterator<Item=usize> + '_ {
-        self.graph.neighbors(self.topological_sorted[rank])
-            .map(|v| self.graph[v].rank)
-    }
-
-    pub fn is_neighbor_rank(&self, from_rank: usize, to_canditate_rank: usize) -> bool {
-        self.successors(from_rank).any(|rank| rank == to_canditate_rank)
-    }
-
-    pub fn end_nodes(&self) -> &Vec<POANodeIndex<Ix>> {
-        &self.end_nodes
-    }
 }
 
 impl<Ix> AlignableGraph for POAGraph<Ix>
@@ -352,6 +326,7 @@ where
 {
     type NodeIndex = POANodeIndex<Ix>;
     type NodeIterator<'a> = NodeIndices<'a, POANodeData<POANodeIndex<Ix>>, Ix>;
+    type PredecessorIterator<'a> = Neighbors<'a, POAEdgeData, Ix>;
     type SuccessorIterator<'a> = Neighbors<'a, POAEdgeData, Ix>;
 
     fn all_nodes(&self) -> Self::NodeIterator<'_> {
@@ -370,9 +345,31 @@ where
     fn start_nodes(&self) -> &Vec<Self::NodeIndex> {
         &self.start_nodes
     }
+    fn end_nodes(&self) -> &Vec<Self::NodeIndex> {
+        &self.end_nodes
+    }
+
+    #[inline(always)]
+    fn node_ix_to_row(&self, node: Self::NodeIndex) -> Self::NodeIndex {
+        Self::NodeIndex::new(self.graph[node].rank)
+    }
+
+    #[inline(always)]
+    fn row_to_node_ix<T: NodeIndexType>(&self, row: T) -> Self::NodeIndex {
+        self.topological_sorted[row.as_usize()]
+    }
+
+    fn predecessors(&self, node: Self::NodeIndex) -> Self::PredecessorIterator<'_> {
+        self.graph.neighbors_directed(node, Incoming)
+    }
 
     fn successors(&self, node: Self::NodeIndex) -> Self::SuccessorIterator<'_> {
         self.graph.neighbors(node)
+    }
+
+    fn is_successor(&self, row1: Self::NodeIndex, row2: Self::NodeIndex) -> bool {
+        self.successors(self.topological_sorted[row1.index()])
+            .any(|succ| self.graph[succ].rank == row2.index())
     }
 
     fn is_end(&self, node: Self::NodeIndex) -> bool {
@@ -390,7 +387,7 @@ where
 
 impl<Ix> Display for POAGraph<Ix>
 where
-    Ix: PetgraphIndexType
+    Ix: PetgraphIndexType + DeserializeOwned
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         format_as_dot(f, self)

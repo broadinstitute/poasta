@@ -7,10 +7,12 @@ use std::path::Path;
 use petgraph::dot::Dot;
 use petgraph::graph::IndexType;
 use crate::errors::PoastaError;
+use crate::graphs::{AlignableGraph, NodeIndexType};
 use crate::graphs::poa::{POAGraph, POAGraphWithIx, POANodeData, POANodeIndex, Sequence};
 
 use noodles::fasta;
 use flate2::read::GzDecoder;
+use serde::de::DeserializeOwned;
 
 pub fn save_graph(graph: &POAGraphWithIx, out: impl Write) -> Result<(), PoastaError> {
     bincode::serialize_into(out, graph)?;
@@ -91,10 +93,10 @@ pub fn load_graph_from_fasta_msa(path: impl AsRef<Path>) -> Result<POAGraphWithI
     Ok(POAGraphWithIx::USIZE(graph))
 }
 
-pub fn format_as_dot<Ix: IndexType>(writer: &mut impl fmt::Write, graph: &POAGraph<Ix>) -> fmt::Result {
+pub fn format_as_dot<Ix: IndexType + DeserializeOwned>(writer: &mut impl fmt::Write, graph: &POAGraph<Ix>) -> fmt::Result {
     let transformed = graph.graph.map(
         |ix, data|
-            format!("{:?} ({:?})", char::from(data.symbol), ix.index()),
+            format!("{:?} ({:?})", char::from(data.symbol), graph.node_ix_to_row(ix).as_usize()),
         |_, data|
             format!("{}, {:?}", data.weight, data.sequence_ids)
     );

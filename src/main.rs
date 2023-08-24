@@ -118,7 +118,7 @@ where
         if let Some(debug) = debug_writer {
             debug.log(DebugOutputMessage::NewSequence {
                 seq_name: record.name().to_string(),
-                seq_length: record.sequence().len(),
+                seq: String::from_utf8_lossy(record.sequence().as_ref()).to_string(),
                 max_rank: graph.max_rank()
             });
 
@@ -132,11 +132,11 @@ where
             graph.add_alignment_with_weights(record.name(), record.sequence(), None, &weights)?;
         } else {
             eprint!("Aligning #{i} {}... ", record.name());
-            let (score, alignment) = aligner.align::<u32, usize, _, _, _>(graph, record.sequence());
-            // eprintln!("Done. Alignment Score: {:?}", score);
-            // eprintln!();
-            // eprintln!("{}", print_alignment(graph, record.sequence(), &alignment));
-            // eprintln!();
+            let (score, alignment) = aligner.align::<u32, _, _>(graph, record.sequence());
+            eprintln!("Done. Alignment Score: {:?}", score);
+            eprintln!();
+            eprintln!("{}", print_alignment(graph, record.sequence(), &alignment));
+            eprintln!();
 
             graph.add_alignment_with_weights(record.name(), record.sequence(), Some(&alignment), &weights)?;
         }
