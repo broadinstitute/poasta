@@ -16,7 +16,7 @@ pub enum AlignState {
 }
 
 /// Allow for various index types to refer to the alignment state tree nodes
-pub trait TreeIndexType: Copy + Unsigned + FromPrimitive + Hash + fmt::Debug {
+pub trait TreeIndexType: Copy + Unsigned + FromPrimitive + Hash + fmt::Debug + Default {
     fn new(value: usize) -> Self;
     fn index(&self) -> usize;
 }
@@ -115,6 +115,7 @@ where
     }
 }
 
+#[derive(Debug)]
 pub struct StateTreeNode<N, O, Ix>
 where
     N: NodeIndexType,
@@ -158,17 +159,18 @@ where
     }
 }
 
+#[derive(Debug)]
 pub enum Backtrace<Ix>
 where
     Ix: TreeIndexType
 {
-    /// Represents a single alignment step with no extra matching nodes. The only data stored in this
+    /// Represents a single alignment step. The only data stored in this
     /// variant is the index to the previous node in the alignment state tree.
     Step(Ix),
 
     /// Represents closing an indel, with the only data stored is the index of the align tree
-    /// state node that represents the still open indel. It's a special backtrace state because it doesn't output
-    /// any alignment characters.
+    /// state node that represents the still open indel. It's a special backtrace state because it
+    /// doesn't output any alignment characters.
     ClosedIndel(Ix),
 }
 

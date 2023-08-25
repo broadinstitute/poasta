@@ -23,24 +23,16 @@ pub trait AlignmentCosts: Copy {
         N: NodeIndexType,
         O: OffsetType,
         Ix: TreeIndexType;
-}
-
-pub trait AlignmentCostsEdit: AlignmentCosts {
+    
     fn mismatch(&self) -> u8;
-}
-
-pub trait AlignmentCostsLinear: AlignmentCostsEdit {
-    fn gap_extend(&self) -> u8;
-}
-
-pub trait AlignmentCostsAffine: AlignmentCostsLinear {
+    
     fn gap_open(&self) -> u8;
+    fn gap_extend(&self) -> u8;
+    
+    fn gap_open2(&self) -> u8;
+    fn gap_extend2(&self) -> u8;
 }
 
-pub trait AlignmentCostsTwoPiece: AlignmentCostsAffine {
-    fn gap_extend2(&self) -> u8;
-    fn gap_open2(&self) -> u8;
-}
 
 /// A trait that defines operations on the alignment state tree, and thus provides an interface
 /// to generate new alignment states based on current states.
@@ -72,7 +64,7 @@ where
 
     fn generate_next<G>(
         &mut self,
-        queue: &mut AlignStateQueue<Ix>,
+        queue: &mut AlignStateQueue<N, O, Ix>,
         graph: &G,
         seq_len: usize,
         curr_ix: Ix,

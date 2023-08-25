@@ -4,7 +4,7 @@ use crate::graphs::{AlignableGraph, NodeIndexType};
 use crate::io::state_tree::write_tree_gml;
 use crate::aligner::offsets::OffsetType;
 use crate::aligner::queue::AlignStateQueue;
-use crate::aligner::scoring::{AlignmentCosts, AlignmentCostsAffine, AlignmentCostsEdit, AlignmentCostsLinear, AlignmentStateTree};
+use crate::aligner::scoring::{AlignmentCosts, AlignmentStateTree};
 use crate::aligner::state::{AlignState, StateTree, StateTreeNode, Backtrace, TreeIndexType};
 use crate::aligner::visited::{VisitedSet, VisitedSetPerNode};
 
@@ -37,28 +37,33 @@ impl AlignmentCosts for GapAffine {
     {
         GapAffineStateTree::new(*self, graph)
     }
-}
 
-impl AlignmentCostsEdit for GapAffine {
     #[inline(always)]
     fn mismatch(&self) -> u8 {
         self.cost_mismatch
     }
-}
 
-impl AlignmentCostsLinear for GapAffine {
-    #[inline(always)]
-    fn gap_extend(&self) -> u8 {
-        self.cost_gap_extend
-    }
-}
-
-impl AlignmentCostsAffine for GapAffine {
     #[inline(always)]
     fn gap_open(&self) -> u8 {
         self.cost_gap_open
     }
+
+    #[inline(always)]
+    fn gap_extend(&self) -> u8 {
+        self.cost_gap_extend
+    }
+
+    #[inline(always)]
+    fn gap_open2(&self) -> u8 {
+        0
+    }
+
+    #[inline(always)]
+    fn gap_extend2(&self) -> u8 {
+        0
+    }
 }
+
 
 pub struct GapAffineStateTree<N, O, Ix>
 where
@@ -161,7 +166,7 @@ where
 
     fn generate_next<G>(
         &mut self,
-        queue: &mut AlignStateQueue<Ix>,
+        queue: &mut AlignStateQueue<N, O, Ix>,
         graph: &G,
         seq_len: usize,
         curr_ix: Ix
@@ -192,7 +197,7 @@ where
                                 return Some(new_ix)
                             }
 
-                            queue.enqueue(self.costs.mismatch() - 1, new_ix);
+                            queue.queue_endpoint(self.costs.mismatch() - 1, new_ix);
                         }
                     }
 
@@ -205,7 +210,7 @@ where
                             succ, offset, AlignState::Deletion, Backtrace::Step(curr_ix));
                         let new_ix = self.tree.add_node(new_state);
 
-                        queue.enqueue(self.costs.gap_open() + self.costs.gap_extend() - 1, new_ix);
+                        queue.queue_endpoint(self.costs.gap_open() + self.costs.gap_extend() - 1, new_ix);
                     }
                 }
 
@@ -221,7 +226,7 @@ where
                             AlignState::Insertion, Backtrace::Step(curr_ix));
                         let new_ix = self.tree.add_node(new_state);
 
-                        queue.enqueue(self.costs.gap_open() + self.costs.gap_extend() - 1, new_ix);
+                        queue.queue_endpoint(self.costs.gap_open() + self.costs.gap_extend() - 1, new_ix);
                     }
                 }
             },
@@ -236,7 +241,7 @@ where
                             succ, offset,
                             AlignState::Deletion, Backtrace::Step(curr_ix));
                         let new_ix = self.tree.add_node(new_state);
-                        queue.enqueue(self.costs.gap_extend() - 1, new_ix);
+                        queue.queue_endpoint(self.costs.gap_extend() - 1, new_ix);
                     }
                 }
             },
@@ -251,7 +256,7 @@ where
                             curr_node, new_offset,
                             AlignState::Insertion, Backtrace::Step(curr_ix));
                         let new_ix = self.tree.add_node(new_state);
-                        queue.enqueue(self.costs.gap_extend() - 1, new_ix);
+                        queue.queue_endpoint(self.costs.gap_extend() - 1, new_ix);
                     }
                 }
             }

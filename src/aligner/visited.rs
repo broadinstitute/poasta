@@ -36,7 +36,7 @@ where
         G: AlignableGraph,
     {
         Self {
-            visited: vec![FxHashSet::default(); graph.node_count()]
+            visited: vec![FxHashSet::default(); graph.node_count() + 1]
         }
     }
 }

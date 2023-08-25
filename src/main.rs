@@ -133,10 +133,10 @@ where
         } else {
             eprint!("Aligning #{i} {}... ", record.name());
             let (score, alignment) = aligner.align::<u32, usize, _, _, _>(graph, record.sequence());
-            // eprintln!("Done. Alignment Score: {:?}", score);
-            // eprintln!();
-            // eprintln!("{}", print_alignment(graph, record.sequence(), &alignment));
-            // eprintln!();
+            eprintln!("Done. Alignment Score: {:?}", score);
+            eprintln!();
+            eprintln!("{}", print_alignment(graph, record.sequence(), &alignment));
+            eprintln!();
 
             graph.add_alignment_with_weights(record.name(), record.sequence(), Some(&alignment), &weights)?;
         }
