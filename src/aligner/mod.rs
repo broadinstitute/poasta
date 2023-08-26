@@ -185,7 +185,7 @@ where
         let next_valid_child = |tree: &T, offset: O, dist_from_start: O, succ: &RefCell<G::SuccessorIterator<'_>>| -> Option<N> {
             // eprintln!("Max dist {dist_from_start:?} > {:?}", path.length.saturating_sub(&O::one()) + shift_down);
             // Exclude the path end-point, as it will be expanded on in another step
-            if offset.as_usize() >= seq.len()
+            if (path.start_offset + dist_from_start).as_usize() >= seq.len()
                     || dist_from_start >= path.length.saturating_sub(&O::one()) + shift_down {
                 // eprintln!("{offset:?} >= {} || {dist_from_start:?} >= {:?}", seq.len(),
                 //           path.length.saturating_sub(&O::one()) + shift_down);
