@@ -116,7 +116,7 @@ where
             }
 
             // eprintln!("CONT EXT HIT score: {score}");
-            // self.continue_ext_hits(&mut queue, graph, &mut state_tree, current.extend_hits());
+            self.continue_ext_hits(&mut queue, graph, &mut state_tree, score, current.extend_hits());
 
             if let Some(debug) = self.debug_output {
                 debug.log(DebugOutputMessage::new_from_state_tree(&state_tree));
@@ -139,7 +139,7 @@ where
     }
 
     fn continue_ext_hits<O, Ix, G, N, T>(&mut self, queue: &mut AlignStateQueue<N, O, Ix>,
-                                         graph: &G, tree: &mut T, hits: &[(N, ExtendHit<O>)])
+                                         graph: &G, tree: &mut T, score: usize, hits: &[(N, ExtendHit<O>)])
     where
         O: OffsetType,
         Ix: TreeIndexType,
@@ -148,11 +148,19 @@ where
         T: AlignmentStateTree<N, O, Ix>
     {
         for (node, hit) in hits {
+            if tree.visited(*node, hit.offset(), AlignState::Match, score) {
+                continue;
+            }
+
             tree.add_extend_hit(*node, *hit);
             // eprintln!("Mark path as visited: {path:?}");
 
             for succ in graph.successors(*node) {
                 let new = hit.to_next();
+                if tree.visited(succ, new.offset(), AlignState::Match, score) {
+                    continue;
+                }
+
                 if self.costs.gap_extend2() > 0 && self.costs.gap_extend2() != self.costs.gap_extend() {
                     queue.queue_ext_hit(self.costs.gap_extend2() - 1, succ, new)
                 }
