@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use crate::aligner::extend::ExtendedPath;
+use crate::aligner::extend::{ExtendedPath, ExtendHit};
 use crate::aligner::offsets::OffsetType;
 use crate::aligner::state::{AlignState, TreeIndexType};
 use crate::graphs::NodeIndexType;
@@ -11,56 +11,6 @@ pub enum PathShift<O> {
     Down(O),
 }
 
-#[derive(Clone, Debug)]
-pub struct VisitedPath<N, O>
-where
-    N: NodeIndexType,
-    O: OffsetType,
-{
-    pub start_node: N,
-    pub start_offset: O,
-    pub length: O,
-    pub shift: PathShift<O>
-}
-
-impl<N, O> VisitedPath<N, O>
-where
-    N: NodeIndexType,
-    O: OffsetType
-{
-    pub fn from_extended_path<Ix>(path: &ExtendedPath<N, O, Ix>, new_state: AlignState) -> Self
-    where
-        Ix: TreeIndexType,
-    {
-        let shift = match new_state {
-            AlignState::Insertion | AlignState::Insertion2 =>
-                PathShift::Right(O::one()),
-            AlignState::Deletion | AlignState::Deletion2 =>
-                PathShift::Down(O::one()),
-            AlignState::Start | AlignState::Match | AlignState::Mismatch =>
-                panic!("Invalid state!")
-        };
-
-        Self {
-            start_node: path.start_node(),
-            start_offset: path.start_offset(),
-            length: path.len(),
-            shift,
-        }
-    }
-
-    pub fn to_next(&self) -> Self {
-        let mut new = self.clone();
-
-        new.shift = match self.shift {
-            PathShift::Right(offset) => PathShift::Right(offset.increase_one()),
-            PathShift::Down(offset) => PathShift::Down(offset.increase_one()),
-        };
-
-        new
-    }
-}
-
 
 #[derive(Clone, Debug, Default)]
 pub struct ScoreLayer<N, O, Ix>
@@ -69,7 +19,7 @@ where
     O: OffsetType,
 {
     end_points: Vec<Ix>,
-    visited_paths: Vec<VisitedPath<N, O>>,
+    ext_hits_continued: Vec<(N, ExtendHit<O>)>,
 }
 
 impl<N, O, Ix> ScoreLayer<N, O, Ix>
@@ -81,21 +31,21 @@ where
     pub fn new() -> Self {
         Self {
             end_points: Vec::default(),
-            visited_paths: Vec::default(),
+            ext_hits_continued: Vec::default(),
         }
     }
 
     pub fn from_prev(other: &Self) -> Self {
         Self {
             end_points: Vec::with_capacity(other.end_points.len()),
-            visited_paths: Vec::with_capacity(other.visited_paths.len()),
+            ext_hits_continued: Vec::with_capacity(other.ext_hits_continued.len()),
         }
     }
 
     pub fn with_endpoints(endpoints: Vec<Ix>) -> Self {
         Self {
             end_points: endpoints,
-            visited_paths: Vec::default(),
+            ext_hits_continued: Vec::default(),
         }
     }
 
@@ -103,8 +53,8 @@ where
         self.end_points.push(end_point);
     }
 
-    pub fn queue_visited_path(&mut self, path: VisitedPath<N, O>) {
-        self.visited_paths.push(path)
+    pub fn queue_ext_hit(&mut self, node: N, ext_hit: ExtendHit<O>) {
+        self.ext_hits_continued.push((node, ext_hit))
     }
 
     pub fn queue_additional(&mut self, additional: Vec<Ix>) {
@@ -119,12 +69,12 @@ where
         &mut self.end_points
     }
 
-    pub fn visited_paths(&self) -> &[VisitedPath<N, O>] {
-        &self.visited_paths
+    pub fn extend_hits(&self) -> &[(N, ExtendHit<O>)] {
+        &self.ext_hits_continued
     }
 
     pub fn is_empty(&self) -> bool {
-        self.end_points.is_empty() && self.visited_paths.is_empty()
+        self.end_points.is_empty() && self.ext_hits_continued.is_empty()
     }
 }
 
@@ -170,7 +120,7 @@ where
         }
     }
 
-    pub fn queue_visited_path(&mut self, score_delta: u8, visited_path: VisitedPath<N, O>) {
+    pub fn queue_ext_hit(&mut self, score_delta: u8, node: N, ext_hit: ExtendHit<O>) {
         if self.queue.len() <= score_delta as usize {
             if let Some(last) = self.queue.back() {
                 self.queue.resize(score_delta as usize + 1, ScoreLayer::from_prev(last));
@@ -179,7 +129,7 @@ where
             }
         }
 
-        self.queue[score_delta as usize].queue_visited_path(visited_path);
+        self.queue[score_delta as usize].queue_ext_hit(node, ext_hit);
     }
 
     pub fn pop_current(&mut self) -> Option<ScoreLayer<N, O, Ix>> {

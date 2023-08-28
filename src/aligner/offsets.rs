@@ -9,6 +9,7 @@ pub trait OffsetType: FromPrimitive + Unsigned + PartialEq + Eq +
 {
     fn new(value: usize) -> Self;
     fn as_usize(&self) -> usize;
+    fn as_isize(&self) -> isize;
     fn increase_one(&self) -> Self;
 }
 
@@ -21,6 +22,11 @@ impl OffsetType for u8 {
     #[inline(always)]
     fn as_usize(&self) -> usize {
         *self as usize
+    }
+
+    #[inline(always)]
+    fn as_isize(&self) -> isize {
+        *self as isize
     }
 
     #[inline(always)]
@@ -41,6 +47,11 @@ impl OffsetType for u16 {
     }
 
     #[inline(always)]
+    fn as_isize(&self) -> isize {
+        *self as isize
+    }
+
+    #[inline(always)]
     fn increase_one(&self) -> Self {
         *self + Self::one()
     }
@@ -55,6 +66,11 @@ impl OffsetType for u32 {
     #[inline(always)]
     fn as_usize(&self) -> usize {
         *self as usize
+    }
+    
+    #[inline(always)]
+    fn as_isize(&self) -> isize {
+        *self as isize
     }
 
     #[inline(always)]
@@ -72,6 +88,11 @@ impl OffsetType for u64 {
     #[inline(always)]
     fn as_usize(&self) -> usize {
         *self as usize
+    }
+    
+    #[inline(always)]
+    fn as_isize(&self) -> isize {
+        *self as isize
     }
 
     #[inline(always)]

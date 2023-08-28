@@ -105,12 +105,14 @@ impl DebugOutputWorker {
                     messages::DebugOutputMessage::IntermediateGraph { graph_dot } => {
                         let fname = output_path.join(format!("graph_for_{}.dot", &curr_seq_name));
                         let mut dot_file = File::create(fname)?;
-                        write!(dot_file, "{}", graph_dot)?
+                        write!(dot_file, "{}", graph_dot)?;
+                        dot_file.flush()?;
                     },
                     messages::DebugOutputMessage::AlignStateTree { tree_gml } => {
                         let fname = output_path.join(format!("aln_state_tree_for_{}.gml", &curr_seq_name));
                         let mut gml_file = File::create(fname)?;
-                        write!(gml_file, "{}", tree_gml)?
+                        write!(gml_file, "{}", tree_gml)?;
+                        gml_file.flush()?;
                     },
                     messages::DebugOutputMessage::Terminate => break
                 }
