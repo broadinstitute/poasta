@@ -194,14 +194,14 @@ where
         }
     }
 
-    fn add_extend_node(&mut self, prev_state: Ix, node: N, offset: O) -> Ix
+    fn add_extend_node(&mut self, prev_state: Ix, node: N, offset: O, state: AlignState) -> Ix
     where
         N: NodeIndexType,
         O: OffsetType,
     {
         let new_tree_node = StateTreeNode::new(
             node, offset,
-            AlignState::Match,
+            state,
             Backtrace::Step(prev_state)
         );
 
@@ -256,7 +256,7 @@ where
     }
 }
 
-pub struct NewExtendEndpoint<N, O, Ix>(AlignState, N, O, Ix, O);
+pub struct NewExtendEndpoint<N, O, Ix>(AlignState, N, O, Ix);
 
 impl<N, O, Ix> NewExtendEndpoint<N, O, Ix>
 where
@@ -279,10 +279,6 @@ where
     pub fn state_ix(&self) -> Ix {
         self.3
     }
-
-    pub fn path_len(&self) -> O {
-        self.4
-    }
 }
 
 impl<'a, G, N, O, T, Ix> Iterator for EndpointExtender<'a, G, N, O, T, Ix>
@@ -302,31 +298,36 @@ where
                     self.has_new_path = true;
 
                     let new_ix = self.dfe.get_visited_proxy_mut()
-                        .add_extend_node(*self.stack.last().unwrap(), child, child_offset);
-                    self.stack.push(new_ix)
+                        .add_extend_node(*self.stack.last().unwrap(), child, child_offset, AlignState::Match);
+                    self.stack.push(new_ix);
+
+                    return Some(NewExtendEndpoint(
+                        AlignState::Match,
+                        child, child_offset,
+                        new_ix
+                    ));
                 },
                 DFEEdge::ForwardMismatch(_, _, child, child_offset) => {
                     let new_ix = self.dfe.get_visited_proxy_mut()
-                        .add_extend_node(*self.stack.last().unwrap(), child, child_offset);
+                        .add_extend_node(*self.stack.last().unwrap(), child, child_offset, AlignState::Mismatch);
                     return Some(NewExtendEndpoint(
                         AlignState::Mismatch,
                         child, child_offset,
                         new_ix,
-                        O::new(self.stack.len()))
-                    );
+                    ));
                 },
                 DFEEdge::Backward(leaf_node, leaf_offset, _, _) => {
-                    let leaf_state = self.stack.pop();
+                    self.stack.pop();
 
-                    if self.has_new_path {
-                        self.has_new_path = false;
-                        return leaf_state.map(|v| NewExtendEndpoint(
-                            AlignState::Match,
-                            leaf_node, leaf_offset,
-                            v,
-                            O::new(self.stack.len() - 1))
-                        )
-                    }
+                    // if self.has_new_path {
+                    //     self.has_new_path = false;
+                    //     return leaf_state.map(|v| NewExtendEndpoint(
+                    //         AlignState::Match,
+                    //         leaf_node, leaf_offset,
+                    //         v,
+                    //         O::new(self.stack.len() - 1))
+                    //     )
+                    // }
                 }
             }
         }
