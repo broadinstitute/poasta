@@ -97,7 +97,7 @@ where
 
             // Try to extend the alignment along matching sequence in the graph
             // eprintln!("EXTEND score: {score}");
-            match self.extend(graph, seq, &mut state_tree, current.endpoints_mut(), &mut queue, score) {
+            match self.extend(graph, seq, &mut state_tree, current.endpoints_mut(), &mut queue) {
                 ReachedEnd(end) => {
                     reached_end_state = (end, score);
                     break;
@@ -110,7 +110,7 @@ where
             // explored first.
             // eprintln!("EXPAND score: {score}");
             for state_ix in current.endpoints() {
-                if let Some(end) = state_tree.generate_next(&mut queue, graph, seq.len(), score, *state_ix) {
+                if let Some(end) = state_tree.generate_next(&mut queue, graph, seq.len(), *state_ix) {
                     reached_end_state = (end, score + self.costs.mismatch() as usize);
                     break 'main;
                 }
@@ -143,7 +143,6 @@ where
         tree: &mut T,
         end_points: &mut [Ix],
         queue: &mut AlignStateQueue<Ix>,
-        score: usize,
     ) -> ExtendResult<Ix>
     where
         O: OffsetType,

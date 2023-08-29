@@ -7,12 +7,13 @@ use crate::aligner::state::{AlignState, Backtrace, StateTreeNode, TreeIndexType}
 
 /// A node in the graph aligned to a certain offset in the query
 /// that we will try to extend from
-pub struct StackNode<'a, N, O>(N, O, RefCell<Box<dyn Iterator<Item=N> + 'a>>);
+pub struct StackNode<N, O, I>(N, O, RefCell<I>);
 
-impl<'a, N, O> StackNode<'a, N, O>
+impl<N, O, I> StackNode<N, O, I>
 where
     N: NodeIndexType,
     O: OffsetType,
+    I: Iterator<Item=N>,
 {
     #[inline(always)]
     pub fn node(&self) -> N {
@@ -25,7 +26,7 @@ where
     }
 
     #[inline]
-    fn children_iter(&self) -> RefMut<Box<dyn Iterator<Item=N> + 'a>> {
+    fn children_iter(&self) -> RefMut<I> {
         self.2.borrow_mut()
     }
 }
@@ -60,11 +61,14 @@ pub trait VisitedProxy<N, O> {
 ///
 /// See also: https://www.ics.uci.edu/~eppstein/PADS/ or
 /// https://networkx.org/documentation/stable/reference/algorithms/generated/networkx.algorithms.traversal.depth_first_search.dfs_labeled_edges.html
-pub struct DepthFirstExtension<'a, G, N, O, V> {
+pub struct DepthFirstExtension<'a, G, N, O, V>
+where
+    G: AlignableGraph,
+{
     graph: &'a G,
     seq: &'a [u8],
     visited: V,
-    stack: Vec<StackNode<'a, N, O>>
+    stack: Vec<StackNode<N, O, G::SuccessorIterator<'a>>>
 }
 
 impl<'a, G, N, O, V> DepthFirstExtension<'a, G, N, O, V>
@@ -75,7 +79,7 @@ where
     V: VisitedProxy<N, O>,
 {
     pub fn new(graph: &'a G, seq: &'a [u8], visited: V, start_node: N, start_offset: O) -> Self {
-        let succ_iter = RefCell::new(Box::new(graph.successors(start_node)));
+        let succ_iter = RefCell::new(graph.successors(start_node));
         Self {
             graph,
             seq,
@@ -88,7 +92,7 @@ where
     ///
     /// A child is valid if it hasn't been visited before and we flag if the symbol in the query
     /// sequence matches the symbol of the node.
-    fn next_valid_child(&self, parent: &StackNode<N, O>) -> ExtendedChild<N, O> {
+    fn next_valid_child(&self, parent: &StackNode<N, O, G::SuccessorIterator<'a>>) -> ExtendedChild<N, O> {
         if parent.offset().as_usize() >= self.seq.len() {
             return ExtendedChild::None
         }
@@ -136,7 +140,7 @@ where
                 ExtendedChild::Match(child, child_offset) => {
                     self.visited.mark_visited(child, child_offset);
 
-                    let child_succ = RefCell::new(Box::new(self.graph.successors(child)));
+                    let child_succ = RefCell::new(self.graph.successors(child));
                     self.stack.push(StackNode(child, child_offset, child_succ));
 
                     Some(DFEEdge::ForwardMatch(parent_node, parent_offset, child, child_offset))
@@ -222,7 +226,10 @@ where
 }
 
 
-pub struct EndpointExtender<'a, G, N, O, T, Ix> {
+pub struct EndpointExtender<'a, G, N, O, T, Ix>
+where
+    G: AlignableGraph,
+{
     dfe: DepthFirstExtension<'a, G, N, O, AlignStateTreeVisited<'a, T, N, O, Ix>>,
     stack: Vec<Ix>,
     has_new_path: bool,

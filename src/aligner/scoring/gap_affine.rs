@@ -171,7 +171,6 @@ where
         queue: &mut AlignStateQueue<Ix>,
         graph: &G,
         seq_len: usize,
-        curr_score: usize,
         curr_ix: Ix
     ) -> Option<Ix>
     where
@@ -184,26 +183,25 @@ where
         match self.get_node(curr_ix).state() {
             AlignState::Start | AlignState::Match | AlignState::Mismatch  => {
                 // For each successor we can either enter a mismatch state or open a deletion
-                let new_score_mis = curr_score + self.costs.mismatch() as usize;
                 for succ in graph.successors(self.get_node(curr_ix).node()) {
                     // Mismatch, only if there's still query sequence to match
-                    if self.get_node(curr_ix).offset() < seq_len_as_o {
-                        let new_offset = self.get_node(curr_ix).offset().increase_one();
-                        if !self.visited(succ, new_offset, AlignState::Match) {
-                            self.visited_m.mark_visited(succ, new_offset);
-
-                            let new_state = StateTreeNode::new(
-                                succ, new_offset,
-                                AlignState::Mismatch, Backtrace::Step(curr_ix));
-                            let new_ix = self.tree.add_node(new_state);
-
-                            if self.is_end_node(graph, seq_len, new_ix) {
-                                return Some(new_ix)
-                            }
-
-                            queue.queue_endpoint(self.costs.mismatch() - 1, new_ix);
-                        }
-                    }
+                    // if self.get_node(curr_ix).offset() < seq_len_as_o {
+                    //     let new_offset = self.get_node(curr_ix).offset().increase_one();
+                    //     if !self.visited(succ, new_offset, AlignState::Match) {
+                    //         self.visited_m.mark_visited(succ, new_offset);
+                    //
+                    //         let new_state = StateTreeNode::new(
+                    //             succ, new_offset,
+                    //             AlignState::Mismatch, Backtrace::Step(curr_ix));
+                    //         let new_ix = self.tree.add_node(new_state);
+                    //
+                    //         if self.is_end_node(graph, seq_len, new_ix) {
+                    //             return Some(new_ix)
+                    //         }
+                    //
+                    //         queue.queue_endpoint(self.costs.mismatch() - 1, new_ix);
+                    //     }
+                    // }
 
                     // Open deletion
                     let offset = self.get_node(curr_ix).offset();

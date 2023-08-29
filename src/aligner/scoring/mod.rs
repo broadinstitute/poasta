@@ -56,7 +56,6 @@ where
         queue: &mut AlignStateQueue<Ix>,
         graph: &G,
         seq_len: usize,
-        curr_score: usize,
         curr_ix: Ix,
     ) -> Option<Ix>
     where

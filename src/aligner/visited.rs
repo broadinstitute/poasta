@@ -46,10 +46,12 @@ where
     N: NodeIndexType,
     O: OffsetType,
 {
+    #[inline(always)]
     fn visited(&self, node: N, offset: O) -> bool {
         self.visited[node.index()].contains(&offset)
     }
 
+    #[inline(always)]
     fn mark_visited(&mut self, node: N, offset: O) {
         self.visited[node.index()].insert(offset);
     }
