@@ -88,7 +88,6 @@ where
     curr_score: usize,
     stack: Vec<ExtendNode<'a, N, O, Ix>>,
     has_new_path: bool,
-    new_path_start_ix: usize,
 }
 
 impl<'a, G, T, N, O, Ix> PathExtender<'a, G, T, N, O, Ix>
@@ -111,7 +110,6 @@ where
             curr_score,
             stack: vec![ExtendNode(start_node, offset, start_ix, succ_iter)],
             has_new_path: false,
-            new_path_start_ix: 0,
         }
     }
 
@@ -127,8 +125,9 @@ where
         while let Some(child) = parent.children_iter().next() {
             let child_offset = parent.offset().increase_one();
 
+            let visited = self.tree.visited(child, child_offset, AlignState::Match, self.curr_score);
             if self.graph.is_symbol_equal(child, self.seq[child_offset.as_usize() - 1]) &&
-                !self.tree.visited(child, child_offset, AlignState::Match, self.curr_score)
+                !visited
             {
                 return Some((child, child_offset))
             }
@@ -154,20 +153,16 @@ where
             if let Some((child, child_offset)) = self.next_valid_child(parent) {
                 // We are going forward in the depth-first matches search tree, so set flag that
                 // we have a new path
-                if !self.has_new_path {
-                    self.new_path_start_ix = self.stack.len() - 1;
-                }
-
                 self.has_new_path = true;
 
                 // Add the reached (node, offset) to the state tree.
                 let new_tree_node = StateTreeNode::new(child, child_offset, AlignState::Match,
                                                        Backtrace::Step(self.stack.last().unwrap().tree_ix()));
-                if self.stack.len() > 1 {
-                    let last = self.stack.last().unwrap();
-                    self.tree.add_intermediate_extend_node(self.curr_score, last.node(), last.offset(),  O::new(self.stack.len() - 1));
-                }
 
+                self.tree.add_intermediate_extend_node(self.curr_score,
+                                                       new_tree_node.node(),
+                                                       new_tree_node.offset(),
+                                                       O::new(self.stack.len()));
                 let new_tree_ix = self.tree.add_node(new_tree_node);
                 self.tree.mark_visited(child, child_offset, AlignState::Match);
 
@@ -175,11 +170,11 @@ where
                 self.stack.push(ExtendNode(child, child_offset, new_tree_ix, child_succ));
             } else {
                 // if self.has_new_path {
-                //     let path: Vec<_> = self.stack[self.new_path_start_ix..].iter()
+                //     let path: Vec<_> = self.stack[1..].iter()
                 //         .map(|item| (item.0, item.1))
                 //         .collect();
                 //
-                //     eprintln!("Path: {path:?} (path len: {})", (self.stack.len() - self.new_path_start_ix));
+                //     eprintln!("Path: {path:?} (path len: {})", (self.stack.len() - 1));
                 // }
 
                 // If we reach here, we are about to move up the depth-first matches search tree.
@@ -190,7 +185,7 @@ where
 
                 if self.has_new_path {
                     self.has_new_path = false;
-                    return popped.map(|v| (v, O::new(self.stack.len() - self.new_path_start_ix)));
+                    return popped.map(|v| (v, O::new(self.stack.len() - 1)));
                 }
             }
         }
@@ -249,7 +244,7 @@ where
     /// let hit = ExtendHit::<u32>::new(12, 20, 5, ExtendHitType::Full);
     ///
     /// // It's own offset is reachable
-    /// assert_eq!(hit.reachable_from(costs, 20, 20), true);
+    /// assert_eq!(hit.reachable_from(costs, 20, 20, AlignState::Match), true);
     ///
     /// // Cases below are examples of deletions opened from previous nodes in the path
     /// assert_eq!(hit.reachable_from(costs, 19, 14, AlignState::Match), false); // too low score
@@ -321,8 +316,8 @@ where
         // eprintln!("gap length from hit to offset: {:?}-{:?}: {gap_length}", self.offset(), offset);
 
         let score_from_hit = self.score() + costs.gap_score(gap_length);
-        // eprintln!("Score from hit: {score_from_hit} <= {score}: {}", score_from_hit <= score);
-        score_from_hit <= score
+        // eprintln!("Score from hit: {score_from_hit} < {score}: {}", score_from_hit < score);
+        score_from_hit < score
     }
 
     pub fn to_next(&self) -> Self {
