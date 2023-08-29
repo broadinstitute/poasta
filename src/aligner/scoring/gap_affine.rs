@@ -1,6 +1,4 @@
 use std::fmt::{Display, Formatter};
-use smallvec::SmallVec;
-use crate::aligner::extend::{ExtendHit, ExtendHitType};
 
 use crate::graphs::{AlignableGraph, NodeIndexType};
 use crate::io::state_tree::write_tree_gml;
@@ -64,11 +62,6 @@ impl AlignmentCosts for GapAffine {
     fn gap_extend2(&self) -> u8 {
         0
     }
-
-    #[inline(always)]
-    fn gap_score(&self, gap_length: usize) -> usize {
-        self.cost_gap_open as usize + (self.cost_gap_extend as usize * gap_length)
-    }
 }
 
 
@@ -83,7 +76,6 @@ where
     visited_m: VisitedSetPerNode<O>,
     visited_d: VisitedSetPerNode<O>,
     visited_i: VisitedSetPerNode<O>,
-    extend_hits: Vec<SmallVec<[ExtendHit<O>; 4]>>,
 }
 
 impl<N, O, Ix> GapAffineStateTree<N, O, Ix>
@@ -99,7 +91,6 @@ where
             visited_m: VisitedSetPerNode::new(graph),
             visited_d: VisitedSetPerNode::new(graph),
             visited_i: VisitedSetPerNode::new(graph),
-            extend_hits: vec![SmallVec::new(); graph.node_count() + 1],
         }
     }
 
@@ -119,18 +110,9 @@ where
     O: OffsetType,
     Ix: TreeIndexType,
 {
+    #[inline(always)]
     fn add_node(&mut self, node: StateTreeNode<N, O, Ix>) -> Ix {
         self.tree.add_node(node)
-    }
-
-    fn add_intermediate_extend_node(&mut self, score: usize, node: N, offset: O, path_offset: O) {
-        self.extend_hits[node.index()].push(
-            ExtendHit::new(score, offset, path_offset, ExtendHitType::Full)
-        );
-    }
-
-    fn add_extend_hit(&mut self, node: N, hit: ExtendHit<O>) {
-        self.extend_hits[node.index()].push(hit)
     }
 
     #[inline(always)]
@@ -143,20 +125,13 @@ where
     }
 
     #[inline]
-    fn visited(&self, node: N, offset: O, state: AlignState, score: usize) -> bool {
-        let visited = match state {
+    fn visited(&self, node: N, offset: O, state: AlignState) -> bool {
+        match state {
             AlignState::Start | AlignState::Match | AlignState::Mismatch => self.visited_m.visited(node, offset),
             AlignState::Deletion => self.visited_d.visited(node, offset),
             AlignState::Insertion => self.visited_i.visited(node, offset),
             _ => panic!("Invalid alignment state for GapAffine!")
-        };
-
-        // if !visited && !self.extend_hits[node.index()].is_empty() {
-        //     eprintln!("Checking reachable from extend hit for node ({node:?}, {offset:?})");
-        // }
-
-        visited || self.extend_hits[node.index()].iter()
-            .any(|hit| hit.reachable_from(self.costs, offset, score, state))
+        }
     }
 
     fn mark_visited(&mut self, node: N, offset: O, state: AlignState) {
@@ -168,13 +143,13 @@ where
         };
     }
 
-    fn close_indels_for(&mut self, node_indices: &[Ix], score: usize) -> Vec<Ix> {
+    fn close_indels_for(&mut self, node_indices: &[Ix]) -> Vec<Ix> {
         node_indices.iter().filter_map(|v| {
             let node = self.tree.get_node(*v);
 
             match node.state() {
                 AlignState::Deletion | AlignState::Insertion => {
-                    if !self.visited(node.node(), node.offset(), AlignState::Match, score) {
+                    if !self.visited(node.node(), node.offset(), AlignState::Match) {
                         self.visited_m.mark_visited(node.node(), node.offset());
 
                         let new_state = StateTreeNode::new(
@@ -193,7 +168,7 @@ where
 
     fn generate_next<G>(
         &mut self,
-        queue: &mut AlignStateQueue<N, O, Ix>,
+        queue: &mut AlignStateQueue<Ix>,
         graph: &G,
         seq_len: usize,
         curr_score: usize,
@@ -214,7 +189,7 @@ where
                     // Mismatch, only if there's still query sequence to match
                     if self.get_node(curr_ix).offset() < seq_len_as_o {
                         let new_offset = self.get_node(curr_ix).offset().increase_one();
-                        if !self.visited(succ, new_offset, AlignState::Match, new_score_mis) {
+                        if !self.visited(succ, new_offset, AlignState::Match) {
                             self.visited_m.mark_visited(succ, new_offset);
 
                             let new_state = StateTreeNode::new(
@@ -232,8 +207,7 @@ where
 
                     // Open deletion
                     let offset = self.get_node(curr_ix).offset();
-                    let new_score_del_open = curr_score + self.costs.gap_open() as usize + self.costs.gap_extend() as usize;
-                    if !self.visited(succ, offset, AlignState::Deletion, new_score_del_open) {
+                    if !self.visited(succ, offset, AlignState::Deletion) {
                         self.visited_d.mark_visited(succ, offset);
 
                         let new_state = StateTreeNode::new(
@@ -248,8 +222,7 @@ where
                     // Open insertion
                     let curr_node = self.get_node(curr_ix).node();
                     let new_offset = self.get_node(curr_ix).offset().increase_one();
-                    let new_score_ins_open = curr_score + self.costs.gap_open() as usize + self.costs.gap_extend() as usize;
-                    if !self.visited(curr_node, new_offset, AlignState::Insertion, new_score_ins_open) {
+                    if !self.visited(curr_node, new_offset, AlignState::Insertion) {
                         self.visited_i.mark_visited(curr_node, new_offset);
 
                         let new_state = StateTreeNode::new(
@@ -263,10 +236,9 @@ where
             },
             AlignState::Deletion => {
                 // Extend deletion for each successor
-                let new_score_del_ext = curr_score + self.costs.gap_extend() as usize;
                 for succ in graph.successors(self.get_node(curr_ix).node()) {
                     let offset = self.get_node(curr_ix).offset();
-                    if !self.visited(succ, offset, AlignState::Deletion, new_score_del_ext) {
+                    if !self.visited(succ, offset, AlignState::Deletion) {
                         self.visited_d.mark_visited(succ, offset);
 
                         let new_state = StateTreeNode::new(
@@ -278,11 +250,10 @@ where
                 }
             },
             AlignState::Insertion => {
-                let new_score_ins_ext = curr_score + self.costs.gap_extend() as usize;
                 if self.get_node(curr_ix).offset() < seq_len_as_o {
                     let curr_node = self.get_node(curr_ix).node();
                     let new_offset = self.get_node(curr_ix).offset().increase_one();
-                    if !self.visited(curr_node, new_offset, AlignState::Insertion, new_score_ins_ext) {
+                    if !self.visited(curr_node, new_offset, AlignState::Insertion) {
                         self.visited_i.mark_visited(curr_node, new_offset);
 
                         let new_state = StateTreeNode::new(

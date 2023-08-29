@@ -6,12 +6,13 @@ pub mod queue;
 pub mod alignment;
 pub mod visited;
 
+use smallvec::SmallVec;
 use crate::graphs::{AlignableGraph, NodeIndexType};
 use crate::aligner::offsets::OffsetType;
 use crate::aligner::state::{AlignState, StateTreeNode, Backtrace, TreeIndexType};
 use crate::aligner::scoring::AlignmentCosts;
 use crate::aligner::queue::AlignStateQueue;
-use crate::aligner::extend::{ExtendHit, ExtendHitType, PathExtender};
+use crate::aligner::extend::EndpointExtender;
 
 use crate::debug::DebugOutputWriter;
 use crate::debug::messages::DebugOutputMessage;
@@ -19,7 +20,7 @@ use crate::debug::messages::DebugOutputMessage;
 pub use alignment::{AlignedPair, Alignment};
 
 enum ExtendResult<Ix: TreeIndexType> {
-    NewExtendedNodes(Vec<Ix>),
+    NewExtendedNodes(SmallVec<[Ix; 32]>),
     ReachedEnd(Ix)
 }
 
@@ -91,7 +92,7 @@ where
 
             // Close indels for current score, and add to current queue
             // eprintln!("CLOSE INDELS score: {score}");
-            let new_states = state_tree.close_indels_for(current.endpoints(), score);
+            let new_states = state_tree.close_indels_for(current.endpoints());
             current.queue_additional(new_states);
 
             // Try to extend the alignment along matching sequence in the graph
@@ -115,9 +116,6 @@ where
                 }
             }
 
-            // eprintln!("CONT EXT HIT score: {score}");
-            self.continue_ext_hits(&mut queue, graph, &mut state_tree, score, current.extend_hits());
-
             if let Some(debug) = self.debug_output {
                 debug.log(DebugOutputMessage::new_from_state_tree(&state_tree));
             }
@@ -138,47 +136,13 @@ where
         (end_score, alignment)
     }
 
-    fn continue_ext_hits<O, Ix, G, N, T>(&mut self, queue: &mut AlignStateQueue<N, O, Ix>,
-                                         graph: &G, tree: &mut T, score: usize, hits: &[(N, ExtendHit<O>)])
-    where
-        O: OffsetType,
-        Ix: TreeIndexType,
-        G: AlignableGraph<NodeIndex=N>,
-        N: NodeIndexType,
-        T: AlignmentStateTree<N, O, Ix>
-    {
-        for (node, hit) in hits {
-            if tree.visited(*node, hit.offset(), AlignState::Match, score) {
-                continue;
-            }
-
-            tree.add_extend_hit(*node, *hit);
-            // eprintln!("Mark path as visited: {path:?}");
-
-            for succ in graph.successors(*node) {
-                let new = hit.to_next();
-                if tree.visited(succ, new.offset(), AlignState::Match, score) {
-                    continue;
-                }
-
-                if self.costs.gap_extend2() > 0 && self.costs.gap_extend2() != self.costs.gap_extend() {
-                    queue.queue_ext_hit(self.costs.gap_extend2() - 1, succ, new)
-                }
-
-                if self.costs.gap_extend() > 0 {
-                    queue.queue_ext_hit(self.costs.gap_extend() - 1, succ, new);
-                }
-            }
-        }
-    }
-
     fn extend<O, Ix, G, N, T>(
         &mut self,
         graph: &G,
         seq: &[u8],
         tree: &mut T,
         end_points: &mut [Ix],
-        queue: &mut AlignStateQueue<N, O, Ix>,
+        queue: &mut AlignStateQueue<Ix>,
         score: usize,
     ) -> ExtendResult<Ix>
     where
@@ -205,39 +169,29 @@ where
         }
 
         // Let's try to extend along matching sequence in the graph
-        let mut additional_states = Vec::with_capacity(end_points.len());
-        for node_ix in end_points.iter_mut() {
-            let node = tree.get_node(*node_ix);
+        let mut additional_states: SmallVec<[Ix; 32]> = SmallVec::new();
+        for state_ix in end_points.iter_mut() {
+            let aln_state = tree.get_node(*state_ix);
 
-            match node.state() {
+            match aln_state.state() {
                 AlignState::Start | AlignState::Match | AlignState::Mismatch => {
-                    let path_extender = PathExtender::new(graph, seq, tree, score, *node_ix);
+                    let endpoint_extender = EndpointExtender::new(graph, seq, tree, *state_ix);
 
                     let mut first = true;
-                    for (path_end_point, path_len) in path_extender {
-                        if first {
-                            *node_ix = path_end_point.tree_ix();
-                            first = false;
-                        } else {
-                            additional_states.push(path_end_point.tree_ix())
-                        }
-
-                        if self.costs.gap_extend() > 0 {
-                            for succ in graph.successors(path_end_point.node()) {
-                                let new_extend_cont = ExtendHit::new(
-                                    score,
-                                    path_end_point.offset().increase_one(),
-                                    path_len,
-                                    ExtendHitType::DeletionExtension
-                                );
-
-                                let score_delta = self.costs.gap_open() + self.costs.gap_extend();
-                                queue.queue_ext_hit(score_delta - 1, succ, new_extend_cont);
-                                let score_delta2 = self.costs.gap_open2() + self.costs.gap_extend2();
-                                if score_delta2 > 0 && score_delta2 != score_delta {
-                                    queue.queue_ext_hit(score_delta2 - 1, succ, new_extend_cont);
+                    for new_end_point in endpoint_extender {
+                        match new_end_point.state() {
+                            AlignState::Match => {
+                                if first {
+                                    *state_ix = new_end_point.state_ix();
+                                    first = false;
+                                } else {
+                                    additional_states.push(new_end_point.state_ix())
                                 }
-                            }
+                            },
+                            AlignState::Mismatch => {
+                                queue.queue_endpoint(self.costs.mismatch() - 1, new_end_point.state_ix());
+                            },
+                            _ => panic!("Invalid AlignState from EndpointExtender!")
                         }
                     }
                 },
@@ -260,6 +214,7 @@ where
             return ReachedEnd(*end);
         }
 
+        // eprintln!("stat: additional states - {}", additional_states.len());
         NewExtendedNodes(additional_states)
     }
 

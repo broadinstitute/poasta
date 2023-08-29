@@ -1,8 +1,5 @@
 use std::collections::VecDeque;
-use crate::aligner::extend::{ExtendedPath, ExtendHit};
-use crate::aligner::offsets::OffsetType;
-use crate::aligner::state::{AlignState, TreeIndexType};
-use crate::graphs::NodeIndexType;
+use crate::aligner::state:: TreeIndexType;
 
 
 #[derive(Copy, Clone, Debug)]
@@ -13,39 +10,29 @@ pub enum PathShift<O> {
 
 
 #[derive(Clone, Debug, Default)]
-pub struct ScoreLayer<N, O, Ix>
-where
-    N: NodeIndexType,
-    O: OffsetType,
-{
+pub struct ScoreLayer<Ix> {
     end_points: Vec<Ix>,
-    ext_hits_continued: Vec<(N, ExtendHit<O>)>,
 }
 
-impl<N, O, Ix> ScoreLayer<N, O, Ix>
+impl<Ix> ScoreLayer<Ix>
 where
-    N: NodeIndexType,
-    O: OffsetType,
     Ix: TreeIndexType,
 {
     pub fn new() -> Self {
         Self {
             end_points: Vec::default(),
-            ext_hits_continued: Vec::default(),
         }
     }
 
     pub fn from_prev(other: &Self) -> Self {
         Self {
             end_points: Vec::with_capacity(other.end_points.len()),
-            ext_hits_continued: Vec::with_capacity(other.ext_hits_continued.len()),
         }
     }
 
     pub fn with_endpoints(endpoints: Vec<Ix>) -> Self {
         Self {
             end_points: endpoints,
-            ext_hits_continued: Vec::default(),
         }
     }
 
@@ -53,11 +40,7 @@ where
         self.end_points.push(end_point);
     }
 
-    pub fn queue_ext_hit(&mut self, node: N, ext_hit: ExtendHit<O>) {
-        self.ext_hits_continued.push((node, ext_hit))
-    }
-
-    pub fn queue_additional(&mut self, additional: Vec<Ix>) {
+    pub fn queue_additional<T: IntoIterator<Item=Ix>>(&mut self, additional: T) {
         self.end_points.extend(additional.into_iter())
     }
 
@@ -69,31 +52,23 @@ where
         &mut self.end_points
     }
 
-    pub fn extend_hits(&self) -> &[(N, ExtendHit<O>)] {
-        &self.ext_hits_continued
-    }
-
     pub fn is_empty(&self) -> bool {
-        self.end_points.is_empty() && self.ext_hits_continued.is_empty()
+        self.end_points.is_empty()
     }
 }
 
 
 
 /// Score-based queue of alignment state tree nodes to expand
-pub struct AlignStateQueue<N, O, Ix>
+pub struct AlignStateQueue<Ix>
 where
-    N: NodeIndexType,
-    O: OffsetType,
     Ix: TreeIndexType,
 {
-    queue: VecDeque<ScoreLayer<N, O, Ix>>
+    queue: VecDeque<ScoreLayer<Ix>>
 }
 
-impl<N, O, Ix> AlignStateQueue<N, O, Ix>
+impl<Ix> AlignStateQueue<Ix>
 where
-    N: NodeIndexType,
-    O: OffsetType,
     Ix: TreeIndexType,
 {
     pub fn new() -> Self {
@@ -120,19 +95,7 @@ where
         }
     }
 
-    pub fn queue_ext_hit(&mut self, score_delta: u8, node: N, ext_hit: ExtendHit<O>) {
-        if self.queue.len() <= score_delta as usize {
-            if let Some(last) = self.queue.back() {
-                self.queue.resize(score_delta as usize + 1, ScoreLayer::from_prev(last));
-            } else {
-                self.queue.resize(score_delta as usize + 1, ScoreLayer::default());
-            }
-        }
-
-        self.queue[score_delta as usize].queue_ext_hit(node, ext_hit);
-    }
-
-    pub fn pop_current(&mut self) -> Option<ScoreLayer<N, O, Ix>> {
+    pub fn pop_current(&mut self) -> Option<ScoreLayer<Ix>> {
         self.queue.pop_front()
     }
 
