@@ -70,12 +70,10 @@ where
         let mut queue = AlignStateQueue::new();
         let mut state_tree: <C as AlignmentCosts>::StateTreeType<N, O, Ix> = self.costs.to_new_state_tree(graph);
 
-        // Add graph start nodes to queue
-        for start_node in graph.start_nodes().iter() {
-            let start_state = StateTreeNode::new_start(*start_node);
-            let new_ix = state_tree.add_node(start_state);
-            queue.queue_endpoint(0, new_ix);
-        }
+        // Add graph start node to queue
+        let start_state = StateTreeNode::new_start(graph.start_node());
+        let new_ix = state_tree.add_node(start_state);
+        queue.queue_endpoint(0, new_ix);
 
         let mut score = 0;
         let reached_end_state;

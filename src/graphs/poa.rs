@@ -92,7 +92,7 @@ where
     pub(crate) graph: POAGraphType<Ix>,
     pub sequences: Vec<Sequence<POANodeIndex<Ix>>>,
     topological_sorted: Vec<POANodeIndex<Ix>>,
-    start_nodes: Vec<POANodeIndex<Ix>>,
+    start_node: POANodeIndex<Ix>,
     end_nodes: Vec<POANodeIndex<Ix>>,
 }
 
@@ -105,12 +105,10 @@ where
             graph: POAGraphType::<Ix>::default(),
             sequences: Vec::new(),
             topological_sorted: Vec::new(),
-            start_nodes: Vec::new(),
+            start_node: POANodeIndex::new(0),
             end_nodes: Vec::new(),
         };
-
-        let start_node = graph.graph.add_node(POANodeData::new(b'#'));
-        graph.start_nodes.push(start_node);
+        graph.start_node = graph.graph.add_node(POANodeData::new(b'#'));
 
         graph
     }
@@ -288,16 +286,15 @@ where
         // By repeatedly immediately calling next() on the Edges iterator returned by edges(), we
         // ensure that the returned EdgeIndex is always valid. If using normal iteration, the removal
         // of an edge might invalidate following edge indices.
-        while let Some(e) = self.graph.edges(self.start_nodes[0]).next() {
+        while let Some(e) = self.graph.edges(self.start_node).next() {
             self.graph.remove_edge(e.id());
         }
 
         // Connect nodes with no incoming edges to the start node
-        let start_node = &self.start_nodes[0];
         let all_nodes: Vec<NodeIndex<Ix>> = self.graph.node_indices().collect();
         for node in all_nodes.into_iter() {
-            if node != *start_node && self.graph.neighbors_directed(node, Incoming).count() == 0 {
-                self.graph.add_edge(*start_node, node, POAEdgeData::new_for_start());
+            if node != self.start_node && self.graph.neighbors_directed(node, Incoming).count() == 0 {
+                self.graph.add_edge(self.start_node, node, POAEdgeData::new_for_start());
             }
         }
 
@@ -352,6 +349,7 @@ where
 {
     type NodeIndex = POANodeIndex<Ix>;
     type NodeIterator<'a> = NodeIndices<'a, POANodeData<POANodeIndex<Ix>>, Ix>;
+    type PredecessorIterator<'a> = Neighbors<'a, POAEdgeData, Ix>;
     type SuccessorIterator<'a> = Neighbors<'a, POAEdgeData, Ix>;
 
     fn all_nodes(&self) -> Self::NodeIterator<'_> {
@@ -362,13 +360,21 @@ where
         self.graph.node_count() - 1
     }
 
-    fn edge_count(&self) -> usize {
-        // Exclude edges from start node
-        self.graph.edge_count() - self.graph.neighbors_directed(self.start_nodes[0], Direction::Outgoing).count()
+    fn node_count_with_start(&self) -> usize {
+        self.graph.node_count()
     }
 
-    fn start_nodes(&self) -> &Vec<Self::NodeIndex> {
-        &self.start_nodes
+    fn edge_count(&self) -> usize {
+        // Exclude edges from start node
+        self.graph.edge_count() - self.graph.neighbors_directed(self.start_node, Direction::Outgoing).count()
+    }
+
+    fn start_node(&self) -> Self::NodeIndex {
+        self.start_node
+    }
+
+    fn predecessors(&self, node: Self::NodeIndex) -> Self::PredecessorIterator<'_> {
+        self.graph.neighbors_directed(node, Incoming)
     }
 
     fn successors(&self, node: Self::NodeIndex) -> Self::SuccessorIterator<'_> {
