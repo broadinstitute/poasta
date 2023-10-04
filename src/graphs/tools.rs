@@ -8,10 +8,9 @@ pub fn rev_postorder_nodes<G: AlignableGraph>(graph: &G) -> Vec<G::NodeIndex> {
     let mut stack = vec![
         (graph.start_node(), RefCell::new(graph.successors(graph.start_node())))
     ];
-    let mut visited = FxHashSet::default();
 
     let next_valid_child = |succ_iter: &RefCell<G::SuccessorIterator<'_>>, visited: &FxHashSet<G::NodeIndex>| {
-        if let Some(child) = succ_iter.borrow_mut().next() {
+        while let Some(child) = succ_iter.borrow_mut().next() {
             if !visited.contains(&child) {
                 return Some(child)
             }
@@ -20,6 +19,7 @@ pub fn rev_postorder_nodes<G: AlignableGraph>(graph: &G) -> Vec<G::NodeIndex> {
         None
     };
 
+    let mut visited = FxHashSet::default();
     while !stack.is_empty() {
         let (_, succ_iter) = stack.last().unwrap();
 

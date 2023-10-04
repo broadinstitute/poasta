@@ -1,6 +1,9 @@
 pub mod poa;
 pub mod tools;
 
+#[cfg(test)]
+pub(crate) mod mock;
+
 use std::fmt::Debug;
 use std::hash::Hash;
 
