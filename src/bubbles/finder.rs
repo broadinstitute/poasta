@@ -66,11 +66,6 @@ where
     }
 
     #[inline(always)]
-    pub(crate) fn get_rev_postorder(&self) -> &[usize] {
-        &self.rev_postorder
-    }
-
-    #[inline(always)]
     pub(crate) fn get_inv_rev_postorder(&self) -> &[G::NodeIndex] {
         &self.inv_rev_postorder
     }

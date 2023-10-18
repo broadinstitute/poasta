@@ -18,6 +18,7 @@ use poasta::debug::messages::DebugOutputMessage;
 use poasta::graphs::poa::{POAGraph, POAGraphWithIx};
 use poasta::aligner::PoastaAligner;
 use poasta::aligner::scoring::{AlignmentCosts, GapAffine};
+use poasta::bubbles::index::BubbleIndexBuilder;
 use poasta::errors::PoastaError;
 use poasta::io::graph::load_graph_from_fasta_msa;
 use poasta::io::load_graph;
@@ -118,7 +119,7 @@ where
         if let Some(debug) = debug_writer {
             debug.log(DebugOutputMessage::NewSequence {
                 seq_name: record.name().to_string(),
-                seq_length: record.sequence().len(),
+                sequence: String::from_utf8_lossy(record.sequence().as_ref()).to_string(),
                 max_rank: graph.max_rank()
             });
 
@@ -131,8 +132,13 @@ where
             // eprintln!("Creating initial graph from {}...", record.name());
             graph.add_alignment_with_weights(record.name(), record.sequence(), None, &weights)?;
         } else {
+            eprint!("Building bubble index...");
+            let bubble_index = BubbleIndexBuilder::new(graph)
+                .build();
+            eprintln!("Done. Found {:?} bubbles.", bubble_index.num_bubbles());
+
             eprint!("Aligning #{i} {}... ", record.name());
-            let (score, alignment) = aligner.align::<u32, usize, _, _, _>(graph, record.sequence());
+            let (score, alignment) = aligner.align::<u32, _, _>(graph, &bubble_index, record.sequence());
             eprintln!("Done. Alignment Score: {:?}", score);
             // eprintln!();
             // eprintln!("{}", print_alignment(graph, record.sequence(), &alignment));
@@ -155,7 +161,6 @@ fn align_subcommand(align_args: &AlignArgs) -> Result<()> {
     let mut graph = if let Some(path) = &align_args.graph {
         let fasta_extensions = vec![".fa", ".fa.gz", ".fna", ".fna.gz", ".fasta", ".fasta.gz"];
         let path_as_str = path.to_string_lossy();
-        eprintln!("Ext: {:?}, {:?}", path, path_as_str.ends_with(".fa"));
         if fasta_extensions.into_iter().any(|ext| path_as_str.ends_with(ext)) {
             load_graph_from_fasta_msa(path)?
         } else {

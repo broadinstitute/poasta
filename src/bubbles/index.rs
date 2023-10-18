@@ -44,9 +44,20 @@ where
     pub fn get_node_bubbles(&self, node: N) -> &[NodeBubbleMap<N, O>] {
         &self.node_bubble_map[node.index()]
     }
+
+    pub fn node_is_part_of_bubble(&self, node: N) -> bool {
+        !self.node_bubble_map[node.index()].is_empty()
+    }
+
+    #[inline]
+    pub fn num_bubbles(&self) -> usize {
+        self.bubble_entrance.iter()
+            .filter(|v| v.is_some())
+            .count()
+    }
 }
 
-struct BubbleIndexBuilder<'a, O, G>
+pub struct BubbleIndexBuilder<'a, O, G>
 where
     G: AlignableGraph,
 {
@@ -55,10 +66,10 @@ where
     /// Superbubble finder object
     finder: SuperbubbleFinder<'a, G>,
 
-    /// Array indicating whether a node is a bubble entrance (follows reverse postorder)
+    /// Array indicating whether a node is a bubble entrance
     bubble_entrance: Vec<Option<BubbleNode<G::NodeIndex>>>,
 
-    /// Array indicating whether a node is a bubble exit (follows reverse postorder)
+    /// Array indicating whether a node is a bubble exit
     bubble_exit: Vec<Option<BubbleNode<G::NodeIndex>>>,
 
     /// A list of bubbles containing a particular node
@@ -169,8 +180,8 @@ where
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct NodeBubbleMap<N, O> {
-    bubble_exit: N,
-    dist_to_exit: O
+    pub bubble_exit: N,
+    pub dist_to_exit: O
 }
 
 impl<N, O> NodeBubbleMap<N, O>

@@ -1,10 +1,18 @@
 use super::offsets::OffsetType;
-use crate::graphs::NodeIndexType;
-use core::fmt;
-use num::{FromPrimitive, Unsigned};
-use std::hash::Hash;
+use crate::graphs::{AlignableGraph, NodeIndexType};
+use std::cmp::Ordering;
+use std::error::Error;
+use std::fmt::{Debug, Display, Formatter};
+use std::io::Write;
+use std::ops::{Add, AddAssign};
+use std::cell::{RefCell, RefMut};
+use std::marker::PhantomData;
+use crate::aligner::Alignment;
+use crate::aligner::queue::AlignStateQueue;
+use crate::bubbles::index::BubbleIndex;
+use crate::bubbles::ReachedBubbleExits;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AlignState {
     Start,
     Match,
@@ -15,173 +23,346 @@ pub enum AlignState {
     Insertion2,
 }
 
-/// Allow for various index types to refer to the alignment state tree nodes
-pub trait TreeIndexType: Copy + Unsigned + FromPrimitive + Hash + fmt::Debug + Default {
-    fn new(value: usize) -> Self;
-    fn index(&self) -> usize;
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Score {
+    Score(usize),
+    Unvisited
 }
 
-impl TreeIndexType for usize {
-    #[inline(always)]
-    fn new(value: usize) -> Self {
-        value
-    }
-
-    fn index(&self) -> usize {
-        *self
-    }
-}
-
-impl TreeIndexType for u32 {
-    #[inline(always)]
-    fn new(value: usize) -> Self {
-        value as u32
-    }
-
-    #[inline(always)]
-    fn index(&self) -> usize {
-        *self as usize
+impl PartialOrd for Score {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match self {
+            Self::Score(score) => match other {
+                Self::Score(other_score) => score.partial_cmp(other_score),
+                Self::Unvisited => Some(Ordering::Less),
+            },
+            Self::Unvisited => match other {
+                Self::Score(_) => Some(Ordering::Greater),
+                Self::Unvisited => Some(Ordering::Equal)
+            }
+        }
     }
 }
 
-impl TreeIndexType for u64 {
-    #[inline(always)]
-    fn new(value: usize) -> Self {
-        value as u64
-    }
-
-    #[inline(always)]
-    fn index(&self) -> usize {
-        *self as usize
+impl Ord for Score {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(other).unwrap()
     }
 }
 
-/// The main tree data structure representing the alignment state
-///
-/// We use "arena pattern" to structure and define ownership of all nodes. This
-/// main struct is the owner of all nodes in the tree. Through numeric indices
-/// in each [`StateTreeNode`] object we define parent-child relationships.
-///
-/// The structure has the following generic type parameters:
-///
-/// * `N` - The type used for indexing nodes in the graph we are aligning to
-/// * `O` - The integer used for storing query sequence offsets
-/// * `S` - A type that generates next alignment states based on existing nodes in the
-///   alignment state tree. This provides support for different alignment scoring schemes.
-/// * `Ix` - The integer type used for node indices in the alignment state tree. Defaults to u32.
-pub struct StateTree<N, O, Ix = u32>
+impl Add<usize> for Score {
+    type Output = Self;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        match self {
+            Self::Score(score) => Self::Score(score + rhs),
+            Self::Unvisited => panic!("Can't add to Score::Unvisited!")
+        }
+    }
+}
+
+impl AddAssign<usize> for Score {
+    fn add_assign(&mut self, rhs: usize) {
+        match self {
+            Self::Score(score) => *score += rhs,
+            Self::Unvisited => panic!("Can't add to Score::Unvisited!")
+        }
+    }
+}
+
+impl Add<u8> for Score {
+    type Output = Self;
+
+    fn add(self, rhs: u8) -> Self::Output {
+        match self {
+            Self::Score(score) => Self::Score(score + rhs as usize),
+            Self::Unvisited => panic!("Can't add to Score::Unvisited!")
+        }
+    }
+}
+
+impl AddAssign<u8> for Score {
+    fn add_assign(&mut self, rhs: u8) {
+        match self {
+            Self::Score(score) => *score += rhs as usize,
+            Self::Unvisited => panic!("Can't add to Score::Unvisited!")
+        }
+    }
+}
+
+impl From<Score> for usize {
+    fn from(value: Score) -> Self {
+        match value {
+            Score::Score(score) => score,
+            Score::Unvisited => panic!("Trying to convert Score::Unvisited!")
+        }
+    }
+}
+
+impl Display for Score {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Score(score) => Display::fmt(score, f),
+            Self::Unvisited => Display::fmt("unvisited", f)
+        }
+    }
+}
+
+pub trait StateGraphNode<N, O>: Debug + Clone {
+    fn new(node: N, offset: O, state: AlignState) -> Self;
+
+    fn node(&self) -> N;
+    fn offset(&self) -> O;
+    fn state(&self) -> AlignState;
+}
+
+pub trait StateGraph<N, O>
 where
     N: NodeIndexType,
     O: OffsetType,
-    Ix: TreeIndexType,
 {
-    /// The vector storing all current nodes in the alignment state tree
-    nodes: Vec<StateTreeNode<N, O, Ix>>,
+    type StateNode: StateGraphNode<N, O>;
+    type NewStatesContainer: IntoIterator<Item=(Self::StateNode, u8)>;
+
+    fn get_score(&self, state: &Self::StateNode) -> Score;
+    fn update_score(&mut self, state: &Self::StateNode, score: Score, prev: &Self::StateNode);
+
+    fn get_prev(&self, state: &Self::StateNode) -> Option<&Self::StateNode>;
+
+    fn new_match_state(&mut self, parent: &Self::StateNode, child: N, current_score: Score) -> Option<Self::StateNode>;
+    fn new_mismatch_state(&mut self, parent: &Self::StateNode, child: N, current_score: Score) -> Option<(Self::StateNode, u8)>;
+    fn open_or_extend_insertion(&mut self, parent: &Self::StateNode, score: Score) -> Self::NewStatesContainer;
+    fn extend_insertion(&mut self, parent: &Self::StateNode, score: Score) -> Option<(Self::StateNode, u8)>;
+    fn open_or_extend_deletion(&mut self, parent: &Self::StateNode, child_node: N, score: Score) -> Self::NewStatesContainer;
+    fn extend_deletion(&mut self, parent: &Self::StateNode, child: N, score: Score) -> Option<(Self::StateNode, u8)>;
+
+    fn backtrace(&self, end_state: &Self::StateNode) -> Alignment<N>;
+
+    fn write_tsv<W: Write>(&self, writer: &mut W) -> Result<(), Box<dyn Error>>;
 }
 
-impl<N, O, Ix> StateTree<N, O, Ix>
+/// A node in the graph aligned to a certain offset in the query
+/// that we will try to extend from
+struct StackNode<S, N, O, I>(S, RefCell<I>, PhantomData<(N, O)>);
+
+impl<S, N, O, I> StackNode<S, N, O, I>
 where
-    N: NodeIndexType,
-    O: OffsetType,
-    Ix: TreeIndexType,
+    S: StateGraphNode<N, O>,
+    I: Iterator,
 {
-    pub fn new() -> Self {
+    fn new(state: S, iter: I)  -> Self {
+        Self(state, RefCell::new(iter), PhantomData)
+    }
+
+    #[inline(always)]
+    fn node(&self) -> N {
+        self.0.node()
+    }
+
+    #[inline(always)]
+    fn offset(&self) -> O {
+        self.0.offset()
+    }
+
+    #[inline(always)]
+    fn state(&self) -> AlignState {
+        self.0.state()
+    }
+
+    #[inline(always)]
+    fn state_graph_node(&self) -> &S {
+        &self.0
+    }
+
+    #[inline]
+    fn into_state_graph_node(self) -> S {
+        self.0
+    }
+
+    #[inline]
+    fn children_iter(&self) -> RefMut<I> {
+        self.1.borrow_mut()
+    }
+}
+
+pub enum ExtendResult<S, N> {
+    Match(S),
+    Mismatch(N),
+    None,
+}
+
+
+/// A struct representing the depth-first extension state when
+/// extending from a (node, query offset).
+///
+/// The algorithm is inspired by NetworkX's `dfs_labeled_edges` function, which in turn
+/// is based on David Eppstein's depth-first search tree algorithm.
+///
+/// See also: https://www.ics.uci.edu/~eppstein/PADS/ or
+/// https://networkx.org/documentation/stable/reference/algorithms/generated/networkx.algorithms.traversal.depth_first_search.dfs_labeled_edges.html
+pub struct StateGraphSuccessors<'a, G, O, S>
+where
+    G: AlignableGraph,
+    O: OffsetType,
+    S: StateGraphNode<G::NodeIndex, O>,
+{
+    /// Borrow of the (reference) graph to align to
+    graph: &'a G,
+
+    /// The found bubbles in the graph
+    bubble_index: &'a BubbleIndex<G::NodeIndex, O>,
+
+    /// The query sequence to align
+    seq: &'a [u8],
+
+    /// The current alignment score
+    score: Score,
+
+    /// Stack for depth-first alignment of matches between query and graph
+    stack: Vec<StackNode<S, G::NodeIndex, O, G::SuccessorIterator<'a>>>,
+
+    /// Flag to check if we are at a leaf node in the DFS tree
+    has_new_path: bool,
+}
+
+impl<'a, G, O, S> StateGraphSuccessors<'a, G, O, S>
+where
+    G: AlignableGraph,
+    O: OffsetType,
+    S: StateGraphNode<G::NodeIndex, O>
+{
+    pub fn new(
+        graph: &'a G,
+        bubble_index: &'a BubbleIndex<G::NodeIndex, O>,
+        seq: &'a [u8],
+        score: Score,
+        start_state: &S,
+    ) -> Self {
         Self {
-            nodes: Vec::default(),
+            graph,
+            bubble_index,
+            seq,
+            score,
+            stack: vec![StackNode::new(start_state.clone(), graph.successors(start_state.node()))],
+            has_new_path: false,
         }
     }
 
-    pub fn reserve(&mut self, additional: usize) {
-        self.nodes.reserve(additional)
-    }
+    pub fn queue_next<SG: StateGraph<G::NodeIndex, O, StateNode=S>>(
+        &mut self,
+        state_graph: &mut SG,
+        queue: &mut AlignStateQueue<S, G::NodeIndex, O>,
+        bubble_exits_reached: &mut ReachedBubbleExits<O>,
+    ) -> Option<S> {
+        while !self.stack.is_empty() {
+            let parent = self.stack.last().unwrap();
 
-    pub fn node_indices(&self) -> impl Iterator<Item=Ix> + '_ {
-        (0..self.nodes.len()).map(|ix| Ix::new(ix))
-    }
+            match self.next_successor(parent, state_graph, queue) {
+                ExtendResult::Match(child_match) => {
+                    self.has_new_path = true;
 
-    pub fn num_nodes(&self) -> usize {
-        self.nodes.len()
-    }
+                    if self.bubble_index.is_exit(child_match.node()) {
+                        // eprintln!("State {:?} reached bubble exit at score {}", child_match, self.score);
 
-    #[inline(always)]
-    pub fn get_node(&self, ix: Ix) -> &StateTreeNode<N, O, Ix> {
-        &self.nodes[ix.index()]
-    }
+                        bubble_exits_reached[child_match.node().index()]
+                            .push((child_match.offset(), self.score));
+                    }
 
-    pub fn add_node(&mut self, node: StateTreeNode<N, O, Ix>) -> Ix {
-        self.nodes.push(node);
+                    let child_succ = self.graph.successors(child_match.node());
+                    self.stack.push(StackNode::new(child_match, child_succ));
+                },
+                ExtendResult::Mismatch(child) => {
+                    // Queue the mismatch state if it will improve the score
+                    if let Some((child_mismatch, score_delta)) = state_graph
+                        .new_mismatch_state(parent.state_graph_node(), child, self.score)
+                    {
+                        // eprintln!("- EXPAND queue MIS {:?} (score: {}+{}={})", child_mismatch, self.score, score_delta, self.score + score_delta);
+                        queue.queue_state(child_mismatch, score_delta);
+                    }
 
-        Ix::new(self.nodes.len() - 1)
-    }
-}
+                    // In case of a mismatch, also queue open/extend indels from parent
+                    for (ins_state, score_delta) in state_graph
+                        .open_or_extend_insertion(parent.state_graph_node(), self.score)
+                    {
+                        // eprintln!("- EXPAND queue INS {:?} (score: {}+{}={})", ins_state, self.score, score_delta, self.score + score_delta);
+                        queue.queue_state(ins_state, score_delta);
+                    }
 
-#[derive(Debug)]
-pub struct StateTreeNode<N, O, Ix>
-where
-    N: NodeIndexType,
-    O: OffsetType,
-    Ix: TreeIndexType,
-{
-    graph_node: N,
-    offset: O,
-    state: AlignState,
-    backtrace: Option<Backtrace<Ix>>,
-}
+                    for (del_state, score_delta) in state_graph
+                        .open_or_extend_deletion(parent.state_graph_node(), child, self.score)
+                    {
+                        // eprintln!("- EXPAND queue DEL {:?} (score: {}+{}={})", del_state, self.score, score_delta, self.score + score_delta);
+                        queue.queue_state(del_state, score_delta);
+                    }
 
-impl<N, O, Ix> StateTreeNode<N, O, Ix>
-where
-    N: NodeIndexType,
-    O: OffsetType,
-    Ix: TreeIndexType,
-{
-    pub fn new_start(graph_node: N) -> Self {
-        Self { graph_node, offset: O::zero(), state: AlignState::Start, backtrace: None }
-    }
+                    self.has_new_path = false;
+                },
+                ExtendResult::None => {
+                    // We are about to move up on the stack
+                    // Check if we are at a leaf node in the DFS tree, if yes,
+                    // return leaf.
+                    let popped = self.stack.pop().unwrap();
 
-    pub fn new(graph_node: N, offset: O, state: AlignState, backtrace: Backtrace<Ix>) -> Self {
-        Self { graph_node, offset, state, backtrace: Some(backtrace) }
-    }
+                    if self.has_new_path {
+                        self.has_new_path = false;
 
-    pub fn node(&self) -> N {
-        self.graph_node
-    }
+                        return Some(popped.into_state_graph_node());
+                    }
 
-    pub fn offset(&self) -> O {
-        self.offset
-    }
-
-    pub fn state(&self) -> AlignState {
-        self.state
-    }
-
-    pub fn backtrace(&self) -> Option<&Backtrace<Ix>> {
-        self.backtrace.as_ref()
-    }
-}
-
-#[derive(Debug)]
-pub enum Backtrace<Ix>
-where
-    Ix: TreeIndexType
-{
-    /// Represents a single alignment step. The only data stored in this
-    /// variant is the index to the previous node in the alignment state tree.
-    Step(Ix),
-
-    /// Represents closing an indel, with the only data stored is the index of the align tree
-    /// state node that represents the still open indel. It's a special backtrace state because it
-    /// doesn't output any alignment characters.
-    ClosedIndel(Ix),
-}
-
-impl<Ix> Backtrace<Ix>
-where
-    Ix: TreeIndexType,
-{
-    pub fn prev(&self) -> Ix {
-        match *self {
-            Self::Step(prev) => prev,
-            Self::ClosedIndel(prev) => prev,
+                }
+            }
         }
+
+        None
     }
+
+    fn next_successor<SG: StateGraph<G::NodeIndex, O, StateNode=S>>(
+        &self,
+        parent: &StackNode<S, G::NodeIndex, O, G::SuccessorIterator<'a>>,
+        // Separate mutable borrows for queue and state graph to prevent requiring mutable &self
+        state_graph: &mut SG,
+        queue: &mut AlignStateQueue<S, G::NodeIndex, O>,
+    ) -> ExtendResult<S, G::NodeIndex> {
+        if parent.offset().as_usize() > self.seq.len() {
+            return ExtendResult::None;
+        }
+
+        while let Some(child) = parent.children_iter().next() {
+            match parent.offset().as_usize().cmp(&self.seq.len()) {
+                // Make sure we do not extend beyond the query sequence length
+                Ordering::Less => {
+                    let child_offset = parent.offset().increase_one();
+                    let symbol_equal = self.graph
+                        .is_symbol_equal(child, self.seq[child_offset.as_usize() - 1]);
+
+                    if symbol_equal {
+                        if let Some(child_state) = state_graph
+                            .new_match_state(parent.state_graph_node(), child, self.score)
+                        {
+                            // On match, return to put the new state on the stack.
+                            return ExtendResult::Match(child_state)
+                        }
+                    } else {
+                        return ExtendResult::Mismatch(child)
+                    }
+                },
+                Ordering::Equal => {
+                    // Here, open/extend deletions from states in the last column, since these
+                    // won't move the query offset, and thus will not move beyond the query length.
+                    for (del_state, score_delta) in state_graph
+                        .open_or_extend_deletion(parent.state_graph_node(), child, self.score)
+                    {
+                        // eprintln!("- EXPAND queue DEL {:?} (score: {}+{}={})", del_state, self.score, score_delta, self.score + score_delta);
+                        queue.queue_state(del_state, score_delta);
+                    }
+
+                },
+                Ordering::Greater => (),
+            }
+        }
+
+        ExtendResult::None
+    }
+
 }

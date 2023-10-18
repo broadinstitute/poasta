@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{Write, BufWriter};
+use std::io::Write;
 use std::path::Path;
 use std::sync::mpsc;
 use std::thread::JoinHandle;
@@ -7,20 +7,21 @@ use std::thread::JoinHandle;
 use crate::errors::PoastaError;
 
 pub mod messages {
+    use std::error::Error;
+    use std::io::BufWriter;
     use serde::{Serialize, Deserialize};
     use petgraph::graph::IndexType;
     use crate::aligner::offsets::OffsetType;
-    use crate::aligner::scoring::AlignmentStateTree;
-    use crate::aligner::state::TreeIndexType;
+    use crate::aligner::state::{Score, StateGraph};
     use crate::graphs::NodeIndexType;
     use crate::graphs::poa::POAGraph;
 
     #[derive(Debug, Serialize, Deserialize)]
     pub enum DebugOutputMessage {
         Empty,
-        NewSequence { seq_name: String, seq_length: usize, max_rank: usize },
+        NewSequence { seq_name: String, sequence: String, max_rank: usize },
         IntermediateGraph { graph_dot: String },
-        AlignStateTree { tree_gml: String },
+        StateGraph { graph_tsv: Vec<u8>, score: usize },
         Terminate,
     }
 
@@ -32,15 +33,18 @@ pub mod messages {
             Self::IntermediateGraph { graph_dot: format!("{}", graph) }
         }
 
-        pub fn new_from_state_tree<T, N, O, Ix>(tree: &T) -> Self
+        pub fn new_from_sg<SG, N, O>(state_graph: &SG, score: Score) -> Result<Self, Box<dyn Error>>
         where
-            T: AlignmentStateTree<N, O, Ix>,
+            SG: StateGraph<N, O>,
             N: NodeIndexType,
             O: OffsetType,
-            Ix: TreeIndexType
         {
-            let gml = format!("{}", tree);
-            Self::AlignStateTree { tree_gml: gml }
+            let mut buf_writer = BufWriter::new(Vec::default());
+            state_graph.write_tsv(&mut buf_writer)?;
+
+            let graph_tsv = buf_writer.into_inner()?;
+
+            Ok(Self::StateGraph { graph_tsv, score: score.into() } )
         }
     }
 }
@@ -68,17 +72,6 @@ impl DebugOutputWriter {
     }
 }
 
-fn write_msg(writer: &mut impl Write, msg: &messages::DebugOutputMessage) {
-    match serde_json::to_string(&msg) {
-        Ok(json) => {
-            if let Err(e) = writeln!(writer, "{}", json) {
-                eprintln!("Error writing message to debug output!\n{}", e);
-            }
-        },
-        Err(e) => eprintln!("Could not serialize debug data to JSON!\n{}", e)
-    }
-}
-
 struct DebugOutputWorker {
     thread: JoinHandle<Result<(), PoastaError>>,
 }
@@ -91,16 +84,16 @@ impl DebugOutputWorker {
             std::fs::create_dir_all(&output_path)?;
 
             let mut curr_seq_name = "none".to_string();
+            let mut curr_seq = "".to_string();
+            let mut curr_max_rank = 0;
 
             for msg in receiver {
                 match msg {
                     messages::DebugOutputMessage::Empty => (),
-                    messages::DebugOutputMessage::NewSequence { ref seq_name , seq_length: _, max_rank: _} => {
-                        let mut output_file = File::create(output_path.join(format!("{seq_name}.txt")))
-                            .map(BufWriter::new)?;
-                        curr_seq_name = seq_name.clone();
-
-                        write_msg(&mut output_file, &msg);
+                    messages::DebugOutputMessage::NewSequence { seq_name , sequence, max_rank} => {
+                        curr_seq_name = seq_name;
+                        curr_seq = sequence;
+                        curr_max_rank = max_rank;
                     },
                     messages::DebugOutputMessage::IntermediateGraph { graph_dot } => {
                         let fname = output_path.join(format!("graph_for_{}.dot", &curr_seq_name));
@@ -108,10 +101,11 @@ impl DebugOutputWorker {
                         write!(dot_file, "{}", graph_dot)?;
                         dot_file.flush()?;
                     },
-                    messages::DebugOutputMessage::AlignStateTree { tree_gml } => {
-                        let fname = output_path.join(format!("aln_state_tree_for_{}.gml", &curr_seq_name));
+                    messages::DebugOutputMessage::StateGraph { graph_tsv, score } => {
+                        let fname = output_path.join(format!("state_graph_for_{}.score{score}.tsv", &curr_seq_name));
                         let mut gml_file = File::create(fname)?;
-                        write!(gml_file, "{}", tree_gml)?;
+                        writeln!(gml_file, "# seq: {curr_seq} - max rank: {curr_max_rank}")?;
+                        gml_file.write_all(&graph_tsv)?;
                         gml_file.flush()?;
                     },
                     messages::DebugOutputMessage::Terminate => break
