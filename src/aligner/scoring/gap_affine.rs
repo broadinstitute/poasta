@@ -167,6 +167,48 @@ where
             nodes_d: vec![FxHashMap::default(); seq_graph.node_count_with_start()],
         }
     }
+
+    fn update_score_if_lower(
+        &mut self,
+        state: &AffineStateNode<N, O>,
+        parent: &AffineStateNode<N, O>,
+        score: Score
+    ) -> bool {
+        let mut is_lower = false;
+
+        let state_map = match state.state {
+            AlignState::Start | AlignState::Match | AlignState::Mismatch => &mut self.nodes_m,
+            AlignState::Insertion => &mut self.nodes_i,
+            AlignState::Deletion => &mut self.nodes_d,
+            _ => panic!("Invalid state {:?} for GapAffine!", state.state)
+        };
+
+        state_map[state.node.index()].entry(state.offset)
+            .and_modify(|data| {
+                match score.cmp(&data.score) {
+                    Ordering::Less => {
+                        data.score = score;
+                        data.prev = Some(parent.clone());
+                        is_lower = true;
+                    },
+                    Ordering::Equal => {
+                        // Check if we need to update back trace
+                        if let Some(ref mut prev_state) = &mut data.prev {
+                            if parent.state() < prev_state.state() {
+                                *prev_state = parent.clone();
+                            }
+                        }
+                    },
+                    Ordering::Greater => (),
+                }
+            })
+            .or_insert_with(|| {
+                is_lower = true;
+                AffineNodeData::new(score, parent.clone())
+            });
+
+        is_lower
+    }
 }
 
 impl<N, O> StateGraph<N, O> for StateGraphAffine<N, O>
@@ -201,36 +243,6 @@ where
         }
     }
 
-    fn update_score(&mut self, state: &Self::StateNode, score: Score, prev: &Self::StateNode) {
-        match state.state() {
-            AlignState::Start | AlignState::Match | AlignState::Mismatch => {
-                self.nodes_m[state.node().index()].entry(state.offset())
-                    .and_modify(|entry| {
-                        entry.score = score;
-                        entry.prev = Some(prev.clone());
-                    })
-                    .or_insert_with(|| AffineNodeData::new(score, prev.clone()));
-            },
-            AlignState::Insertion => {
-                self.nodes_i[state.node().index()].entry(state.offset())
-                    .and_modify(|entry| {
-                        entry.score = score;
-                        entry.prev = Some(prev.clone());
-                    })
-                    .or_insert_with(|| AffineNodeData::new(score, prev.clone()));
-            },
-            AlignState::Deletion => {
-                self.nodes_d[state.node().index()].entry(state.offset())
-                    .and_modify(|entry| {
-                        entry.score = score;
-                        entry.prev = Some(prev.clone());
-                    })
-                    .or_insert_with(|| AffineNodeData::new(score, prev.clone()));
-            },
-            _ => panic!("Invalid state {:?} for GapAffine scoring!", state.state())
-        }
-    }
-
     fn get_prev(&self, state: &Self::StateNode) -> Option<&Self::StateNode> {
         match state.state() {
             AlignState::Start | AlignState::Match | AlignState::Mismatch => {
@@ -256,23 +268,11 @@ where
         let child_offset = parent.offset().increase_one();
         let child_state = Self::StateNode::new(child, child_offset, AlignState::Match);
 
-        match current_score.cmp(&self.get_score(&child_state)) {
-            Ordering::Less => {
-                self.update_score(&child_state, current_score, parent);
-                return Some(child_state)
-            },
-            Ordering::Equal => {
-                // Check if we need to update back trace
-                if let Some(prev_state) = self.get_prev(&child_state) {
-                    if parent.state() < prev_state.state() {
-                        self.update_score(&child_state, current_score, parent);
-                    }
-                }
-            },
-            Ordering::Greater => (),
+        if self.update_score_if_lower(&child_state, parent, current_score) {
+            Some(child_state)
+        } else {
+            None
         }
-
-        None
     }
 
     fn new_mismatch_state(&mut self, parent: &Self::StateNode, child: N, current_score: Score) -> Option<(Self::StateNode, u8)> {
@@ -280,23 +280,11 @@ where
         let child_state = Self::StateNode::new(child, child_offset, AlignState::Mismatch);
 
         let mismatch_score = current_score + self.costs.mismatch();
-        match mismatch_score.cmp(&self.get_score(&child_state)) {
-            Ordering::Less => {
-                self.update_score(&child_state, mismatch_score, parent);
-                return Some((child_state, self.costs.mismatch()))
-            },
-            Ordering::Equal => {
-                // Check if we need to update back trace
-                if let Some(prev_state) = self.get_prev(&child_state) {
-                    if parent.state() < prev_state.state() {
-                        self.update_score(&child_state, mismatch_score, parent);
-                    }
-                }
-            },
-            Ordering::Greater => (),
+        if self.update_score_if_lower(&child_state, parent, mismatch_score) {
+            Some((child_state, self.costs.mismatch()))
+        } else {
+            None
         }
-
-        None
     }
 
     fn open_or_extend_insertion(&mut self, parent: &Self::StateNode, score: Score) -> Self::NewStatesContainer {
@@ -312,20 +300,8 @@ where
                     AlignState::Insertion
                 );
 
-                match gap_open_score.cmp(&self.get_score(&ins_state)) {
-                    Ordering::Less => {
-                        self.update_score(&ins_state, gap_open_score, parent);
-                        valid_ins_states.push((ins_state, gap_open))
-                    },
-                    Ordering::Equal => {
-                        // Check if we need to update back trace
-                        if let Some(prev_state) = self.get_prev(&ins_state) {
-                            if parent.state() < prev_state.state() {
-                                self.update_score(&ins_state, gap_open_score, parent);
-                            }
-                        }
-                    },
-                    Ordering::Greater => (),
+                if self.update_score_if_lower(&ins_state, parent, gap_open_score) {
+                    valid_ins_states.push((ins_state, gap_open))
                 }
             },
             AlignState::Insertion => {
@@ -336,20 +312,8 @@ where
                     AlignState::Insertion
                 );
 
-                match gap_extend_score.cmp(&self.get_score(&ins_state)) {
-                    Ordering::Less => {
-                        self.update_score(&ins_state, gap_extend_score, parent);
-                        valid_ins_states.push((ins_state, self.costs.gap_extend()))
-                    },
-                    Ordering::Equal => {
-                        // Check if we need to update back trace
-                        if let Some(prev_state) = self.get_prev(&ins_state) {
-                            if parent.state() < prev_state.state() {
-                                self.update_score(&ins_state, gap_extend_score, parent);
-                            }
-                        }
-                    },
-                    Ordering::Greater => (),
+                if self.update_score_if_lower(&ins_state, parent, gap_extend_score) {
+                    valid_ins_states.push((ins_state, self.costs.gap_extend()))
                 }
             },
             _ => ()
@@ -370,22 +334,10 @@ where
             AlignState::Insertion
         );
 
-        match gap_extend_score.cmp(&self.get_score(&ins_state)) {
-            Ordering::Less => {
-                self.update_score(&ins_state, gap_extend_score, parent);
-                Some((ins_state, self.costs.gap_extend()))
-            },
-            Ordering::Equal => {
-                // Check if we need to update back trace
-                if let Some(prev_state) = self.get_prev(&ins_state) {
-                    if parent.state() < prev_state.state() {
-                        self.update_score(&ins_state, gap_extend_score, parent);
-                    }
-                }
-
-                None
-            },
-            Ordering::Greater => None,
+        if self.update_score_if_lower(&ins_state, parent, gap_extend_score) {
+            Some((ins_state, self.costs.gap_extend()))
+        } else {
+            None
         }
     }
 
@@ -407,20 +359,8 @@ where
                     AlignState::Deletion
                 );
 
-                match gap_open_score.cmp(&self.get_score(&del_state)) {
-                    Ordering::Less => {
-                        self.update_score(&del_state, gap_open_score, parent);
-                        valid_del_states.push((del_state, gap_open))
-                    },
-                    Ordering::Equal => {
-                        // Check if we need to update back trace
-                        if let Some(prev_state) = self.get_prev(&del_state) {
-                            if parent.state() < prev_state.state() {
-                                self.update_score(&del_state, gap_open_score, parent);
-                            }
-                        }
-                    },
-                    Ordering::Greater => (),
+                if self.update_score_if_lower(&del_state, parent, gap_open_score) {
+                    valid_del_states.push((del_state, gap_open));
                 }
             },
             AlignState::Deletion => {
@@ -431,20 +371,8 @@ where
                     AlignState::Deletion
                 );
 
-                match gap_extend_score.cmp(&self.get_score(&del_state)) {
-                    Ordering::Less => {
-                        self.update_score(&del_state, gap_extend_score, parent);
-                        valid_del_states.push((del_state, self.costs.gap_extend()))
-                    },
-                    Ordering::Equal => {
-                        // Check if we need to update back trace
-                        if let Some(prev_state) = self.get_prev(&del_state) {
-                            if parent.state() < prev_state.state() {
-                                self.update_score(&del_state, gap_extend_score, parent);
-                            }
-                        }
-                    },
-                    Ordering::Greater => (),
+                if self.update_score_if_lower(&del_state, parent, gap_extend_score) {
+                    valid_del_states.push((del_state, self.costs.gap_extend()));
                 }
             },
             _ => ()
@@ -465,22 +393,10 @@ where
             AlignState::Deletion
         );
 
-        match gap_extend_score.cmp(&self.get_score(&del_state)) {
-            Ordering::Less => {
-                self.update_score(&del_state, gap_extend_score, parent);
-                Some((del_state, self.costs.gap_extend()))
-            },
-            Ordering::Equal => {
-                // Check if we need to update back trace
-                if let Some(prev_state) = self.get_prev(&del_state) {
-                    if parent.state() < prev_state.state() {
-                        self.update_score(&del_state, gap_extend_score, parent);
-                    }
-                }
-
-                None
-            },
-            Ordering::Greater => None,
+        if self.update_score_if_lower(&del_state, parent, gap_extend_score) {
+            Some((del_state, self.costs.gap_extend()))
+        } else {
+            None
         }
     }
 

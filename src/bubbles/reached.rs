@@ -13,6 +13,7 @@ where
     C: AlignmentCosts,
 {
     costs: &'a C,
+    seq: &'a [u8],
     reached_exits: Vec<BTreeMap<O, Score>>
 }
 
@@ -21,9 +22,10 @@ where
     O: OffsetType,
     C: AlignmentCosts,
 {
-    pub fn new<G: AlignableGraph>(costs: &'a C, graph: &G) -> Self {
+    pub fn new<G: AlignableGraph>(costs: &'a C, graph: &G, seq: &'a [u8]) -> Self {
         Self {
             costs,
+            seq,
             reached_exits: vec![BTreeMap::default(); graph.node_count_with_start()]
         }
     }
@@ -59,24 +61,30 @@ where
 
         let target_offset = state.offset() + bubble.dist_to_exit;
 
+        if target_offset.as_usize() >= self.seq.len() {
+            return false;
+        }
+
+        if state.node() == bubble.bubble_exit {
+            return true;
+        }
+
         // CASE 1: We could open an insertion from a reached bubble exit. Check if the most
         // optimal path from the current state (i.e., all matches, thus going diagonally and no
         // increase in alignment score) could improve over the score as reached when opening a
         // insertion from the bubble exit.
-        if state.node() != bubble.bubble_exit {
-            if let Some((prev_offset, prev_score)) = self.reached_exits[bubble.bubble_exit.index()]
-                .range(RangeTo { end: target_offset })
-                .rev()
-                .next()
-            {
-                let gap_length = target_offset - *prev_offset;
-                let ins_open_score_from_exit = *prev_score
-                    + self.costs.gap_cost(AlignState::Match, gap_length.as_usize());
+        if let Some((prev_offset, prev_score)) = self.reached_exits[bubble.bubble_exit.index()]
+            .range(RangeTo { end: target_offset })
+            .rev()
+            .next()
+        {
+            let gap_length = target_offset - *prev_offset;
+            let ins_open_score_from_exit = *prev_score
+                + self.costs.gap_cost(AlignState::Match, gap_length.as_usize());
 
-                if ins_open_score_from_exit <= current_score {
-                    // Previous offset that reached this exit can reach this new offset with a lower or equal score,
-                    return false;
-                }
+            if ins_open_score_from_exit <= current_score {
+                // Previous offset that reached this exit can reach this new offset with a lower or equal score,
+                return false;
             }
         }
 

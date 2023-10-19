@@ -127,7 +127,6 @@ where
     type NewStatesContainer: IntoIterator<Item=(Self::StateNode, u8)>;
 
     fn get_score(&self, state: &Self::StateNode) -> Score;
-    fn update_score(&mut self, state: &Self::StateNode, score: Score, prev: &Self::StateNode);
 
     fn get_prev(&self, state: &Self::StateNode) -> Option<&Self::StateNode>;
 
@@ -314,7 +313,16 @@ where
                     let popped = self.stack.pop().unwrap();
 
                     if self.has_new_path {
+                        // We reached a node without any successors, but we are not necessarily in
+                        // the alignment end state. Queue insertions.
                         self.has_new_path = false;
+
+                        for (ins_state, score_delta) in state_graph
+                            .open_or_extend_insertion(popped.state_graph_node(), self.score)
+                        {
+                            // eprintln!("- EXPAND queue INS {:?} (score: {}+{}={})", ins_state, self.score, score_delta, self.score + score_delta);
+                            queue.queue_state(ins_state, score_delta);
+                        }
 
                         return Some(popped.into_state_graph_node());
                     }

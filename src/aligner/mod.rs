@@ -75,7 +75,7 @@ where
         queue.queue_state(start_state, 0);
 
         let reached_end;
-        let mut bubble_exits_reached = ReachedBubbleExits::new(&self.costs, graph);
+        let mut bubble_exits_reached = ReachedBubbleExits::new(&self.costs, graph, seq);
         let mut score = Score::Score(0usize);
         'main: loop {
             let Some(front) = queue.pop_front() else {
@@ -112,13 +112,8 @@ where
                 }
 
                 // Update reached bubble exits
-                match state.state() {
-                    AlignState::Match | AlignState::Mismatch => {
-                        if bubble_index.is_exit(state.node()) {
-                            bubble_exits_reached.mark_reached(state.node(), state.offset(), score);
-                        }
-                    },
-                    _ => ()
+                if bubble_index.is_exit(state.node()) {
+                    bubble_exits_reached.mark_reached(state.node(), state.offset(), score);
                 }
 
                 // Process successor states
@@ -133,9 +128,11 @@ where
                 }
 
                 // Ensure extension of indels
-                if let Some((ins_ext, score_delta)) = state_graph.extend_insertion(state, score) {
-                    // eprintln!("- EXPAND queue INS_EXT {:?} (score: {}+{}={})", ins_ext, score, score_delta, score + score_delta);
-                    queue.queue_state(ins_ext, score_delta)
+                if state.offset().as_usize() < seq.len() {
+                    if let Some((ins_ext, score_delta)) = state_graph.extend_insertion(state, score) {
+                        // eprintln!("- EXPAND queue INS_EXT {:?} (score: {}+{}={})", ins_ext, score, score_delta, score + score_delta);
+                        queue.queue_state(ins_ext, score_delta)
+                    }
                 }
 
                 for child in graph.successors(state.node()) {
