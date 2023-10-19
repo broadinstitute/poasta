@@ -9,8 +9,9 @@ use std::cell::{RefCell, RefMut};
 use std::marker::PhantomData;
 use crate::aligner::Alignment;
 use crate::aligner::queue::AlignStateQueue;
+use crate::aligner::scoring::AlignmentCosts;
 use crate::bubbles::index::BubbleIndex;
-use crate::bubbles::ReachedBubbleExits;
+use crate::bubbles::reached::ReachedBubbleExits;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AlignState {
@@ -249,24 +250,32 @@ where
         }
     }
 
-    pub fn queue_next<SG: StateGraph<G::NodeIndex, O, StateNode=S>>(
+    pub fn queue_next<SG, C>(
         &mut self,
         state_graph: &mut SG,
         queue: &mut AlignStateQueue<S, G::NodeIndex, O>,
-        bubble_exits_reached: &mut ReachedBubbleExits<O>,
-    ) -> Option<S> {
+        bubble_exits_reached: &mut ReachedBubbleExits<'a, O, C>,
+    ) -> Option<S>
+    where
+        SG: StateGraph<G::NodeIndex, O, StateNode=S>,
+        C: AlignmentCosts,
+    {
         while !self.stack.is_empty() {
             let parent = self.stack.last().unwrap();
 
             match self.next_successor(parent, state_graph, queue) {
                 ExtendResult::Match(child_match) => {
+                    if !bubble_exits_reached.can_improve_alignment(self.bubble_index, &child_match, self.score) {
+                        continue;
+                    }
+
                     self.has_new_path = true;
 
                     if self.bubble_index.is_exit(child_match.node()) {
                         // eprintln!("State {:?} reached bubble exit at score {}", child_match, self.score);
 
-                        bubble_exits_reached[child_match.node().index()]
-                            .push((child_match.offset(), self.score));
+                        bubble_exits_reached
+                            .mark_reached(child_match.node(), child_match.offset(), self.score);
                     }
 
                     let child_succ = self.graph.successors(child_match.node());

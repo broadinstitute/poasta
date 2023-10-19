@@ -4,7 +4,6 @@ pub mod scoring;
 pub mod queue;
 pub mod alignment;
 
-use smallvec::SmallVec;
 use crate::graphs::{AlignableGraph, NodeIndexType};
 use crate::bubbles::index::BubbleIndex;
 use crate::aligner::offsets::OffsetType;
@@ -14,7 +13,7 @@ use crate::aligner::scoring::AlignmentCosts;
 use crate::debug::DebugOutputWriter;
 pub use alignment::{AlignedPair, Alignment};
 use crate::aligner::queue::AlignStateQueue;
-use crate::bubbles::ReachedBubbleExits;
+use crate::bubbles::reached::ReachedBubbleExits;
 use crate::debug::messages::DebugOutputMessage;
 
 pub struct PoastaAligner<'a, C>
@@ -76,9 +75,7 @@ where
         queue.queue_state(start_state, 0);
 
         let reached_end;
-        let mut bubble_exits_reached: ReachedBubbleExits<O> = vec![
-            SmallVec::default(); graph.node_count_with_start()
-        ];
+        let mut bubble_exits_reached = ReachedBubbleExits::new(&self.costs, graph);
         let mut score = Score::Score(0usize);
         'main: loop {
             let Some(front) = queue.pop_front() else {
@@ -107,7 +104,7 @@ where
                     continue;
                 }
 
-                if !self.can_improve_alignment(bubble_index, &bubble_exits_reached, state, score) {
+                if !bubble_exits_reached.can_improve_alignment(bubble_index, state, score) {
                     // The exit of a bubble the current graph node is part of has already been reached,
                     // and no path from this state can improve on that score.
                     // eprintln!("- Ignoring state {:?} because it can't improve over the current bubble exit score.", state);
@@ -118,8 +115,7 @@ where
                 match state.state() {
                     AlignState::Match | AlignState::Mismatch => {
                         if bubble_index.is_exit(state.node()) {
-                            bubble_exits_reached[state.node().index()]
-                                .push((state.offset(), score))
+                            bubble_exits_reached.mark_reached(state.node(), state.offset(), score);
                         }
                     },
                     _ => ()
@@ -188,66 +184,4 @@ where
         state.offset().as_usize() == seq.len() && graph.is_end(state.node())
     }
 
-    fn can_improve_alignment<S, N, O>(
-        &self,
-        bubble_index: &BubbleIndex<N, O>,
-        bubble_exits_reached: &ReachedBubbleExits<O>,
-        state: &S,
-        current_score: Score,
-    ) -> bool
-    where
-        S: StateGraphNode<N, O>,
-        N: NodeIndexType,
-        O: OffsetType,
-    {
-        if !bubble_index.node_is_part_of_bubble(state.node()) {
-            return true;
-        }
-
-        for bubble in bubble_index.get_node_bubbles(state.node()) {
-            let reached = &bubble_exits_reached[bubble.bubble_exit.index()];
-            if reached.is_empty() {
-                continue;
-            }
-
-            for (reached_exit_offset, score) in reached.iter() {
-                // eprintln!("State {:?} is part of a bubble with exit {:?}, reached at offset {:?} and score: {:?}",
-                //     state, bubble.bubble_exit, reached_exit_offset, score);
-
-                let target_offset = state.offset() + bubble.dist_to_exit;
-
-                // Case 1: Could we reach the (bubble exit, reached_offset) with a lower score
-                //         by opening or extending a deletion?
-                if target_offset <= *reached_exit_offset {
-                    let offset_diff = *reached_exit_offset - state.offset();
-                    let vertical_gap = offset_diff - bubble.dist_to_exit;
-
-                    let del_open_score_from_exit = self.costs.gap_cost(AlignState::Match, vertical_gap.as_usize());
-
-                    if *score + del_open_score_from_exit <= current_score {
-                        // eprintln!("- Current score: {}, score + gap: {} >= {}",
-                        //           current_score, current_score + del_open_score_from_exit, score);
-                        // eprintln!("- can't improve (vertical)");
-                        return false;
-                    }
-                }
-
-                // Case 2: Could we reach the (bubble exit, target offset) with a lower score
-                //         compared to the case where we would open an insertion from the bubble exit?
-                if target_offset > *reached_exit_offset && state.node() != bubble.bubble_exit {
-                    let horizontal_gap = target_offset - *reached_exit_offset;
-
-                    let ins_open_score_from_exit = self.costs.gap_cost(AlignState::Match, horizontal_gap.as_usize());
-                    if *score + ins_open_score_from_exit <= current_score {
-                        // eprintln!("- Bubble exit score: {}, bubble exit score + insertion: {} <= {}",
-                        //           score, *score + ins_open_score_from_exit, current_score);
-                        // eprintln!("- can't improve (horizontal)");
-                        return false;
-                    }
-                }
-            }
-        }
-
-        true
-    }
 }
