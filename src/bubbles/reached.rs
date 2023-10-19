@@ -39,7 +39,7 @@ where
         N: NodeIndexType,
     {
         if !bubble_index.node_is_part_of_bubble(state.node()) {
-            return false;
+            return true;
         }
 
         bubble_index.get_node_bubbles(state.node())
