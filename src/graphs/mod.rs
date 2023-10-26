@@ -38,6 +38,9 @@ pub trait AlignableGraph {
     fn predecessors(&self, node: Self::NodeIndex) -> Self::PredecessorIterator<'_>;
     fn successors(&self, node: Self::NodeIndex) -> Self::SuccessorIterator<'_>;
 
+    fn in_degree(&self, node: Self::NodeIndex) -> usize;
+    fn out_degree(&self, node: Self::NodeIndex) -> usize;
+
     fn is_end(&self, node: Self::NodeIndex) -> bool;
 
     fn get_symbol(&self, node: Self::NodeIndex) -> char;

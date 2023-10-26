@@ -20,6 +20,7 @@ use poasta::aligner::PoastaAligner;
 use poasta::aligner::scoring::{AlignmentCosts, GapAffine};
 use poasta::bubbles::index::BubbleIndexBuilder;
 use poasta::errors::PoastaError;
+use poasta::graphs::AlignableGraph;
 use poasta::io::graph::load_graph_from_fasta_msa;
 use poasta::io::load_graph;
 
@@ -32,16 +33,31 @@ impl<T> Output for T where T: Write + IsTerminal { }
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 enum OutputType {
     /// Default Poasta graph file format
-    POASTA,
+    Poasta,
 
     /// Output a tabular MSA in FASTA file format
-    FASTA,
+    Fasta,
 
     /// Output the graph as GFA
-    GFA,
+    Gfa,
 
     /// Output the graph in DOT format for visualization
-    DOT,
+    Dot,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+/// An enum indicating what kind of alignment to perform
+enum AlignmentSpan {
+    /// Perform global alignment
+    Global,
+
+    /// Perform semi-global alignment, i.e., globally align query but allow free gaps in the graph
+    /// at the beginning and end
+    SemiGlobal,
+
+    /// Perform ends-free alignment, i.e., indels at the beginning or end on either the query or
+    /// graph are free
+    EndsFree
 }
 
 #[derive(Parser, Debug)]
@@ -59,30 +75,63 @@ struct CliArgs {
 #[derive(Subcommand, Debug)]
 enum CliSubcommand {
     /// Perform multiple sequence alignment and create or update POA graphs
-    Align(AlignArgs)
+    Align(AlignArgs),
+
+    /// Print graph statistics
+    Stats(StatsArgs),
 }
 
 #[derive(Args, Debug)]
 struct AlignArgs {
     /// Sequences to align in FASTA format.
+    #[clap(help_heading = "Inputs")]
     sequences: PathBuf,
 
     /// Input partial order graph to align sequences to. If not specified, will create a new graph from input sequences.
-    #[arg(short, long)]
+    #[arg(short='I', long)]
+    #[clap(help_heading = "Inputs")]
     graph: Option<PathBuf>,
 
     /// Output filename. If not given, defaults to stdout
     #[arg(short, long)]
+    #[clap(help_heading = "Outputs")]
     output: Option<PathBuf>,
 
     /// Output file type.
     #[arg(value_enum, short='O', long)]
+    #[clap(help_heading = "Outputs")]
     output_type: Option<OutputType>,
 
     /// Output debug information (intermediate graphs, aligner state) and write files to the given directory
     #[arg(short, long)]
+    #[clap(help_heading = "Outputs")]
     debug_output: Option<PathBuf>,
 
+    /// Alignment span, either global alignment, semi-global alignment or ends-free alignment.
+    #[arg(short='m', long)]
+    #[clap(help_heading = "Alignment configuration")]
+    alignment_span: AlignmentSpan,
+
+    /// Penalty for mismatching bases
+    #[arg(short='n', default_value="4")]
+    #[clap(help_heading = "Alignment configuration")]
+    cost_mismatch: Option<u8>,
+
+    /// Penalty for opening a new gap
+    #[arg(short='g', default_value="6")]
+    #[clap(help_heading = "Alignment configuration")]
+    cost_gap_open: Option<u8>,
+
+    /// Penalty for extending a gap
+    #[arg(short='e', default_value="2")]
+    #[clap(help_heading = "Alignment configuration")]
+    cost_gap_extend: Option<u8>,
+}
+
+#[derive(Args, Debug)]
+struct StatsArgs {
+    /// The POASTA graph or an existing MSA in FASTA format to analyze
+    graph: PathBuf
 }
 
 fn perform_alignment<Ix, C>(
@@ -140,9 +189,10 @@ where
             eprint!("Aligning #{i} {}... ", record.name());
             let (score, alignment) = aligner.align::<u32, _, _>(graph, &bubble_index, record.sequence());
             eprintln!("Done. Alignment Score: {:?}", score);
-            // eprintln!();
-            // eprintln!("{}", print_alignment(graph, record.sequence(), &alignment));
-            // eprintln!();
+            eprintln!();
+            eprintln!("{}", print_alignment(graph, record.sequence(), &alignment));
+            eprintln!();
+            eprintln!();
 
             graph.add_alignment_with_weights(record.name(), record.sequence(), Some(&alignment), &weights)?;
         }
@@ -202,16 +252,16 @@ fn align_subcommand(align_args: &AlignArgs) -> Result<()> {
         Box::new(stdout()) as Box<dyn Output>
     };
 
-    let output_type = align_args.output_type.unwrap_or(OutputType::POASTA);
+    let output_type = align_args.output_type.unwrap_or(OutputType::Poasta);
     match output_type {
-        OutputType::POASTA => {
+        OutputType::Poasta => {
             if !writer.is_terminal() {
                 poasta::io::save_graph(&graph, writer)?
             } else {
                 eprintln!("WARNING: not writing binary graph data to terminal standard output!");
             }
         },
-        OutputType::DOT => {
+        OutputType::Dot => {
             write!(writer, "{}", &graph)?
         }
         _ => return Err(PoastaError::Other).with_context(|| "Other output formats not supported yet!".to_string())
@@ -226,6 +276,44 @@ fn align_subcommand(align_args: &AlignArgs) -> Result<()> {
     Ok(())
 }
 
+fn stats_subcommand(stats_args: &StatsArgs) -> Result<()> {
+    let fasta_extensions = vec![".fa", ".fa.gz", ".fna", ".fna.gz", ".fasta", ".fasta.gz"];
+    let path_as_str = stats_args.graph.to_string_lossy();
+    let graph = if fasta_extensions.into_iter().any(|ext| path_as_str.ends_with(ext)) {
+        load_graph_from_fasta_msa(&stats_args.graph)?
+    } else {
+        let file_in = File::open(&stats_args.graph)?;
+        load_graph(&file_in)?
+    };
+
+    match graph {
+        POAGraphWithIx::U8(ref g) => print_graph_stats(g),
+        POAGraphWithIx::U16(ref g) => print_graph_stats(g),
+        POAGraphWithIx::U32(ref g) => print_graph_stats(g),
+        POAGraphWithIx::USIZE(ref g) => print_graph_stats(g)
+    }
+
+    Ok(())
+}
+
+fn print_graph_stats<G: AlignableGraph>(graph: &G) {
+    eprintln!("node_count: {}", graph.node_count());
+    eprintln!("node_count_with_start: {}", graph.node_count_with_start());
+    eprintln!("edge_count: {}", graph.edge_count());
+
+    let in_degrees: Vec<_> = graph.all_nodes()
+        .map(|n| graph.in_degree(n))
+        .collect();
+    let avg_in_degree = in_degrees.iter().sum::<usize>() as f64 / in_degrees.len() as f64;
+    let out_degrees: Vec<_> = graph.all_nodes()
+        .map(|n| graph.out_degree(n))
+        .collect();
+    let avg_out_degree = out_degrees.iter().sum::<usize>() as f64 / out_degrees.len() as f64;
+
+    eprintln!("avg_in_degree: {:.2}", avg_in_degree);
+    eprintln!("avg_out_degree: {:.2}", avg_out_degree);
+}
+
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
@@ -233,6 +321,9 @@ fn main() -> Result<()> {
         Some(CliSubcommand::Align(v)) => {
             align_subcommand(v)?
         },
+        Some(CliSubcommand::Stats(v)) => {
+            stats_subcommand(v)?
+        }
         None => {
             return Err(PoastaError::Other).with_context(|| "No subcommand given.".to_string())
         }

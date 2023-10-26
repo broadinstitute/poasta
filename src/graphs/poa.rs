@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter};
 use petgraph::graph::{IndexType as PetgraphIndexType};
-use petgraph::{Direction, Incoming};
+use petgraph::{Incoming, Outgoing};
 use petgraph::algo::toposort;
 use petgraph::prelude::{NodeIndex, StableDiGraph};
 use petgraph::stable_graph::{Neighbors, NodeIndices};
@@ -366,7 +366,7 @@ where
 
     fn edge_count(&self) -> usize {
         // Exclude edges from start node
-        self.graph.edge_count() - self.graph.neighbors_directed(self.start_node, Direction::Outgoing).count()
+        self.graph.edge_count() - self.graph.neighbors_directed(self.start_node, Outgoing).count()
     }
 
     fn start_node(&self) -> Self::NodeIndex {
@@ -379,6 +379,14 @@ where
 
     fn successors(&self, node: Self::NodeIndex) -> Self::SuccessorIterator<'_> {
         self.graph.neighbors(node)
+    }
+
+    fn in_degree(&self, node: Self::NodeIndex) -> usize {
+        self.graph.neighbors_directed(node, Incoming).count()
+    }
+
+    fn out_degree(&self, node: Self::NodeIndex) -> usize {
+        self.graph.neighbors_directed(node, Outgoing).count()
     }
 
     fn is_end(&self, node: Self::NodeIndex) -> bool {
