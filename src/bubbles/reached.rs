@@ -26,7 +26,7 @@ where
         Self {
             costs,
             seq,
-            reached_exits: vec![BTreeMap::default(); graph.node_count_with_start()]
+            reached_exits: vec![BTreeMap::default(); graph.node_count_with_start_and_end()]
         }
     }
 

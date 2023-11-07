@@ -162,9 +162,9 @@ where
     fn new<G: AlignableGraph>(costs: GapAffine, seq_graph: &G) -> Self {
         Self {
             costs,
-            nodes_m: vec![FxHashMap::default(); seq_graph.node_count_with_start()],
-            nodes_i: vec![FxHashMap::default(); seq_graph.node_count_with_start()],
-            nodes_d: vec![FxHashMap::default(); seq_graph.node_count_with_start()],
+            nodes_m: vec![FxHashMap::default(); seq_graph.node_count_with_start_and_end()],
+            nodes_i: vec![FxHashMap::default(); seq_graph.node_count_with_start_and_end()],
+            nodes_d: vec![FxHashMap::default(); seq_graph.node_count_with_start_and_end()],
         }
     }
 

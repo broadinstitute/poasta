@@ -3,7 +3,7 @@ use rustc_hash::FxHashSet;
 use crate::graphs::AlignableGraph;
 
 pub fn rev_postorder_nodes<G: AlignableGraph>(graph: &G) -> Vec<G::NodeIndex> {
-    let mut ordered = Vec::with_capacity(graph.node_count_with_start());
+    let mut ordered = Vec::with_capacity(graph.node_count_with_start_and_end());
 
     let mut stack = vec![
         (graph.start_node(), RefCell::new(graph.successors(graph.start_node())))

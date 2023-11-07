@@ -169,7 +169,7 @@ where
             debug.log(DebugOutputMessage::NewSequence {
                 seq_name: record.name().to_string(),
                 sequence: String::from_utf8_lossy(record.sequence().as_ref()).to_string(),
-                max_rank: graph.max_rank()
+                max_rank: graph.node_count_with_start_and_end(),
             });
 
             if !graph.is_empty() {
@@ -298,7 +298,7 @@ fn stats_subcommand(stats_args: &StatsArgs) -> Result<()> {
 
 fn print_graph_stats<G: AlignableGraph>(graph: &G) {
     eprintln!("node_count: {}", graph.node_count());
-    eprintln!("node_count_with_start: {}", graph.node_count_with_start());
+    eprintln!("node_count_with_start: {}", graph.node_count_with_start_and_end());
     eprintln!("edge_count: {}", graph.edge_count());
 
     let in_degrees: Vec<_> = graph.all_nodes()

@@ -74,7 +74,7 @@ impl POAEdgeData {
         }
     }
 
-    fn new_for_start() -> Self {
+    fn new_for_start_or_end() -> Self {
         POAEdgeData {
             weight: 0, sequence_ids: vec![]
         }
@@ -93,7 +93,7 @@ where
     pub sequences: Vec<Sequence<POANodeIndex<Ix>>>,
     topological_sorted: Vec<POANodeIndex<Ix>>,
     start_node: POANodeIndex<Ix>,
-    end_nodes: Vec<POANodeIndex<Ix>>,
+    end_node: POANodeIndex<Ix>,
 }
 
 impl<Ix> POAGraph<Ix>
@@ -101,16 +101,17 @@ where
     Ix: PetgraphIndexType + DeserializeOwned
 {
     pub fn new() -> Self {
-        let mut graph = POAGraph {
-            graph: POAGraphType::<Ix>::default(),
+        let mut graph = POAGraphType::<Ix>::default();
+        let start_node = graph.add_node(POANodeData::new(b'#'));
+        let end_node = graph.add_node(POANodeData::new(b'$'));
+
+        POAGraph {
+            graph,
             sequences: Vec::new(),
             topological_sorted: Vec::new(),
-            start_node: POANodeIndex::new(0),
-            end_nodes: Vec::new(),
-        };
-        graph.start_node = graph.graph.add_node(POANodeData::new(b'#'));
-
-        graph
+            start_node,
+            end_node,
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -290,30 +291,32 @@ where
             self.graph.remove_edge(e.id());
         }
 
+        while let Some(e) = self.graph.edges(self.end_node).next() {
+            self.graph.remove_edge(e.id());
+        }
+
         // Connect nodes with no incoming edges to the start node
         let all_nodes: Vec<NodeIndex<Ix>> = self.graph.node_indices().collect();
-        for node in all_nodes.into_iter() {
-            if node != self.start_node && self.graph.neighbors_directed(node, Incoming).count() == 0 {
-                self.graph.add_edge(self.start_node, node, POAEdgeData::new_for_start());
+        for node in all_nodes.iter() {
+            if *node != self.start_node && self.graph.neighbors_directed(*node, Incoming).count() == 0 {
+                self.graph.add_edge(self.start_node, *node, POAEdgeData::new_for_start_or_end());
+            }
+        }
+
+        // Connect nodes with no outgoing edges to the end node
+        for node in all_nodes.iter() {
+            if *node != self.end_node && self.graph.neighbors_directed(*node, Outgoing).count() == 0 {
+                self.graph.add_edge(*node, self.end_node, POAEdgeData::new_for_start_or_end());
             }
         }
 
         self.topological_sorted = toposort(&self.graph, None)?;
 
-        self.end_nodes.clear();
         for (rank, node) in self.topological_sorted.iter().enumerate() {
             self.graph[*node].rank = rank;
-
-            if self.graph.neighbors(*node).count() == 0 {
-                self.end_nodes.push(*node);
-            }
         }
 
         Ok(())
-    }
-
-    pub fn max_rank(&self) -> usize {
-        self.graph.node_count()
     }
 
     pub fn get_node_by_rank(&self, rank: usize) -> POANodeIndex<Ix> {
@@ -324,23 +327,6 @@ where
         self.graph[node].rank
     }
 
-    pub fn predecessors(&self, rank: usize) -> impl Iterator<Item=usize> + '_ {
-        self.graph.neighbors_directed(self.topological_sorted[rank], Incoming)
-            .map(|v| self.graph[v].rank)
-    }
-
-    pub fn successors(&self, rank: usize) -> impl Iterator<Item=usize> + '_ {
-        self.graph.neighbors(self.topological_sorted[rank])
-            .map(|v| self.graph[v].rank)
-    }
-
-    pub fn is_neighbor_rank(&self, from_rank: usize, to_canditate_rank: usize) -> bool {
-        self.successors(from_rank).any(|rank| rank == to_canditate_rank)
-    }
-
-    pub fn end_nodes(&self) -> &Vec<POANodeIndex<Ix>> {
-        &self.end_nodes
-    }
 }
 
 impl<Ix> AlignableGraph for POAGraph<Ix>
@@ -357,20 +343,26 @@ where
     }
 
     fn node_count(&self) -> usize {
-        self.graph.node_count() - 1
+        self.graph.node_count() - 2
     }
 
-    fn node_count_with_start(&self) -> usize {
+    fn node_count_with_start_and_end(&self) -> usize {
         self.graph.node_count()
     }
 
     fn edge_count(&self) -> usize {
-        // Exclude edges from start node
-        self.graph.edge_count() - self.graph.neighbors_directed(self.start_node, Outgoing).count()
+        // Exclude edges from start and end node
+        self.graph.edge_count()
+            - self.graph.neighbors_directed(self.start_node, Outgoing).count()
+            - self.graph.neighbors_directed(self.end_node, Incoming).count()
     }
 
     fn start_node(&self) -> Self::NodeIndex {
         self.start_node
+    }
+
+    fn end_node(&self) -> Self::NodeIndex {
+        self.end_node
     }
 
     fn predecessors(&self, node: Self::NodeIndex) -> Self::PredecessorIterator<'_> {
@@ -390,7 +382,7 @@ where
     }
 
     fn is_end(&self, node: Self::NodeIndex) -> bool {
-        self.end_nodes.iter().any(|v| *v == node)
+        self.end_node == node
     }
 
     fn get_symbol(&self, node: Self::NodeIndex) -> char {

@@ -88,8 +88,8 @@ where
         let finder = SuperbubbleFinder::new(graph);
 
         // Two separate lists because nodes can be both an entrance and an exit
-        let mut bubble_entrances = vec![None; graph.node_count_with_start()];
-        let mut bubble_exits = vec![None; graph.node_count_with_start()];
+        let mut bubble_entrances = vec![None; graph.node_count_with_start_and_end()];
+        let mut bubble_exits = vec![None; graph.node_count_with_start_and_end()];
 
         for (entrance, exit) in finder.iter() {
             bubble_entrances[entrance.index()] = Some(BubbleNode::Entrance(exit));
@@ -101,7 +101,7 @@ where
             finder,
             bubble_entrance: bubble_entrances,
             bubble_exit: bubble_exits,
-            node_bubble_map: vec![Vec::default(); graph.node_count_with_start()],
+            node_bubble_map: vec![Vec::default(); graph.node_count_with_start_and_end()],
             visited: FxHashSet::default(),
         }
     }
@@ -153,7 +153,7 @@ where
     }
 
     pub fn build(mut self) -> BubbleIndex<G::NodeIndex, O> {
-        for rpo in (0..self.graph.node_count_with_start()).rev() {
+        for rpo in (0..self.graph.node_count_with_start_and_end()).rev() {
             let inv_rev_postorder = self.finder.get_inv_rev_postorder();
             let node_id = inv_rev_postorder[rpo];
             if self.visited.contains(&node_id) {

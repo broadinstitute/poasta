@@ -96,7 +96,7 @@ where
             finder,
             out_parent_map: FxHashMap::default(),
             stack: Vec::default(),
-            curr: (0..finder.graph.node_count_with_start()).rev(),
+            curr: (0..finder.graph.node_count_with_start_and_end()).rev(),
             candidate_exit: None,
         }
     }

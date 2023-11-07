@@ -31,7 +31,7 @@ impl AlignableGraph for MockGraph {
         self.node_count()
     }
 
-    fn node_count_with_start(&self) -> usize {
+    fn node_count_with_start_and_end(&self) -> usize {
         self.node_count()
     }
 
