@@ -12,15 +12,19 @@ use serde::de::DeserializeOwned;
 use flate2::read::GzDecoder;
 
 use poasta::aligner::alignment::print_alignment;
+use poasta::aligner::config::{AffineMinGapCost, AlignmentConfig};
+use poasta::aligner::heuristic::AstarHeuristic;
+use poasta::aligner::offsets::OffsetType;
 use poasta::debug::DebugOutputWriter;
 use poasta::debug::messages::DebugOutputMessage;
 
 use poasta::graphs::poa::{POAGraph, POAGraphWithIx};
 use poasta::aligner::PoastaAligner;
-use poasta::aligner::scoring::{AlignmentCosts, GapAffine};
+use poasta::aligner::scoring::{AlignmentCosts, AlignmentType, GapAffine};
+use poasta::aligner::heuristic::MinimumGapCostAffine;
 use poasta::bubbles::index::BubbleIndexBuilder;
 use poasta::errors::PoastaError;
-use poasta::graphs::AlignableGraph;
+use poasta::graphs::AlignableRefGraph;
 use poasta::io::graph::load_graph_from_fasta_msa;
 use poasta::io::load_graph;
 
@@ -108,7 +112,7 @@ struct AlignArgs {
     debug_output: Option<PathBuf>,
 
     /// Alignment span, either global alignment, semi-global alignment or ends-free alignment.
-    #[arg(short='m', long)]
+    #[arg(short='m', long, default_value="global")]
     #[clap(help_heading = "Alignment configuration")]
     alignment_span: AlignmentSpan,
 
@@ -134,15 +138,15 @@ struct StatsArgs {
     graph: PathBuf
 }
 
-fn perform_alignment<Ix, C>(
-    graph: &mut POAGraph<Ix>,
+fn perform_alignment<N, C>(
+    graph: &mut POAGraph<N>,
     aligner: &mut PoastaAligner<C>,
     debug_writer: Option<&DebugOutputWriter>,
     sequences_fname: &Path
 ) -> Result<()>
 where
-    Ix: IndexType + DeserializeOwned,
-    C: AlignmentCosts,
+    N: IndexType + DeserializeOwned,
+    C: AlignmentConfig,
 {
     // Let's read the sequences from the given FASTA
     let is_gzipped = sequences_fname.file_name()
@@ -181,13 +185,8 @@ where
             // eprintln!("Creating initial graph from {}...", record.name());
             graph.add_alignment_with_weights(record.name(), record.sequence(), None, &weights)?;
         } else {
-            eprint!("Building bubble index...");
-            let bubble_index = BubbleIndexBuilder::new(graph)
-                .build();
-            eprintln!("Done. Found {:?} bubbles.", bubble_index.num_bubbles());
-
             eprint!("Aligning #{i} {}... ", record.name());
-            let (score, alignment) = aligner.align::<u32, _, _>(graph, &bubble_index, record.sequence());
+            let (score, alignment) = aligner.align::<u32, _, _>(graph, record.sequence());
             eprintln!("Done. Alignment Score: {:?}", score);
             eprintln!();
             eprintln!("{}", print_alignment(graph, record.sequence(), &alignment));
@@ -223,11 +222,12 @@ fn align_subcommand(align_args: &AlignArgs) -> Result<()> {
 
     // TODO: make configurable through CLI
     let scoring = GapAffine::new(4, 2, 6);
-    let mut aligner: PoastaAligner<GapAffine> = if let Some(ref debug) = debug_writer {
-        PoastaAligner::new_with_debug_output(scoring, debug)
-    } else {
-        PoastaAligner::new(scoring)
-    };
+    // let mut aligner: PoastaAligner<GapAffine> = if let Some(ref debug) = debug_writer {
+    //     PoastaAligner::new_with_debug_output(scoring, debug)
+    // } else {
+    //     PoastaAligner::new(scoring, AlignmentType::Global)
+    // }
+    let mut aligner = PoastaAligner::new(AffineMinGapCost(scoring), AlignmentType::Global);
 
     match graph {
         POAGraphWithIx::U8(ref mut g) =>
@@ -296,7 +296,7 @@ fn stats_subcommand(stats_args: &StatsArgs) -> Result<()> {
     Ok(())
 }
 
-fn print_graph_stats<G: AlignableGraph>(graph: &G) {
+fn print_graph_stats<G: AlignableRefGraph>(graph: &G) {
     eprintln!("node_count: {}", graph.node_count());
     eprintln!("node_count_with_start: {}", graph.node_count_with_start_and_end());
     eprintln!("edge_count: {}", graph.edge_count());

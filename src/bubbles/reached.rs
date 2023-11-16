@@ -1,32 +1,33 @@
 use std::collections::BTreeMap;
 use std::ops::{RangeFrom, RangeTo};
 use crate::aligner::offsets::OffsetType;
-use crate::aligner::scoring::AlignmentCosts;
-use crate::aligner::state::{AlignState, Score, StateGraphNode};
+use crate::aligner::scoring::{AlignmentCosts, Score};
+use crate::aligner::aln_graph::{AlignmentGraphNode, AlignState};
 use crate::bubbles::index::{BubbleIndex, NodeBubbleMap};
-use crate::graphs::{AlignableGraph, NodeIndexType};
+use crate::graphs::{AlignableRefGraph, NodeIndexType};
 
 
-pub struct ReachedBubbleExits<'a, O, C>
+pub struct ReachedBubbleExits<C, O>
 where
-    O: OffsetType,
     C: AlignmentCosts,
+    O: OffsetType,
 {
-    costs: &'a C,
-    seq: &'a [u8],
-    reached_exits: Vec<BTreeMap<O, Score>>
+    costs: C,
+    reached_exits: Vec<BTreeMap<O, Score>>,
+    reached_exits_state: AlignState,
 }
 
-impl<'a, O, C> ReachedBubbleExits<'a, O, C>
+impl<C, O> ReachedBubbleExits<C, O>
 where
-    O: OffsetType,
     C: AlignmentCosts,
+    O: OffsetType,
 {
-    pub fn new<G: AlignableGraph>(costs: &'a C, graph: &G, seq: &'a [u8]) -> Self {
+    pub fn new<G: AlignableRefGraph>(costs: C, reached_exits_state: AlignState, ref_graph: &G) -> Self {
         Self {
             costs,
-            seq,
-            reached_exits: vec![BTreeMap::default(); graph.node_count_with_start_and_end()]
+            reached_exits: vec![BTreeMap::default();
+                                ref_graph.node_count_with_start_and_end()],
+            reached_exits_state,
         }
     }
 
@@ -35,37 +36,37 @@ where
             .insert(offset, score);
     }
 
-    pub fn can_improve_alignment<S, N>(&self, bubble_index: &BubbleIndex<N, O>, state: &S, current_score: Score) -> bool
-    where
-        S: StateGraphNode<N, O>,
-        N: NodeIndexType,
+    pub fn can_improve_alignment<N>(
+        &self, bubble_index: &BubbleIndex<N>,
+        aln_node: &AlignmentGraphNode<N, O>,
+        current_score: Score
+    ) -> bool
+        where N: NodeIndexType,
     {
-        if !bubble_index.node_is_part_of_bubble(state.node()) {
+        if !bubble_index.node_is_part_of_bubble(aln_node.node()) {
             return true;
         }
 
-        bubble_index.get_node_bubbles(state.node())
+        bubble_index.get_node_bubbles(aln_node.node())
             .iter()
             .all(|bubble|
-                self.can_improve_bubble(bubble, state, current_score))
+                self.can_improve_bubble(bubble, aln_node, current_score))
     }
 
-    pub fn can_improve_bubble<S, N>(&self, bubble: &NodeBubbleMap<N, O>, state: &S, current_score: Score) -> bool
-    where
-        S: StateGraphNode<N, O>,
-        N: NodeIndexType
+    pub fn can_improve_bubble<N>(
+        &self, bubble: &NodeBubbleMap<N>,
+        aln_node: &AlignmentGraphNode<N, O>,
+        current_score: Score
+    ) -> bool
+        where N: NodeIndexType
     {
         if self.reached_exits[bubble.bubble_exit.index()].is_empty() {
             return true;
         }
 
-        let target_offset = state.offset() + bubble.dist_to_exit;
+        let target_offset = aln_node.offset() + O::new(bubble.dist_to_exit);
 
-        if target_offset.as_usize() >= self.seq.len() {
-            return false;
-        }
-
-        if state.node() == bubble.bubble_exit {
+        if aln_node.node() == bubble.bubble_exit {
             return true;
         }
 
@@ -80,7 +81,7 @@ where
         {
             let gap_length = target_offset - *prev_offset;
             let ins_open_score_from_exit = *prev_score
-                + self.costs.gap_cost(AlignState::Match, gap_length.as_usize());
+                + self.costs.gap_cost(self.reached_exits_state, gap_length.as_usize());
 
             if ins_open_score_from_exit <= current_score {
                 // Previous offset that reached this exit can reach this new offset with a lower or equal score,
@@ -98,7 +99,7 @@ where
         {
             let gap_length = *next_offset - target_offset;
             let del_open_score_from_exit = *next_score
-                + self.costs.gap_cost(AlignState::Match, gap_length.as_usize());
+                + self.costs.gap_cost(self.reached_exits_state, gap_length.as_usize());
 
             if del_open_score_from_exit <= current_score {
                 return false;

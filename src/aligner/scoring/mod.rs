@@ -1,20 +1,26 @@
-pub mod gap_linear;
+// pub mod gap_linear;
 pub mod gap_affine;
 
-use crate::aligner::offsets::OffsetType;
-use crate::aligner::state::{AlignState, StateGraph};
-use crate::graphs::{AlignableGraph, NodeIndexType};
+use crate::aligner::aln_graph::{AlignmentGraph, AlignState};
 
 pub use gap_affine::GapAffine;
+use std::ops::{Add, AddAssign, Bound};
+use std::fmt::{Display, Formatter};
+use std::cmp::Ordering;
+use crate::aligner::astar::{AstarQueue, AstarVisited};
+use crate::aligner::heuristic::AstarHeuristic;
+use crate::aligner::offsets::OffsetType;
+use crate::graphs::{AlignableRefGraph, NodeIndexType};
 
 
 pub trait AlignmentCosts: Copy {
-    type StateGraphType<N, O>: StateGraph<N, O>
-    where
-        N: NodeIndexType,
-        O: OffsetType;
 
-    fn new_state_graph<G: AlignableGraph, O: OffsetType>(&self, graph: &G) -> Self::StateGraphType<G::NodeIndex, O>;
+    type AlignmentGraphType: AlignmentGraph;
+    type QueueType<N, O>: AstarQueue<N, O>
+        where N: NodeIndexType,
+              O: OffsetType;
+
+    fn new_alignment_graph(&self, aln_type: AlignmentType) -> Self::AlignmentGraphType;
 
     fn mismatch(&self) -> u8;
     
@@ -25,4 +31,109 @@ pub trait AlignmentCosts: Copy {
     fn gap_extend2(&self) -> u8;
 
     fn gap_cost(&self, current_state: AlignState, length: usize) -> usize;
+}
+
+
+/// Type of alignment to perform
+///
+/// Global alignment forces end-to-end alignment of the graph and the query
+/// Ends-free alignment allows for free indels at the beginning of the query, end of the query,
+/// beginning of the graph, or the end of the graph. The maximum
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum AlignmentType {
+    /// Perform global alignment of the query sequence to the graph
+    Global,
+
+    /// Allow free indels at the beginning or end (optionally up to a given maximum)
+    EndsFree {
+        qry_free_begin: Bound<usize>,
+        qry_free_end: Bound<usize>,
+        graph_free_begin: Bound<usize>,
+        graph_free_end: Bound<usize>
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Score {
+    Score(usize),
+    Unvisited
+}
+
+impl PartialOrd for Score {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match self {
+            Self::Score(score) => match other {
+                Self::Score(other_score) => score.partial_cmp(other_score),
+                Self::Unvisited => Some(Ordering::Less),
+            },
+            Self::Unvisited => match other {
+                Self::Score(_) => Some(Ordering::Greater),
+                Self::Unvisited => Some(Ordering::Equal)
+            }
+        }
+    }
+}
+
+impl Ord for Score {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+impl Add<usize> for Score {
+    type Output = Self;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        match self {
+            Self::Score(score) => Self::Score(score + rhs),
+            Self::Unvisited => panic!("Can't add to Score::Unvisited!")
+        }
+    }
+}
+
+impl AddAssign<usize> for Score {
+    fn add_assign(&mut self, rhs: usize) {
+        match self {
+            Self::Score(score) => *score += rhs,
+            Self::Unvisited => panic!("Can't add to Score::Unvisited!")
+        }
+    }
+}
+
+impl Add<u8> for Score {
+    type Output = Self;
+
+    fn add(self, rhs: u8) -> Self::Output {
+        match self {
+            Self::Score(score) => Self::Score(score + rhs as usize),
+            Self::Unvisited => panic!("Can't add to Score::Unvisited!")
+        }
+    }
+}
+
+impl AddAssign<u8> for Score {
+    fn add_assign(&mut self, rhs: u8) {
+        match self {
+            Self::Score(score) => *score += rhs as usize,
+            Self::Unvisited => panic!("Can't add to Score::Unvisited!")
+        }
+    }
+}
+
+impl From<Score> for usize {
+    fn from(value: Score) -> Self {
+        match value {
+            Score::Score(score) => score,
+            Score::Unvisited => panic!("Trying to convert Score::Unvisited!")
+        }
+    }
+}
+
+impl Display for Score {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Score(score) => Display::fmt(score, f),
+            Self::Unvisited => Display::fmt("unvisited", f)
+        }
+    }
 }

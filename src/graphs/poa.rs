@@ -11,7 +11,7 @@ use serde::de::DeserializeOwned;
 
 use crate::errors::PoastaError;
 use crate::aligner::alignment::{AlignedPair, Alignment};
-use crate::graphs::{AlignableGraph, NodeIndexType};
+use crate::graphs::{AlignableRefGraph, NodeIndexType};
 use crate::io::graph::format_as_dot;
 
 /// A sequence aligned to the POA graph.
@@ -291,21 +291,27 @@ where
             self.graph.remove_edge(e.id());
         }
 
-        while let Some(e) = self.graph.edges(self.end_node).next() {
+        while let Some(e) = self.graph.edges_directed(self.end_node, Incoming).next() {
             self.graph.remove_edge(e.id());
         }
 
         // Connect nodes with no incoming edges to the start node
         let all_nodes: Vec<NodeIndex<Ix>> = self.graph.node_indices().collect();
         for node in all_nodes.iter() {
-            if *node != self.start_node && self.graph.neighbors_directed(*node, Incoming).count() == 0 {
+            if *node != self.start_node
+                && *node != self.end_node
+                && self.graph.neighbors_directed(*node, Incoming).count() == 0
+            {
                 self.graph.add_edge(self.start_node, *node, POAEdgeData::new_for_start_or_end());
             }
         }
 
         // Connect nodes with no outgoing edges to the end node
         for node in all_nodes.iter() {
-            if *node != self.end_node && self.graph.neighbors_directed(*node, Outgoing).count() == 0 {
+            if *node != self.end_node
+                && *node != self.start_node
+                && self.graph.neighbors_directed(*node, Outgoing).count() == 0
+            {
                 self.graph.add_edge(*node, self.end_node, POAEdgeData::new_for_start_or_end());
             }
         }
@@ -329,7 +335,7 @@ where
 
 }
 
-impl<Ix> AlignableGraph for POAGraph<Ix>
+impl<Ix> AlignableRefGraph for POAGraph<Ix>
 where
     Ix: PetgraphIndexType + DeserializeOwned,
 {

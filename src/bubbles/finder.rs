@@ -2,7 +2,7 @@ use std::cmp::min;
 use std::iter::Rev;
 use std::ops::Range;
 use rustc_hash::FxHashMap;
-use crate::graphs::{AlignableGraph, NodeIndexType};
+use crate::graphs::{AlignableRefGraph, NodeIndexType};
 use crate::graphs::tools::rev_postorder_nodes;
 
 /// Identify superbubbles in a directed acyclic graph
@@ -14,7 +14,7 @@ use crate::graphs::tools::rev_postorder_nodes;
 ///    https://doi.org/10.1186/s13015-018-0134-3.
 pub struct SuperbubbleFinder<'a, G>
 where
-    G: AlignableGraph
+    G: AlignableRefGraph
 {
     graph: &'a G,
     rev_postorder: Vec<usize>,
@@ -25,7 +25,7 @@ where
 
 impl<'a, G> SuperbubbleFinder<'a, G>
 where
-    G: AlignableGraph,
+    G: AlignableRefGraph,
 {
     pub fn new(graph: &'a G) -> Self {
         let inv_rev_postorder = rev_postorder_nodes(graph);
@@ -78,7 +78,7 @@ where
 
 pub struct SuperbubbleIterator<'a, G>
 where
-    G: AlignableGraph,
+    G: AlignableRefGraph,
 {
     finder: &'a SuperbubbleFinder<'a, G>,
     out_parent_map: FxHashMap<G::NodeIndex, i64>,
@@ -89,7 +89,7 @@ where
 
 impl<'a, G> SuperbubbleIterator<'a, G>
 where
-    G: AlignableGraph,
+    G: AlignableRefGraph,
 {
     fn new(finder: &'a SuperbubbleFinder<'a, G>) -> Self {
         Self {
@@ -105,7 +105,7 @@ where
 
 impl<'a, G> Iterator for SuperbubbleIterator<'a, G>
 where
-    G: AlignableGraph,
+    G: AlignableRefGraph,
 {
     type Item = (G::NodeIndex, G::NodeIndex);
 

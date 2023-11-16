@@ -7,13 +7,8 @@ use std::thread::JoinHandle;
 use crate::errors::PoastaError;
 
 pub mod messages {
-    use std::error::Error;
-    use std::io::BufWriter;
-    use serde::{Serialize, Deserialize};
+    use serde::{Deserialize, Serialize};
     use petgraph::graph::IndexType;
-    use crate::aligner::offsets::OffsetType;
-    use crate::aligner::state::{Score, StateGraph};
-    use crate::graphs::NodeIndexType;
     use crate::graphs::poa::POAGraph;
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -31,20 +26,6 @@ pub mod messages {
             GIx: IndexType
         {
             Self::IntermediateGraph { graph_dot: format!("{}", graph) }
-        }
-
-        pub fn new_from_sg<SG, N, O>(state_graph: &SG, score: Score) -> Result<Self, Box<dyn Error>>
-        where
-            SG: StateGraph<N, O>,
-            N: NodeIndexType,
-            O: OffsetType,
-        {
-            let mut buf_writer = BufWriter::new(Vec::default());
-            state_graph.write_tsv(&mut buf_writer)?;
-
-            let graph_tsv = buf_writer.into_inner()?;
-
-            Ok(Self::StateGraph { graph_tsv, score: score.into() } )
         }
     }
 }

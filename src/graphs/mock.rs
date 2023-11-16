@@ -5,14 +5,14 @@ use rustc_hash::FxHashMap;
 use petgraph::graph::{DiGraph, NodeIndex, NodeIndices, Neighbors};
 use petgraph::Incoming;
 
-use crate::graphs::AlignableGraph;
+use crate::graphs::AlignableRefGraph;
 
 pub(crate) type NIx = u32;
 
 
 pub(crate) type MockGraph = DiGraph<i64, (), NIx>;
 
-impl AlignableGraph for MockGraph {
+impl AlignableRefGraph for MockGraph {
     type NodeIndex = NodeIndex<NIx>;
 
     type NodeIterator<'a> = NodeIndices<NIx>

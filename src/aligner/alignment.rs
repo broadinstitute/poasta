@@ -1,4 +1,4 @@
-use crate::graphs::{AlignableGraph, NodeIndexType};
+use crate::graphs::{AlignableRefGraph, NodeIndexType};
 
 #[derive(Clone, Debug)]
 pub struct AlignedPair<N>
@@ -33,7 +33,7 @@ pub type Alignment<N> = Vec<AlignedPair<N>>;
 
 pub fn print_alignment<G, S, N>(graph: &G, sequence: &S, aln: &Alignment<N>) -> String
 where
-    G: AlignableGraph<NodeIndex=N>,
+    G: AlignableRefGraph<NodeIndex=N>,
     S: AsRef<[u8]>,
     N: NodeIndexType
 {

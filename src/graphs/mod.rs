@@ -20,7 +20,7 @@ impl<T: IndexType> NodeIndexType for T {
     }
 }
 
-pub trait AlignableGraph {
+pub trait AlignableRefGraph {
     type NodeIndex: NodeIndexType;
     type NodeIterator<'a>: Iterator<Item=Self::NodeIndex> + 'a
         where Self: 'a;
