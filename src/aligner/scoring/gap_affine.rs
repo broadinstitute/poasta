@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::fmt::Write;
 use rustc_hash::FxHashMap;
 use crate::aligner::{AlignedPair, Alignment};
 
@@ -10,6 +11,7 @@ use crate::aligner::astar::{AstarQueue, AstarQueuedItem, AstarVisited};
 use crate::aligner::queue::{LayeredQueue, QueueLayer};
 use crate::bubbles::index::BubbleIndex;
 use crate::bubbles::reached::ReachedBubbleExits;
+use crate::errors::PoastaError;
 
 #[derive(Clone, Copy, Debug)]
 pub struct GapAffine {
@@ -294,7 +296,12 @@ impl AlignmentGraph for AffineAlignmentGraph {
               O: OffsetType,
               F: FnMut(u8, AlignmentGraphNode<N, O>, AlignState)
     {
-        f(self.costs.cost_mismatch, *child, AlignState::Match);
+        let new_score_mis = score + self.costs.cost_mismatch;
+        if visited_data
+            .update_score_if_lower(new_score_mis, child, AlignState::Match, parent, AlignState::Match)
+        {
+            f(self.costs.cost_mismatch, *child, AlignState::Match);
+        }
 
         // Also queue indel states from parent
         let new_node_ins = AlignmentGraphNode::new(parent.node(), parent.offset().increase_one());
@@ -373,7 +380,6 @@ pub struct AffineAstarData<N, O>
 where N: NodeIndexType,
       O: OffsetType,
 {
-    costs: GapAffine,
     bubble_index: BubbleIndex<N>,
 
     nodes_m: AffineAstarVisitedNodes<N, O>,
@@ -381,7 +387,7 @@ where N: NodeIndexType,
     nodes_d: AffineAstarVisitedNodes<N, O>,
 
     bubbles_reached_m: ReachedBubbleExits<GapAffine, O>,
-    bubbles_reached_i: ReachedBubbleExits<GapAffine, O>,
+    // bubbles_reached_i: ReachedBubbleExits<GapAffine, O>,
     bubbles_reached_d: ReachedBubbleExits<GapAffine, O>,
 }
 
@@ -393,7 +399,6 @@ impl<N, O> AffineAstarData<N, O>
         where G: AlignableRefGraph<NodeIndex=N>,
     {
         Self {
-            costs,
             bubble_index,
 
             nodes_m: vec![FxHashMap::default(); ref_graph.node_count_with_start_and_end()],
@@ -401,7 +406,7 @@ impl<N, O> AffineAstarData<N, O>
             nodes_d: vec![FxHashMap::default(); ref_graph.node_count_with_start_and_end()],
 
             bubbles_reached_m: ReachedBubbleExits::new(costs, AlignState::Match, ref_graph),
-            bubbles_reached_i: ReachedBubbleExits::new(costs, AlignState::Insertion, ref_graph),
+            // bubbles_reached_i: ReachedBubbleExits::new(costs, AlignState::Insertion, ref_graph),
             bubbles_reached_d: ReachedBubbleExits::new(costs, AlignState::Deletion, ref_graph),
         }
     }
@@ -439,11 +444,27 @@ impl<N, O> AstarVisited<N, O> for AffineAstarData<N, O>
             .map(|v| v.score)
             .unwrap_or(Score::Unvisited)
     }
+
+    fn set_score(&mut self, aln_node: AlignmentGraphNode<N, O>, aln_state: AlignState, score: Score) {
+        let node_map = match aln_state {
+            AlignState::Match => &mut self.nodes_m,
+            AlignState::Insertion => &mut self.nodes_i,
+            AlignState::Deletion => &mut self.nodes_d,
+            AlignState::Insertion2 | AlignState::Deletion2 => panic!("Invalid gap-affine state: {aln_state:?}")
+        };
+
+        node_map[aln_node.node().index()].entry(aln_node.offset())
+            .and_modify(|v| v.score = score)
+            .or_insert_with(|| AffineVisitedNodeData { score, prev: None });
+    }
+
     fn visit(&mut self, score: Score, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) {
-        if self.bubble_index.is_exit(aln_node.node()) {
+        // eprintln!("VISIT: {aln_node:?} ({aln_state:?}), score: {score}");
+
+        if aln_state != AlignState::Insertion && self.bubble_index.is_exit(aln_node.node()) {
             let bubble_map = match aln_state {
                 AlignState::Match => &mut self.bubbles_reached_m,
-                AlignState::Insertion => &mut self.bubbles_reached_i,
+                AlignState::Insertion => unreachable!(),
                 AlignState::Deletion => &mut self.bubbles_reached_d,
                 AlignState::Insertion2 | AlignState::Deletion2 => panic!("Invalid gap-affine alignment state {aln_state:?}")
             };
@@ -453,10 +474,10 @@ impl<N, O> AstarVisited<N, O> for AffineAstarData<N, O>
     }
 
     fn prune(&self, score: Score, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> bool {
-        if aln_state == AlignState::Insertion
-            && !self.bubbles_reached_i.can_improve_alignment(&self.bubble_index, aln_node, score) {
-            return true
-        }
+        // if aln_state == AlignState::Insertion
+        //     && !self.bubbles_reached_i.can_improve_alignment(&self.bubble_index, aln_node, score) {
+        //     return true
+        // }
 
         if aln_state == AlignState::Deletion
             && !self.bubbles_reached_d.can_improve_alignment(&self.bubble_index, aln_node, score) {
@@ -549,6 +570,30 @@ impl<N, O> AstarVisited<N, O> for AffineAstarData<N, O>
         alignment.reverse();
         alignment
     }
+
+    fn write_tsv<W: Write>(&self, writer: &mut W) -> Result<(), PoastaError> {
+        writeln!(writer, "node_id\toffset\tmatrix\tscore")?;
+
+        for (i, node_offsets) in self.nodes_m.iter().enumerate() {
+            for (offset, data) in node_offsets.iter() {
+                writeln!(writer, "{i}\t{offset:?}\tmatch\t{}", data.score)?;
+            }
+        }
+
+        for (i, node_offsets) in self.nodes_i.iter().enumerate() {
+            for (offset, data) in node_offsets.iter() {
+                writeln!(writer, "{i}\t{offset:?}\tinsertion\t{}", data.score)?;
+            }
+        }
+
+        for (i, node_offsets) in self.nodes_d.iter().enumerate() {
+            for (offset, data) in node_offsets.iter() {
+                writeln!(writer, "{i}\t{offset:?}\tdeletion\t{}", data.score)?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 
@@ -618,27 +663,8 @@ impl<N, O> AstarQueue<N, O> for AffineLayeredQueue<N, O>
         let priority: usize = usize::from(score) + h;
         let item = AstarQueuedItem(score, node, aln_state);
 
+        // eprintln!("Queuing {node:?} ({aln_state:?}), score: {score:?}, heuristic: {h}, priority: {priority}");
+
         self.queue(item, priority)
     }
 }
-
-
-//
-//     fn write_tsv<W: Write>(&self, writer: &mut W) -> Result<(), Box<dyn Error>> {
-//         writeln!(writer, "node_id\toffset\tmatrix\tscore")?;
-//
-//         for i in 0..self.nodes_m.len() {
-//             for (offset, data) in self.nodes_m[i].iter() {
-//                 writeln!(writer, "{}\t{:?}\tmatch\t{}", i, offset, data.score)?;
-//             }
-//             for (offset, data) in self.nodes_i[i].iter() {
-//                 writeln!(writer, "{}\t{:?}\tinsertion\t{}", i, offset, data.score)?;
-//             }
-//             for (offset, data) in self.nodes_d[i].iter() {
-//                 writeln!(writer, "{}\t{:?}\tdeletion\t{}", i, offset, data.score)?;
-//             }
-//         }
-//
-//         Ok(())
-//     }
-// }

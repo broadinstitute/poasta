@@ -7,8 +7,11 @@ use std::thread::JoinHandle;
 use crate::errors::PoastaError;
 
 pub mod messages {
-    use serde::{Deserialize, Serialize};
     use petgraph::graph::IndexType;
+    use serde::{Deserialize, Serialize};
+    use crate::aligner::astar::AstarVisited;
+    use crate::aligner::offsets::OffsetType;
+    use crate::graphs::NodeIndexType;
     use crate::graphs::poa::POAGraph;
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -16,7 +19,7 @@ pub mod messages {
         Empty,
         NewSequence { seq_name: String, sequence: String, max_rank: usize },
         IntermediateGraph { graph_dot: String },
-        StateGraph { graph_tsv: Vec<u8>, score: usize },
+        AstarData { visited_tsv: String },
         Terminate,
     }
 
@@ -27,6 +30,16 @@ pub mod messages {
         {
             Self::IntermediateGraph { graph_dot: format!("{}", graph) }
         }
+
+        pub fn new_from_astar_data<D, N, O>(data: &D) -> Self
+            where D: AstarVisited<N, O>,
+                  N: NodeIndexType,
+                  O: OffsetType,
+        {
+            let mut tsv = String::new();
+            data.write_tsv(&mut tsv).unwrap();
+            Self::AstarData { visited_tsv: tsv }
+        }
     }
 }
 
@@ -36,7 +49,7 @@ pub struct DebugOutputWriter {
 }
 
 impl DebugOutputWriter {
-    pub fn new<T: AsRef<Path> + Send>(debug_output_dir: T) -> Self {
+    pub fn init<T: AsRef<Path> + Send>(debug_output_dir: T) -> Self {
         let (tx, rx) = mpsc::channel();
 
         Self { transmitter: tx, worker: DebugOutputWorker::new(debug_output_dir, rx) }
@@ -62,11 +75,12 @@ impl DebugOutputWorker {
         let output_path = debug_output_dir.as_ref().to_path_buf();
         Self { thread: std::thread::spawn(move || {
             eprintln!("DEBUG: log output directory {:?}", output_path);
-            std::fs::create_dir_all(&output_path)?;
+            std::fs::create_dir_all(output_path.join("astar_iterations"))?;
 
             let mut curr_seq_name = "none".to_string();
             let mut curr_seq = "".to_string();
             let mut curr_max_rank = 0;
+            let mut curr_astar_iter = 0usize;
 
             for msg in receiver {
                 match msg {
@@ -75,6 +89,7 @@ impl DebugOutputWorker {
                         curr_seq_name = seq_name;
                         curr_seq = sequence;
                         curr_max_rank = max_rank;
+                        curr_astar_iter = 0;
                     },
                     messages::DebugOutputMessage::IntermediateGraph { graph_dot } => {
                         let fname = output_path.join(format!("graph_for_{}.dot", &curr_seq_name));
@@ -82,13 +97,14 @@ impl DebugOutputWorker {
                         write!(dot_file, "{}", graph_dot)?;
                         dot_file.flush()?;
                     },
-                    messages::DebugOutputMessage::StateGraph { graph_tsv, score } => {
-                        let fname = output_path.join(format!("state_graph_for_{}.score{score}.tsv", &curr_seq_name));
-                        let mut gml_file = File::create(fname)?;
-                        writeln!(gml_file, "# seq: {curr_seq} - max rank: {curr_max_rank}")?;
-                        gml_file.write_all(&graph_tsv)?;
-                        gml_file.flush()?;
-                    },
+                    messages::DebugOutputMessage::AstarData { visited_tsv } => {
+                        let fname = output_path.join(format!("astar_iterations/{curr_seq_name}.iter{curr_astar_iter}.tsv"));
+                        let mut tsv_file = File::create(fname)?;
+                        writeln!(tsv_file, "# seq_name: {curr_seq_name} - seq: {curr_seq} - max_rank: {curr_max_rank}")?;
+                        tsv_file.write_all(visited_tsv.as_bytes())?;
+                        tsv_file.flush()?;
+                        curr_astar_iter += 1;
+                    }
                     messages::DebugOutputMessage::Terminate => break
                 }
             }

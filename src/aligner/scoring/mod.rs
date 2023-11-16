@@ -7,10 +7,9 @@ pub use gap_affine::GapAffine;
 use std::ops::{Add, AddAssign, Bound};
 use std::fmt::{Display, Formatter};
 use std::cmp::Ordering;
-use crate::aligner::astar::{AstarQueue, AstarVisited};
-use crate::aligner::heuristic::AstarHeuristic;
+use crate::aligner::astar::AstarQueue;
 use crate::aligner::offsets::OffsetType;
-use crate::graphs::{AlignableRefGraph, NodeIndexType};
+use crate::graphs::NodeIndexType;
 
 
 pub trait AlignmentCosts: Copy {

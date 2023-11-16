@@ -1,6 +1,5 @@
 use std::collections::VecDeque;
 use rustc_hash::FxHashSet;
-use crate::aligner::offsets::OffsetType;
 use crate::bubbles::finder::SuperbubbleFinder;
 use crate::graphs::{AlignableRefGraph, NodeIndexType};
 
@@ -63,9 +62,6 @@ where
 {
     graph: &'a G,
 
-    /// Superbubble finder object
-    finder: SuperbubbleFinder<'a, G>,
-
     /// Array indicating whether a node is a bubble entrance
     bubble_entrance: Vec<Option<BubbleNode<G::NodeIndex>>>,
 
@@ -100,7 +96,6 @@ where
 
         Self {
             graph,
-            finder,
             bubble_entrance: bubble_entrances,
             bubble_exit: bubble_exits,
             node_bubble_map: vec![Vec::default(); graph.node_count_with_start_and_end()],

@@ -148,23 +148,21 @@ where
                     *parent.aln_graph_node(),
                     ref_node
                 )),
-                Successor::ValidSuccessor(child) => {
-                    if self.ref_graph.is_symbol_equal(child.node(), self.seq[child.offset().as_usize()-1]) {
-                        astar_visited.visit(self.score, &child, AlignState::Match);
+                Successor::Match(child) => {
+                    astar_visited.visit(self.score, &child, AlignState::Match);
 
-                        let child_succ = self.ref_graph.successors(child.node());
-                        self.stack.push(StackNode::new(child, child_succ));
-                    } else {
-                        return Some(ExtendResult::Mismatch(
-                            *parent.aln_graph_node(),
-                            child
-                        ))
-                    }
+                    let child_succ = self.ref_graph.successors(child.node());
+                    self.stack.push(StackNode::new(child, child_succ));
                 },
+                Successor::Mismatch(child) => {
+                    return Some(ExtendResult::Mismatch(
+                        *parent.aln_graph_node(),
+                        child
+                    ))
+                }
                 Successor::SuccessorsExhausted => {
                     self.stack.pop();
                 }
-
             }
         }
 
@@ -201,11 +199,15 @@ where
                 continue;
             }
 
-            if astar_visited
-                .update_score_if_lower(self.score, &child_node, AlignState::Match,
-                                       parent.aln_graph_node(), AlignState::Match)
-            {
-                return Successor::ValidSuccessor(child_node)
+            if self.ref_graph.is_symbol_equal(child, self.seq[child_offset.as_usize()-1]) {
+                if astar_visited
+                    .update_score_if_lower(self.score, &child_node, AlignState::Match,
+                                           parent.aln_graph_node(), AlignState::Match)
+                {
+                    return Successor::Match(child_node)
+                }
+            } else {
+                return Successor::Mismatch(child_node)
             }
         }
 
@@ -220,7 +222,8 @@ where
 {
     RefGraphEnd(AlignmentGraphNode<N, O>),
     QueryEnd(N),
-    ValidSuccessor(AlignmentGraphNode<N, O>),
+    Match(AlignmentGraphNode<N, O>),
+    Mismatch(AlignmentGraphNode<N, O>),
     SuccessorsExhausted,
 }
 

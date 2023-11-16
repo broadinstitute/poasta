@@ -17,6 +17,7 @@ pub use alignment::{AlignedPair, Alignment};
 use scoring::Score;
 use crate::aligner::astar::astar_alignment;
 use crate::aligner::config::AlignmentConfig;
+use crate::debug::DebugOutputWriter;
 
 
 pub enum AlignmentMode<O> {
@@ -33,33 +34,43 @@ pub enum AlignmentMode<O> {
 }
 
 
-pub struct PoastaAligner<C>
+pub struct PoastaAligner<'a, C>
 where
     C: AlignmentConfig,
 {
     config: C,
     aln_type: AlignmentType,
+    debug_writer: Option<&'a DebugOutputWriter>
 }
 
 
-impl<C> PoastaAligner<C>
+impl<'a, C> PoastaAligner<'a, C>
     where C: AlignmentConfig,
 {
     pub fn new(config: C, aln_type: AlignmentType) -> Self {
         Self {
             config,
             aln_type,
+            debug_writer: None
         }
     }
 
-    pub fn align<'a, O, G, Seq>(
+    pub fn new_with_debug(config: C, aln_type: AlignmentType, debug_writer: &'a DebugOutputWriter) -> Self {
+        Self {
+            config,
+            aln_type,
+            debug_writer: Some(debug_writer)
+        }
+    }
+
+    pub fn align<O, G, Seq>(
         &self,
-        ref_graph: &'a G,
-        seq: &'a Seq,
+        ref_graph: &G,
+        seq: &Seq,
     ) -> (Score, Alignment<G::NodeIndex>)
         where O: OffsetType,
               G: AlignableRefGraph,
-              Seq: AsRef<[u8]> + 'a,
+              Seq: AsRef<[u8]>,
     {
         self.align_u8::<O, _>(ref_graph, seq.as_ref())
     }
@@ -78,6 +89,7 @@ impl<C> PoastaAligner<C>
             ref_graph,
             seq,
             self.aln_type,
+            self.debug_writer
         )
     }
 }

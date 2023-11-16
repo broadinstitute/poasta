@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use crate::aligner::Alignment;
 use crate::aligner::aln_graph::{AlignmentGraph, AlignmentGraphNode, AlignState};
 use crate::aligner::config::AlignmentConfig;
@@ -5,6 +6,9 @@ use crate::aligner::dfa::{DepthFirstGreedyAlignment, ExtendResult};
 use crate::aligner::heuristic::AstarHeuristic;
 use crate::aligner::offsets::OffsetType;
 use crate::aligner::scoring::{AlignmentCosts, AlignmentType, Score};
+use crate::debug::DebugOutputWriter;
+use crate::debug::messages::DebugOutputMessage;
+use crate::errors::PoastaError;
 use crate::graphs::{AlignableRefGraph, NodeIndexType};
 
 
@@ -48,6 +52,7 @@ pub trait AstarVisited<N, O>
         O: OffsetType,
 {
     fn get_score(&self, aln_node: AlignmentGraphNode<N, O>, aln_state: AlignState) -> Score;
+    fn set_score(&mut self, aln_node: AlignmentGraphNode<N, O>, aln_state: AlignState, score: Score);
 
     fn visit(&mut self, score: Score, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState);
 
@@ -64,6 +69,8 @@ pub trait AstarVisited<N, O>
 
     fn backtrace<G>(&self, ref_graph: &G, aln_node: &AlignmentGraphNode<N, O>) -> Alignment<N>
         where G: AlignableRefGraph<NodeIndex=N>;
+
+    fn write_tsv<W: Write>(&self, writer: &mut W) -> Result<(), PoastaError>;
 }
 
 
@@ -72,6 +79,7 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
     ref_graph: &G,
     seq: &[u8],
     aln_type: AlignmentType,
+    debug_writer: Option<&DebugOutputWriter>,
 ) -> (Score, Alignment<G::NodeIndex>)
     where O: OffsetType,
           C: AlignmentConfig<Costs=Costs>,
@@ -80,12 +88,13 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
           Q: AstarQueue<G::NodeIndex, O>,
           G: AlignableRefGraph,
 {
-    let (aln_graph, mut visited_data, mut heuristic) = config.init_alignment(ref_graph, seq, aln_type);
+    let (aln_graph, mut visited_data, heuristic) = config.init_alignment(ref_graph, seq, aln_type);
     let mut queue = Q::default();
 
     for initial_state in aln_graph.initial_states(ref_graph).into_iter() {
         let h = heuristic.h(&initial_state, AlignState::Match);
         queue.queue_aln_state(initial_state, AlignState::Match, Score::Score(0), h);
+        visited_data.set_score(initial_state, AlignState::Match, Score::Score(0));
     }
 
     let (end_score, end_node) = 'main: loop {
@@ -98,13 +107,13 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
         }
 
         // eprintln!("---- FRONT ---- [Score: {score}] {aln_node:?} {aln_state:?}");
-
         // eprintln!("- is end node? {:?} == {:?}", ref_graph.end_node(), aln_node.node());
         if aln_graph.is_end(ref_graph, seq, &aln_node, aln_state) {
             break (score, aln_node);
         }
 
         if visited_data.prune(score, &aln_node, aln_state) {
+            // eprintln!("PRUNE {aln_node:?} ({aln_state:?}), score: {score:?}");
             continue;
         }
 
@@ -115,7 +124,7 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
             let mut dfa = DepthFirstGreedyAlignment::new(ref_graph, seq, score, &aln_node);
 
             while let Some(end_point) = dfa.extend(&mut visited_data) {
-                // eprintln!("- DFA end point: {end_point:?}");
+                // eprintln!("DFA END: {end_point:?}");
                 match end_point {
                     ExtendResult::RefGraphEnd(parent, child) => {
                         if aln_graph.is_end(ref_graph, seq, &child, AlignState::Match) {
@@ -156,6 +165,10 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
                 let h = heuristic.h(&succ, succ_state);
                 queue.queue_aln_state(succ, succ_state, score+score_delta, h);
             })
+        }
+
+        if let Some(debug) = debug_writer {
+            debug.log(DebugOutputMessage::new_from_astar_data(&visited_data));
         }
     };
 

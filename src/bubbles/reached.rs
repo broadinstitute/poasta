@@ -80,10 +80,16 @@ where
             .next()
         {
             let gap_length = target_offset - *prev_offset;
-            let ins_open_score_from_exit = *prev_score
-                + self.costs.gap_cost(self.reached_exits_state, gap_length.as_usize());
+            let start_state = if self.reached_exits_state == AlignState::Insertion {
+                AlignState::Insertion
+            } else {
+                AlignState::Match
+            };
 
-            if ins_open_score_from_exit <= current_score {
+            let ins_score_from_exit = *prev_score
+                + self.costs.gap_cost(start_state, gap_length.as_usize());
+
+            if ins_score_from_exit <= current_score {
                 // Previous offset that reached this exit can reach this new offset with a lower or equal score,
                 return false;
             }
@@ -98,10 +104,15 @@ where
             .next()
         {
             let gap_length = *next_offset - target_offset;
-            let del_open_score_from_exit = *next_score
-                + self.costs.gap_cost(self.reached_exits_state, gap_length.as_usize());
+            let start_state = if self.reached_exits_state == AlignState::Deletion {
+                AlignState::Deletion
+            } else {
+                AlignState::Match
+            };
+            let del_score_from_exit = *next_score
+                + self.costs.gap_cost(start_state, gap_length.as_usize());
 
-            if del_open_score_from_exit <= current_score {
+            if del_score_from_exit <= current_score {
                 return false;
             }
         }

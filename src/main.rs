@@ -13,16 +13,12 @@ use flate2::read::GzDecoder;
 
 use poasta::aligner::alignment::print_alignment;
 use poasta::aligner::config::{AffineMinGapCost, AlignmentConfig};
-use poasta::aligner::heuristic::AstarHeuristic;
-use poasta::aligner::offsets::OffsetType;
 use poasta::debug::DebugOutputWriter;
 use poasta::debug::messages::DebugOutputMessage;
 
 use poasta::graphs::poa::{POAGraph, POAGraphWithIx};
 use poasta::aligner::PoastaAligner;
-use poasta::aligner::scoring::{AlignmentCosts, AlignmentType, GapAffine};
-use poasta::aligner::heuristic::MinimumGapCostAffine;
-use poasta::bubbles::index::BubbleIndexBuilder;
+use poasta::aligner::scoring::{AlignmentType, GapAffine};
 use poasta::errors::PoastaError;
 use poasta::graphs::AlignableRefGraph;
 use poasta::io::graph::load_graph_from_fasta_msa;
@@ -204,7 +200,7 @@ where
 
 fn align_subcommand(align_args: &AlignArgs) -> Result<()> {
     let debug_writer = align_args.debug_output.as_ref().map(|v| {
-        DebugOutputWriter::new(v)
+        DebugOutputWriter::init(v)
     });
 
     let mut graph = if let Some(path) = &align_args.graph {
@@ -222,12 +218,11 @@ fn align_subcommand(align_args: &AlignArgs) -> Result<()> {
 
     // TODO: make configurable through CLI
     let scoring = GapAffine::new(4, 2, 6);
-    // let mut aligner: PoastaAligner<GapAffine> = if let Some(ref debug) = debug_writer {
-    //     PoastaAligner::new_with_debug_output(scoring, debug)
-    // } else {
-    //     PoastaAligner::new(scoring, AlignmentType::Global)
-    // }
-    let mut aligner = PoastaAligner::new(AffineMinGapCost(scoring), AlignmentType::Global);
+    let mut aligner = if let Some(ref debug) = debug_writer {
+        PoastaAligner::new_with_debug(AffineMinGapCost(scoring), AlignmentType::Global, debug)
+    } else {
+        PoastaAligner::new(AffineMinGapCost(scoring), AlignmentType::Global)
+    };
 
     match graph {
         POAGraphWithIx::U8(ref mut g) =>
