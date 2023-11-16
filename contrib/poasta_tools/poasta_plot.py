@@ -5,18 +5,18 @@ Create a plot showing the computed cells by POASTA.
 The plot will show both the graph (read from the accompanying DOT file),
 and the DP matrix.
 """
-
+import functools
 import re
 import sys
 import argparse
 from pathlib import Path
 from typing import NamedTuple, Any
-from collections import defaultdict
 
 import numpy
 import numpy as np
 import pandas
 import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation, PillowWriter
 import seaborn
 import networkx as nx
 
@@ -53,7 +53,7 @@ def load_spoa_matrix(fname):
     return xlabels, ylabels, pandas.DataFrame({"rank": row_data, "offset": col_data, "score": score_data})
 
 
-poasta_node_label = re.compile(r"'(\w|#)' \((\d+)\)")
+poasta_node_label = re.compile(r"'(\w|#|\$)' \((\d+)\)")
 
 
 def load_graph(fname):
@@ -115,7 +115,7 @@ def poa_matrix_discontinuieties(g):
     return list(sorted(hlines))
 
 
-def load_state_graph_data(fname, score):
+def load_astar_data(fname):
     kv = {}
     with open(fname) as f:
         first = next(f)[2:]
@@ -132,12 +132,11 @@ def load_state_graph_data(fname, score):
             kv[k] = v
 
     df = pandas.read_csv(fname, sep='\t', comment='#')
-    df['queued'] = df['score'] > score
 
     return df.set_index('matrix').sort_index(), kv
 
 
-score_regexp = re.compile(r"score(\d+)")
+iter_num_regexp = re.compile(r"iter(\d+)")
 
 
 class GraphLayoutData(NamedTuple):
@@ -152,8 +151,8 @@ def main():
 
     parser.add_argument('graph', type=Path,
                         help="The graph used for alignment in DOT format")
-    parser.add_argument('state_graph_tsvs', type=Path, metavar='STATE_TSV', nargs='+',
-                        help="List of state graph TSVs")
+    parser.add_argument('astar_data_tsvs', type=Path, metavar='ASTAR_TSV', nargs='+',
+                        help="List of astar data TSVs")
     parser.add_argument('-o', '--output', type=Path, required=True,
                         help="Output directory")
     parser.add_argument('-w', '--fig-width', default=None, required=False, type=int)
@@ -180,35 +179,37 @@ def main():
     graph_layout_data = GraphLayoutData(graph_layout, ylabels, yticks, hlines)
 
     print("Loading poasta data...", file=sys.stderr)
-    state_graph_scores = {
-        fname.name: int(score_regexp.search(fname.name).group(1))
-        for fname in args.state_graph_tsvs
+    astar_iters = {
+        fname.name: int(iter_num_regexp.search(fname.name).group(1))
+        for fname in args.astar_data_tsvs
     }
 
-    sorted_state_graphs: list[Path] = list(sorted(args.state_graph_tsvs, key=lambda v: state_graph_scores[v.name]))
+    sorted_astar_tsvs: list[Path] = list(sorted(args.astar_data_tsvs, key=lambda v: astar_iters[v.name]))
 
-    if not sorted_state_graphs:
-        print("No state graph data given!", file=sys.stderr)
+    if not sorted_astar_tsvs:
+        print("No astar  data given!", file=sys.stderr)
         return 1
 
-    max_score = max(state_graph_scores.values())
+    p = iter_num_regexp.search(sorted_astar_tsvs[0].name).start()
+    prefix = sorted_astar_tsvs[0].name[:p-1]
 
-    for state_graph_path in sorted_state_graphs:
-        score = state_graph_scores[state_graph_path.name]
-        state_df, kv = load_state_graph_data(state_graph_path, score)
-        state_df['rank'] = state_df['node_id'].map(node_ix_to_rank).astype(int)
+    all_dfs = []
+    iter_nums = []
+    for astar_data_path in sorted_astar_tsvs:
+        iter_num = astar_iters[astar_data_path.name]
+        iter_df, kv = load_astar_data(astar_data_path)
+        iter_df['rank'] = iter_df['node_id'].map(node_ix_to_rank).astype(int)
 
-        print("SCORE:", score)
-        print(state_graph_path)
-        print(state_df)
-        print(kv)
+        all_dfs.append(iter_df)
+        iter_nums.append(iter_num)
 
-        create_plot_for_score(g, graph_layout_data, kv['seq'], state_df, score, max_score,
-                              args.output, args.fig_width)
-        print()
+    all_astar_df = pandas.concat(all_dfs, keys=iter_nums, names=("iter_num",))
+
+    create_animation(g, graph_layout_data, kv['seq'], all_astar_df, args.output, prefix, args.fig_width)
+    print()
 
 
-def create_plot_for_score(g, graph_layout_data, sequence, state_df, score, max_score, output_dir, fig_width=None):
+def create_animation(g, graph_layout_data, sequence, all_astar_df, output_dir, prefix, fig_width=None):
 
     num_nodes = len(g)
     max_offset = len(sequence) + 1
@@ -218,85 +219,85 @@ def create_plot_for_score(g, graph_layout_data, sequence, state_df, score, max_s
     fig_width = fig_width if fig_width is not None else int(round(len(xlabels) / 4))
     fig_height = int(round((fig_width * num_nodes) / max_offset))
 
+    max_score = all_astar_df['score'].max()
+
     for row, kind in enumerate(["match", "deletion", "insertion"]):
-        score_df = state_df.loc[[kind]].copy()
-        queued_df = (score_df[score_df['score'] > score]
-                     .set_index(['rank', 'offset']))
-        score_df = (score_df[score_df['score'] <= score]
-                    .set_index(['rank', 'offset']))
+        fig, axes = plt.subplots(1, 3, figsize=(fig_width, fig_height), width_ratios=[1, 8.75, 0.25],
+                                 constrained_layout=True)
 
-        print("Processing score", score, f"({kind})", file=sys.stderr)
-        if len(score_df) > 0:
-            # Only keep cells with lowest score
-            # duplicated = score_df.index.duplicated(keep=False)
-            # if numpy.count_nonzero(duplicated) > 0:
-            #     print("DUPLICATED:", file=sys.stderr)
-            #     print(score_df[duplicated], file=sys.stderr)
+        init_func = functools.partial(
+            draw_graph,
+            g=g,
+            graph_layout_data=graph_layout_data,
+            ax=axes[0]
+        )
 
-            # deduplicated = df[~df.index.duplicated(keep='first')].reset_index()
-            deduplicated = score_df.reset_index()
+        func = functools.partial(
+            make_frame,
+            all_astar_df=all_astar_df,
+            kind=kind,
+            num_nodes=num_nodes,
+            max_offset=max_offset,
+            max_score=max_score,
+            xlabels=xlabels,
+            graph_layout_data=graph_layout_data,
+            axes=axes
+        )
+        animation = FuncAnimation(fig, func, init_func=init_func, frames=all_astar_df.index.unique(level=0), interval=50)
 
-            # Make heatmap DF
-            pivot = deduplicated.pivot(index="rank", columns="offset", values="score")
-            pivot_queued = queued_df.reset_index().pivot(index="rank", columns="offset", values="score")
-
-            # Ensure rows/cols exists even when no data exists for those
-            rows = pivot.index.union(list(range(num_nodes + 1)), sort=True)
-            cols = pivot.columns.union(list(range(max_offset)), sort=True)
-            pivot = pivot.reindex(index=rows, columns=cols).sort_index()
-            pivot.sort_index(axis=1, inplace=True)
-            pivot_queued = pivot_queued.reindex(index=rows, columns=cols).sort_index()
-            pivot_queued.sort_index(axis=1, inplace=True)
-
-            if kind == "match":
-                print(score_df)
-                print(pivot.index)
-                print(pivot.columns)
-                print(pivot)
-
-            fig, axes = make_dp_matrix_plot(g, graph_layout_data, pivot, pivot_queued, max_score,
-                                            xlabels, figsize=(fig_width, fig_height))
-
-            fig.savefig(output_dir / f"score{score}.{kind}.png", dpi=150)
-            plt.close(fig)
+        writer = PillowWriter(fps=5, bitrate=1800)
+        animation.save(output_dir / f'{prefix}.{kind}.gif', writer=writer)
+        plt.close(fig)
 
 
-def make_dp_matrix_plot(g, graph_layout_data: GraphLayoutData, matrix, matrix_queued, max_score, xlabels, figsize):
-    fig, axes = plt.subplots(1, 3, figsize=figsize, width_ratios=[1, 8.75, 0.25],
-                             constrained_layout=True)
-
-    nx.draw(g, pos=graph_layout_data.node_pos, ax=axes[0], node_size=75,
+def draw_graph(g, graph_layout_data, ax):
+    nx.draw(g, pos=graph_layout_data.node_pos, ax=ax, node_size=75,
+            node_color='white', linewidths=1, edgecolors='black',
             labels={n: ndata['symbol'] for n, ndata in g.nodes(data=True)},
             font_size=6)
 
-    seaborn.heatmap(matrix,
-                    cmap="plasma", vmin=0, vmax=max_score,
+    ax.set_axis_on()
+    ax.yaxis.set_visible(True)
+    ax.invert_yaxis()
+    ax.tick_params(axis="y", left=True, labelleft=True)
+    ax.set_ylim(0, len(graph_layout_data.ylabels))
+    ax.set_yticks(graph_layout_data.yticks)
+    ax.set_yticklabels(graph_layout_data.ylabels)
+    ax.set_ylabel("Rank (node)")
+
+
+def make_frame(iter_num, all_astar_df, kind, num_nodes, max_offset, max_score, xlabels, graph_layout_data, axes):
+    num_iter = all_astar_df.index.get_level_values(0).max()
+    print("Processing iter", iter_num, "/", num_iter, f"({kind})")
+    iter_data = all_astar_df.loc[([iter_num], kind), :]
+
+    axes[1].clear()
+    axes[2].clear()
+
+    if len(iter_data) <= 0:
+        return
+
+    pivot = iter_data.pivot(index="rank", columns="offset", values="score")
+
+    # Ensure rows/cols exists even when no data exists for those
+    rows = pivot.index.union(list(range(num_nodes+1)), sort=True)
+    cols = pivot.columns.union(list(range(max_offset+1)), sort=True)
+    pivot = pivot.reindex(index=rows, columns=cols).sort_index()
+    pivot.sort_index(axis=1, inplace=True)
+
+    seaborn.heatmap(pivot,
+                    cmap="turbo", vmin=0, vmax=max_score,
                     xticklabels=xlabels, yticklabels=graph_layout_data.ylabels,
                     annot=True, fmt="g", annot_kws={"fontsize": "x-small"},
-                    ax=axes[1], cbar_ax=axes[2])
-
-    seaborn.heatmap(matrix_queued,
-                    cmap="plasma", vmin=0, vmax=max_score,
-                    xticklabels=xlabels, yticklabels=graph_layout_data.ylabels,
-                    annot=True, fmt="g", annot_kws={"fontsize": "x-small"}, alpha=0.4,
                     ax=axes[1], cbar_ax=axes[2])
 
     for y in graph_layout_data.hlines:
         axes[1].axhline(y, color='black')
 
-    axes[0].set_axis_on()
-    axes[0].yaxis.set_visible(True)
-    axes[0].invert_yaxis()
-    axes[0].tick_params(axis="y", left=True, labelleft=True)
-    axes[0].set_ylim(0, len(graph_layout_data.ylabels))
-    axes[0].set_yticks(graph_layout_data.yticks)
-    axes[0].set_yticklabels(graph_layout_data.ylabels)
-    axes[0].set_ylabel("Rank (node)")
-
     axes[1].set_xticklabels(xlabels, rotation=0)
-    axes[1].sharey(axes[0])
     axes[1].set_yticks(graph_layout_data.yticks)
     axes[1].set_yticklabels(graph_layout_data.ylabels)
+    axes[1].sharey(axes[0])
     axes[1].grid(True, which='both')
     axes[1].set_axisbelow(True)
     axes[1].tick_params(left=False, labelleft=False)
@@ -305,8 +306,6 @@ def make_dp_matrix_plot(g, graph_layout_data: GraphLayoutData, matrix, matrix_qu
     axes[1].invert_yaxis()
 
     axes[2].set_ylabel("Score")
-
-    return fig, axes
 
 
 if __name__ == '__main__':
