@@ -6,6 +6,7 @@ use crate::aligner::dfa::{DepthFirstGreedyAlignment, ExtendResult};
 use crate::aligner::heuristic::AstarHeuristic;
 use crate::aligner::offsets::OffsetType;
 use crate::aligner::scoring::{AlignmentCosts, AlignmentType, Score};
+use crate::bubbles::index::BubbleIndex;
 use crate::debug::DebugOutputWriter;
 use crate::debug::messages::DebugOutputMessage;
 use crate::errors::PoastaError;
@@ -80,6 +81,7 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
     seq: &[u8],
     aln_type: AlignmentType,
     debug_writer: Option<&DebugOutputWriter>,
+    existing_bubbles: Option<(BubbleIndex<G::NodeIndex>, Vec<usize>)>
 ) -> (Score, Alignment<G::NodeIndex>)
     where O: OffsetType,
           C: AlignmentConfig<Costs=Costs>,
@@ -88,9 +90,14 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
           Q: AstarQueue<G::NodeIndex, O>,
           G: AlignableRefGraph,
 {
-    let (aln_graph, mut visited_data, heuristic) = config.init_alignment(ref_graph, seq, aln_type);
-    let mut queue = Q::default();
+    let (aln_graph, mut visited_data, heuristic) =
+        if let Some((bubble_index, dist_to_end)) = existing_bubbles {
+            config.init_alignment_with_existing_bubbles(ref_graph, seq, aln_type, bubble_index, dist_to_end)
+        } else {
+            config.init_alignment(ref_graph, seq, aln_type)
+        };
 
+    let mut queue = Q::default();
     for initial_state in aln_graph.initial_states(ref_graph).into_iter() {
         let h = heuristic.h(&initial_state, AlignState::Match);
         queue.queue_aln_state(initial_state, AlignState::Match, Score::Score(0), h);
@@ -172,6 +179,9 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
         }
     };
 
+    if let Some(debug) = debug_writer {
+        debug.log(DebugOutputMessage::new_from_astar_data(&visited_data));
+    }
 
     let alignment = visited_data.backtrace(ref_graph, &end_node);
     (end_score, alignment)

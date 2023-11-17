@@ -17,6 +17,7 @@ pub use alignment::{AlignedPair, Alignment};
 use scoring::Score;
 use crate::aligner::astar::astar_alignment;
 use crate::aligner::config::AlignmentConfig;
+use crate::bubbles::index::BubbleIndex;
 use crate::debug::DebugOutputWriter;
 
 
@@ -72,13 +73,27 @@ impl<'a, C> PoastaAligner<'a, C>
               G: AlignableRefGraph,
               Seq: AsRef<[u8]>,
     {
-        self.align_u8::<O, _>(ref_graph, seq.as_ref())
+        self.align_u8::<O, _>(ref_graph, seq.as_ref(), None)
+    }
+
+    pub fn align_with_existing_bubbles<O, G, Seq>(
+        &self,
+        ref_graph: &G,
+        seq: &Seq,
+        existing_bubbles: (BubbleIndex<G::NodeIndex>, Vec<usize>),
+    ) -> (Score, Alignment<G::NodeIndex>)
+        where O: OffsetType,
+              G: AlignableRefGraph,
+              Seq: AsRef<[u8]>,
+    {
+        self.align_u8::<O, _>(ref_graph, seq.as_ref(), Some(existing_bubbles))
     }
 
     fn align_u8<O, G>(
         &self,
         ref_graph: &G,
         seq: &[u8],
+        existing_bubbles: Option<(BubbleIndex<G::NodeIndex>, Vec<usize>)>
     ) -> (Score, Alignment<G::NodeIndex>)
     where
         O: OffsetType,
@@ -89,7 +104,8 @@ impl<'a, C> PoastaAligner<'a, C>
             ref_graph,
             seq,
             self.aln_type,
-            self.debug_writer
+            self.debug_writer,
+            existing_bubbles,
         )
     }
 }

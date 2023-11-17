@@ -13,6 +13,7 @@ enum BubbleNode<N> {
 }
 
 
+#[derive(Clone)]
 pub struct BubbleIndex<N> {
     /// Vector indicating whether a node is a bubble entrance
     bubble_entrance: Vec<Option<BubbleNode<N>>>,

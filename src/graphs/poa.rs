@@ -396,7 +396,7 @@ where
     }
 
     fn is_symbol_equal(&self, node: Self::NodeIndex, symbol: u8) -> bool {
-        self.graph[node].symbol == symbol
+        self.end_node == node || self.graph[node].symbol == symbol
     }
 }
 
