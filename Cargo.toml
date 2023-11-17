@@ -5,6 +5,7 @@ edition = "2021"
 
 [profile.release]
 debug = true
+lto = "thin"
 
 [dependencies]
 ahash = { version = "0.8.3" }
