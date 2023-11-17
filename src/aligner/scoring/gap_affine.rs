@@ -156,18 +156,19 @@ impl AlignmentGraph for AffineAlignmentGraph {
                     }
 
                     // Open deletion
+                    let score_delta = if ref_succ == ref_graph.end_node() { 0 } else { self.costs.cost_gap_open + self.costs.cost_gap_extend };
                     let new_node_del = AlignmentGraphNode::new(ref_succ, node.offset());
-                    let new_score_del = score + self.costs.cost_gap_open + self.costs.cost_gap_extend;
+                    let new_score_del = score + score_delta;
                     if visited_data
                         .update_score_if_lower(new_score_del, &new_node_del, AlignState::Deletion, node, state)
                     {
-                        f(self.costs.cost_gap_open + self.costs.cost_gap_extend, new_node_del, AlignState::Deletion);
+                        f(score_delta, new_node_del, AlignState::Deletion);
 
                         // Also immediately traverse zero-cost D->M edge
                         if visited_data
                             .update_score_if_lower(new_score_del, &new_node_del, AlignState::Match, &new_node_del, AlignState::Deletion)
                         {
-                            f(self.costs.cost_gap_open + self.costs.cost_gap_extend, new_node_del, AlignState::Match);
+                            f(score_delta, new_node_del, AlignState::Match);
                         }
                     }
                 }
@@ -207,17 +208,19 @@ impl AlignmentGraph for AffineAlignmentGraph {
             },
             AlignState::Deletion => {
                 for ref_succ in ref_graph.successors(node.node()) {
+                    let score_delta = if ref_succ == ref_graph.end_node() { 0 } else { self.costs.gap_extend() };
+
                     // Extend deletion
                     let new_node_del = AlignmentGraphNode::new(ref_succ, node.offset());
-                    let new_score_del = score + self.costs.cost_gap_extend;
+                    let new_score_del = score + score_delta;
                     if visited_data.update_score_if_lower(new_score_del, &new_node_del, AlignState::Deletion, node, state) {
-                        f(self.costs.cost_gap_extend, new_node_del, AlignState::Deletion);
+                        f(score_delta, new_node_del, AlignState::Deletion);
 
                         // Also immediately traverse zero-cost D->M edge
                         if visited_data
                             .update_score_if_lower(new_score_del, &new_node_del, AlignState::Match, &new_node_del, AlignState::Deletion)
                         {
-                            f(self.costs.cost_gap_extend, new_node_del, AlignState::Match);
+                            f(score_delta, new_node_del, AlignState::Match);
                         }
                     }
                 }
