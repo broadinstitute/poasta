@@ -718,7 +718,7 @@ impl<N, O> AstarVisited<N, O> for AffineAstarData<N, O>
 ///
 /// Keep queued alignment graph nodes in different alignment states
 /// in different vectors to reduce branch prediction misses in the main A* loop.
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct AffineQueueLayer<N, O>
 where
     N: NodeIndexType,
@@ -762,6 +762,25 @@ impl<N, O> QueueLayer for AffineQueueLayer<N, O>
         self.queued_states_m.is_empty()
             && self.queued_states_d.is_empty()
             && self.queued_states_i.is_empty()
+    }
+
+    fn capacity(&self) -> usize {
+        self.queued_states_m.capacity()
+            + self.queued_states_d.capacity()
+            + self.queued_states_i.capacity()
+    }
+}
+
+impl<N, O> Default for AffineQueueLayer<N, O>
+where N: NodeIndexType,
+      O: OffsetType,
+{
+    fn default() -> Self {
+        Self {
+            queued_states_m: Vec::with_capacity(16),
+            queued_states_i: Vec::with_capacity(8),
+            queued_states_d: Vec::with_capacity(8)
+        }
     }
 }
 

@@ -38,11 +38,6 @@ where
     }
 
     #[inline]
-    fn into_state_graph_node(self) -> AlignmentGraphNode<N, O> {
-        self.0
-    }
-
-    #[inline]
     fn children_iter(&self) -> RefMut<I> {
         self.1.borrow_mut()
     }

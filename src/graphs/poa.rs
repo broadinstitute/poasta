@@ -119,7 +119,7 @@ where
     pub(crate) fn add_edge(&mut self, s: POANodeIndex<Ix>, t: POANodeIndex<Ix>, sequence_id: usize, weight: usize) {
         // If edge exists, update sequence ID and weight of the existing one
         if let Some(e) = self.graph.find_edge(s, t) {
-            let mut edge_data = self.graph.edge_weight_mut(e).unwrap();
+            let edge_data = self.graph.edge_weight_mut(e).unwrap();
             edge_data.sequence_ids.push(sequence_id);
             edge_data.weight += weight;
         } else {
