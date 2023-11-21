@@ -55,6 +55,10 @@ impl AstarHeuristic for MinimumGapCostAffine {
               O: OffsetType,
     {
         let dist_to_exit =  self.dist_to_end[aln_node.node().index()].saturating_sub(1);
+        if dist_to_exit == 0 && aln_node.offset().as_usize() == self.seq_length {
+            return 0;
+        }
+
         let target_offset = aln_node.offset().as_usize() + dist_to_exit;
 
         let gap_length;

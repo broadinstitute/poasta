@@ -65,11 +65,6 @@ where
         }
     }
 
-    #[inline(always)]
-    pub(crate) fn get_inv_rev_postorder(&self) -> &[G::NodeIndex] {
-        &self.inv_rev_postorder
-    }
-
     pub fn iter(&self) -> SuperbubbleIterator<'_, G> {
         SuperbubbleIterator::new(self)
     }

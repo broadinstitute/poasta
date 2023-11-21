@@ -44,7 +44,6 @@ where
 {
     pub symbol: u8,
     pub aligned_nodes: Vec<N>,
-    pub rank: usize
 }
 
 impl<N> POANodeData<N>
@@ -55,7 +54,6 @@ where
         POANodeData {
             symbol,
             aligned_nodes: Vec::new(),
-            rank: 0
         }
     }
 }
@@ -318,19 +316,16 @@ where
 
         self.topological_sorted = toposort(&self.graph, None)?;
 
-        for (rank, node) in self.topological_sorted.iter().enumerate() {
-            self.graph[*node].rank = rank;
-        }
-
         Ok(())
     }
 
-    pub fn get_node_by_rank(&self, rank: usize) -> POANodeIndex<Ix> {
-        self.topological_sorted[rank]
-    }
+    pub fn get_node_ranks(&self) -> Vec<usize> {
+        let mut ranks = vec![0; self.topological_sorted.len()];
+        for (rank, node) in self.topological_sorted.iter().enumerate() {
+            ranks[NodeIndexType::index(node)] = rank;
+        }
 
-    pub fn get_node_rank(&self, node: POANodeIndex<Ix>) -> usize {
-        self.graph[node].rank
+        ranks
     }
 
 }
@@ -344,18 +339,22 @@ where
     type PredecessorIterator<'a> = Neighbors<'a, POAEdgeData, Ix>;
     type SuccessorIterator<'a> = Neighbors<'a, POAEdgeData, Ix>;
 
+    #[inline]
     fn all_nodes(&self) -> Self::NodeIterator<'_> {
         self.graph.node_indices()
     }
 
+    #[inline]
     fn node_count(&self) -> usize {
         self.graph.node_count() - 2
     }
 
+    #[inline]
     fn node_count_with_start_and_end(&self) -> usize {
         self.graph.node_count()
     }
 
+    #[inline]
     fn edge_count(&self) -> usize {
         // Exclude edges from start and end node
         self.graph.edge_count()
@@ -363,40 +362,54 @@ where
             - self.graph.neighbors_directed(self.end_node, Incoming).count()
     }
 
+    #[inline]
     fn start_node(&self) -> Self::NodeIndex {
         self.start_node
     }
 
+    #[inline]
     fn end_node(&self) -> Self::NodeIndex {
         self.end_node
     }
 
+    #[inline]
     fn predecessors(&self, node: Self::NodeIndex) -> Self::PredecessorIterator<'_> {
         self.graph.neighbors_directed(node, Incoming)
     }
 
+    #[inline]
     fn successors(&self, node: Self::NodeIndex) -> Self::SuccessorIterator<'_> {
         self.graph.neighbors(node)
     }
 
+    #[inline]
     fn in_degree(&self, node: Self::NodeIndex) -> usize {
         self.graph.neighbors_directed(node, Incoming).count()
     }
 
+    #[inline]
     fn out_degree(&self, node: Self::NodeIndex) -> usize {
         self.graph.neighbors_directed(node, Outgoing).count()
     }
 
+    #[inline]
     fn is_end(&self, node: Self::NodeIndex) -> bool {
         self.end_node == node
     }
 
+    #[inline]
     fn get_symbol(&self, node: Self::NodeIndex) -> char {
         char::from(self.graph[node].symbol)
     }
 
+    #[inline]
     fn is_symbol_equal(&self, node: Self::NodeIndex, symbol: u8) -> bool {
         self.end_node == node || self.graph[node].symbol == symbol
+    }
+
+    #[inline]
+    fn get_node_ordering(&self) -> Vec<usize> {
+        self.get_node_ranks()
     }
 }
 

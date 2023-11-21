@@ -52,8 +52,8 @@ pub trait AstarVisited<N, O>
         N: NodeIndexType,
         O: OffsetType,
 {
-    fn get_score(&self, aln_node: AlignmentGraphNode<N, O>, aln_state: AlignState) -> Score;
-    fn set_score(&mut self, aln_node: AlignmentGraphNode<N, O>, aln_state: AlignState, score: Score);
+    fn get_score(&self, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> Score;
+    fn set_score(&mut self, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState, score: Score);
 
     fn visit(&mut self, score: Score, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState);
 
@@ -61,11 +61,11 @@ pub trait AstarVisited<N, O>
 
     fn update_score_if_lower(
         &mut self,
-        score: Score,
         aln_node: &AlignmentGraphNode<N, O>,
         aln_state: AlignState,
         parent: &AlignmentGraphNode<N, O>,
-        parent_state: AlignState
+        parent_state: AlignState,
+        score: Score,
     ) -> bool;
 
     fn backtrace<G>(&self, ref_graph: &G, aln_node: &AlignmentGraphNode<N, O>) -> Alignment<N>
@@ -101,7 +101,7 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
     for initial_state in aln_graph.initial_states(ref_graph).into_iter() {
         let h = heuristic.h(&initial_state, AlignState::Match);
         queue.queue_aln_state(initial_state, AlignState::Match, Score::Score(0), h);
-        visited_data.set_score(initial_state, AlignState::Match, Score::Score(0));
+        visited_data.set_score(&initial_state, AlignState::Match, Score::Score(0));
     }
 
     let (end_score, end_node) = 'main: loop {
@@ -109,7 +109,7 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
             panic!("Could not align sequence! Empty queue before reaching end!")
         };
 
-        if score > visited_data.get_score(aln_node, aln_state) {
+        if score > visited_data.get_score(&aln_node, aln_state) {
             continue;
         }
 

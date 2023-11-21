@@ -182,8 +182,8 @@ where
         while let Some(child) = parent.children_iter().next() {
             if child == self.ref_graph.end_node() {
                 let aln_termination = AlignmentGraphNode::new(child, parent.offset());
-                astar_visited.update_score_if_lower(self.score, &aln_termination, AlignState::Match,
-                                                    parent.aln_graph_node(), AlignState::Match);
+                astar_visited.update_score_if_lower(&aln_termination, AlignState::Match,
+                                                    parent.aln_graph_node(), AlignState::Match, self.score);
 
                 return Successor::RefGraphEnd(aln_termination);
             }
@@ -201,8 +201,8 @@ where
 
             if self.ref_graph.is_symbol_equal(child, self.seq[child_offset.as_usize()-1]) {
                 if astar_visited
-                    .update_score_if_lower(self.score, &child_node, AlignState::Match,
-                                           parent.aln_graph_node(), AlignState::Match)
+                    .update_score_if_lower(&child_node, AlignState::Match,
+                                           parent.aln_graph_node(), AlignState::Match, self.score)
                 {
                     return Successor::Match(child_node)
                 }

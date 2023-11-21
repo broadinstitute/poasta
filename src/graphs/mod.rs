@@ -48,4 +48,6 @@ pub trait AlignableRefGraph {
 
     fn get_symbol(&self, node: Self::NodeIndex) -> char;
     fn is_symbol_equal(&self, node: Self::NodeIndex, symbol: u8) -> bool;
+
+    fn get_node_ordering(&self) -> Vec<usize>;
 }
