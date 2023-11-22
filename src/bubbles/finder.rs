@@ -173,6 +173,7 @@ where
 mod tests {
     use rustc_hash::FxHashSet;
     use crate::bubbles::finder::SuperbubbleFinder;
+    use crate::graphs::AlignableRefGraph;
     use crate::graphs::mock::{create_test_graph1, create_test_graph2};
 
 
@@ -181,6 +182,7 @@ mod tests {
         let g1 = create_test_graph1();
         let finder = SuperbubbleFinder::new(&g1);
         let bubbles1: FxHashSet<_> = finder.iter()
+            .filter(|(s, t)| *s != g1.end_node() && *t != g1.end_node())
             .map(|(n1, n2)| (g1[n1], g1[n2]))
             .collect();
 
@@ -190,7 +192,7 @@ mod tests {
             (4, 5),
             (5, 6),
             (7, 8),
-            (8, 9)
+            (8, 9),
         ]));
 
         let g2 = create_test_graph2();
@@ -200,7 +202,7 @@ mod tests {
             .collect();
 
         assert_eq!(bubbles2, FxHashSet::from_iter([
-            (8, 14),
+            (8, 15),
             (11, 12),
             (5, 7),
             (3, 8),

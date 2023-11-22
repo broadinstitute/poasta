@@ -74,9 +74,6 @@ where
 
     /// For each node, the distance to the graph end node
     node_dist_to_end: Vec<usize>,
-
-    /// Which nodes have we already processed
-    visited: FxHashSet<G::NodeIndex>,
 }
 
 impl<'a, G> BubbleIndexBuilder<'a, G>
@@ -101,7 +98,6 @@ where
             bubble_exit: bubble_exits,
             node_bubble_map: vec![Vec::default(); graph.node_count_with_start_and_end()],
             node_dist_to_end: vec![0; graph.node_count_with_start_and_end()],
-            visited: FxHashSet::default(),
         }
     }
 
@@ -117,7 +113,8 @@ where
             (self.graph.end_node(), 0usize, end_node_bubblestack)
         ].into();
 
-        self.visited.insert(self.graph.end_node());
+        let mut visited = FxHashSet::default();
+        visited.insert(self.graph.end_node());
 
         while !queue.is_empty() {
             let (curr, dist_from_end, bubble_stack) = queue.pop_front().unwrap();
@@ -132,7 +129,7 @@ where
             self.node_dist_to_end[curr.index()] = dist_from_end;
 
             for pred in self.graph.predecessors(curr) {
-                if !self.visited.contains(&pred) {
+                if !visited.contains(&pred) {
                     let new_dist_from_end = dist_from_end + 1;
                     let mut new_bubble_stack = bubble_stack.clone();
 
@@ -148,7 +145,7 @@ where
                         new_bubble_stack.push((new_dist_from_end, pred));
                     }
 
-                    self.visited.insert(pred);
+                    visited.insert(pred);
                     queue.push_back((pred, new_dist_from_end, new_bubble_stack));
                 }
             }
@@ -189,6 +186,7 @@ where
 mod tests {
     use petgraph::graph::NodeIndex;
     use crate::bubbles::index::NodeBubbleMap;
+    use crate::graphs::AlignableRefGraph;
     use crate::graphs::mock::{create_test_graph1, create_test_graph2};
     use super::BubbleIndexBuilder;
 
@@ -197,7 +195,7 @@ mod tests {
     #[test]
     pub fn test_bubble_map_builder() {
         let graph1 = create_test_graph1();
-        let index1 = BubbleIndexBuilder::new(&graph1)
+        let (index1, _) = BubbleIndexBuilder::new(&graph1)
             .build();
 
         let truth1 = [
@@ -213,11 +211,20 @@ mod tests {
         ];
 
         for n in graph1.node_indices() {
-            assert_eq!(index1.get_node_bubbles(n), &truth1[n.index()])
+            if n == graph1.end_node() {
+                continue;
+            }
+
+            let bubbles_no_end_node: Vec<_> = index1.get_node_bubbles(n)
+                .iter()
+                .filter(|b| b.bubble_exit != graph1.end_node())
+                .copied()
+                .collect();
+            assert_eq!(&bubbles_no_end_node, &truth1[n.index()])
         }
 
         let graph2 = create_test_graph2();
-        let index2 = BubbleIndexBuilder::new(&graph2)
+        let (index2, _) = BubbleIndexBuilder::new(&graph2)
             .build();
 
         let truth2 = [
@@ -228,14 +235,14 @@ mod tests {
             vec![NodeBubbleMap::new(NIx::new(6), 2), NodeBubbleMap::new(NIx::new(7), 3)],
             vec![NodeBubbleMap::new(NIx::new(7), 2), NodeBubbleMap::new(NIx::new(6), 1)],
             vec![NodeBubbleMap::new(NIx::new(7), 1), NodeBubbleMap::new(NIx::new(6), 0)],
-            vec![NodeBubbleMap::new(NIx::new(13), 1), NodeBubbleMap::new(NIx::new(7), 0)],
+            vec![NodeBubbleMap::new(NIx::new(14), 1), NodeBubbleMap::new(NIx::new(7), 0)],
             vec![NodeBubbleMap::new(NIx::new(7), 3), NodeBubbleMap::new(NIx::new(6), 2)],
             vec![NodeBubbleMap::new(NIx::new(7), 2), NodeBubbleMap::new(NIx::new(6), 1)],
             vec![NodeBubbleMap::new(NIx::new(11), 1), NodeBubbleMap::new(NIx::new(7), 2)],
             vec![NodeBubbleMap::new(NIx::new(7), 1), NodeBubbleMap::new(NIx::new(11), 0)],
-            vec![NodeBubbleMap::new(NIx::new(13), 1)],
-            vec![NodeBubbleMap::new(NIx::new(13), 0)],
-            vec![NodeBubbleMap::new(NIx::new(13), 1)],
+            vec![NodeBubbleMap::new(NIx::new(14), 1)],
+            vec![NodeBubbleMap::new(NIx::new(14), 1)],
+            vec![NodeBubbleMap::new(NIx::new(14), 0)],
         ];
 
         for n in graph2.node_indices() {
