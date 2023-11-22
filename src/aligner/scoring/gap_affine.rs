@@ -385,7 +385,7 @@ struct VisitedCellAffine<N, O>
     visited_d: AffineVisitedNodeData<N, O>
 }
 
-struct BlockedVisitedStorageAffine<N, O, const B: usize = 8>
+struct BlockedVisitedStorageAffine<N, O, const B: usize = 16>
     where N: NodeIndexType,
           O: OffsetType,
 {
@@ -410,18 +410,15 @@ impl<N, O, const B: usize> BlockedVisitedStorageAffine<N, O, B>
     }
 
     #[inline(always)]
-    pub fn calc_block_ix(&self, aln_node: &AlignmentGraphNode<N, O>) -> (usize, O, usize, O) {
-        let b_as_o = O::new(B);
-
+    pub fn calc_block_ix(&self, aln_node: &AlignmentGraphNode<N, O>) -> (usize, O, usize, usize) {
         let node_rank = self.node_ranks[aln_node.node().index()];
-        let node_block = node_rank / B;
-        let offset_block = aln_node.offset() / b_as_o;
+        let node_block = node_rank >> B.ilog2();
 
-        let base_offset_node = node_block * B;
-        let base_offset_qry = offset_block * b_as_o;
+        let offset = aln_node.offset().as_usize();
+        let offset_block = O::new(offset >> B.ilog2());
 
-        let within_block_node = node_rank - base_offset_node;
-        let within_block_qry = aln_node.offset() - base_offset_qry;
+        let within_block_node = node_rank & (B-1);
+        let within_block_qry = offset & (B-1);
 
         (node_block, offset_block, within_block_node, within_block_qry)
     }
@@ -433,7 +430,7 @@ impl<N, O, const B: usize> BlockedVisitedStorageAffine<N, O, B>
 
         self.node_blocks[node_block].get(&offset_block)
             .map(|v| {
-                let cell_data = &v[within_block_node][within_block_qry.as_usize()];
+                let cell_data = &v[within_block_node][within_block_qry];
                 let node = match aln_state {
                     AlignState::Match => &cell_data.visited_m,
                     AlignState::Insertion => &cell_data.visited_i,
@@ -454,7 +451,7 @@ impl<N, O, const B: usize> BlockedVisitedStorageAffine<N, O, B>
         let v = self.node_blocks[node_block].entry(offset_block)
             .or_insert_with(|| [[VisitedCellAffine::default(); B]; B]);
 
-        let cell_data = &mut v[within_block_node][within_block_qry.as_usize()];
+        let cell_data = &mut v[within_block_node][within_block_qry];
         match aln_state {
             AlignState::Match => cell_data.visited_m.score = score,
             AlignState::Insertion => cell_data.visited_i.score = score,
@@ -464,7 +461,7 @@ impl<N, O, const B: usize> BlockedVisitedStorageAffine<N, O, B>
     }
 
     #[inline]
-    pub fn update_score_if_lower(
+    pub fn update_score_if_lower_block(
         &mut self,
         aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState,
         parent: &AlignmentGraphNode<N, O>, parent_state: AlignState,
@@ -476,8 +473,7 @@ impl<N, O, const B: usize> BlockedVisitedStorageAffine<N, O, B>
         let v = self.node_blocks[node_block].entry(offset_block)
             .or_insert_with(|| [[VisitedCellAffine::default(); B]; B]);
 
-        let cell_data = &mut v[within_block_node][within_block_qry.as_usize()];
-        let mut is_lower = false;
+        let cell_data = &mut v[within_block_node][within_block_qry];
 
         let node = match aln_state {
             AlignState::Match => &mut cell_data.visited_m,
@@ -490,7 +486,8 @@ impl<N, O, const B: usize> BlockedVisitedStorageAffine<N, O, B>
             Ordering::Less => {
                 node.score = score;
                 node.prev = Some((*parent, parent_state));
-                is_lower = true;
+
+                true
             },
             Ordering::Equal => {
                 // Check if we need to update back trace
@@ -499,11 +496,11 @@ impl<N, O, const B: usize> BlockedVisitedStorageAffine<N, O, B>
                         *prev_state = (*parent, parent_state);
                     }
                 }
-            },
-            Ordering::Greater => (),
-        }
 
-        is_lower
+                false
+            },
+            Ordering::Greater => false,
+        }
     }
 
     pub fn get_backtrace(
@@ -516,7 +513,7 @@ impl<N, O, const B: usize> BlockedVisitedStorageAffine<N, O, B>
 
         self.node_blocks[node_block].get(&offset_block)
             .and_then(|v| {
-                let cell_data = &v[within_block_node][within_block_qry.as_usize()];
+                let cell_data = &v[within_block_node][within_block_qry];
                 let node = match aln_state {
                     AlignState::Match => &cell_data.visited_m,
                     AlignState::Insertion => &cell_data.visited_i,
@@ -662,7 +659,7 @@ impl<N, O> AstarVisited<N, O> for AffineAstarData<N, O>
         parent: &AlignmentGraphNode<N, O>, parent_state: AlignState,
         score: Score
     ) -> bool {
-        self.visited.update_score_if_lower(aln_node, aln_state, parent, parent_state, score)
+        self.visited.update_score_if_lower_block(aln_node, aln_state, parent, parent_state, score)
     }
 
     fn backtrace<G>(&self, ref_graph: &G, aln_node: &AlignmentGraphNode<N, O>) -> Alignment<N>
@@ -675,6 +672,8 @@ impl<N, O> AstarVisited<N, O> for AffineAstarData<N, O>
         let mut alignment = Alignment::new();
 
         while let Some((bt_node, bt_state)) = self.get_backtrace(&curr, curr_state) {
+            // If BT points towards indel, update the backtrace again to prevent double
+            // using (node, query) pairs, since closing of indels is a zero cost edge.
             if curr_state == AlignState::Match && (*bt_state == AlignState::Insertion || *bt_state == AlignState::Deletion) {
                 curr = *bt_node;
                 curr_state = *bt_state;

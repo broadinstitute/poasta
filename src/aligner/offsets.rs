@@ -1,11 +1,13 @@
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::ops::{BitAnd, Not, Shr};
 
 use num::{FromPrimitive, Unsigned, One, Bounded};
 use num::traits::{SaturatingAdd, SaturatingSub};
 
-pub trait OffsetType: FromPrimitive + Unsigned + PartialEq + Eq +
-    PartialOrd + Ord + Default + Copy + Hash + Debug + Bounded + SaturatingSub + SaturatingAdd
+pub trait OffsetType: FromPrimitive + Unsigned + PartialEq + Eq
+    + PartialOrd + Ord + Default + Copy + Hash + Debug + Bounded + SaturatingSub + SaturatingAdd
+    + Not<Output=Self> + BitAnd<Output=Self> + Shr<Output=Self>
 {
     fn new(value: usize) -> Self;
     fn as_usize(&self) -> usize;
