@@ -81,3 +81,31 @@ impl AstarHeuristic for MinimumGapCostAffine {
         self.costs.gap_cost(aln_state, gap_length)
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::AstarHeuristic;
+    use crate::aligner::aln_graph::{AlignmentGraphNode, AlignState};
+    use crate::aligner::heuristic::MinimumGapCostAffine;
+    use crate::aligner::scoring::GapAffine;
+
+    #[test]
+    fn test_min_gap_cost() {
+        let costs = GapAffine::new(4, 2, 6);
+
+        let heuristic = MinimumGapCostAffine::new(costs, vec![5], 10);
+
+        let node1 = AlignmentGraphNode::new(0u32, 2u32);
+        assert_eq!(heuristic.h(&node1, AlignState::Match), 14);
+        assert_eq!(heuristic.h(&node1, AlignState::Deletion), 14);
+        // If already in insertion state, we wouldn't need to incur the gap-open cost
+        assert_eq!(heuristic.h(&node1, AlignState::Insertion), 8);
+
+        let node2 = AlignmentGraphNode::new(0u32, 7u32);
+        assert_eq!(heuristic.h(&node2, AlignState::Match), 8);
+        // If already in deletion state, we wouldn't need to incur the gap-open cost
+        assert_eq!(heuristic.h(&node2, AlignState::Deletion), 2);
+        assert_eq!(heuristic.h(&node2, AlignState::Insertion), 8);
+    }
+}
