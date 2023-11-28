@@ -576,8 +576,6 @@ where N: NodeIndexType,
     visited: BlockedVisitedStorageAffine<N, O>,
 
     bubbles_reached_m: ReachedBubbleExits<GapAffine, O>,
-    // bubbles_reached_i: ReachedBubbleExits<GapAffine, O>,
-    bubbles_reached_d: ReachedBubbleExits<GapAffine, O>,
 }
 
 impl<N, O> AffineAstarData<N, O>
@@ -590,10 +588,7 @@ impl<N, O> AffineAstarData<N, O>
         Self {
             bubble_index,
             visited: BlockedVisitedStorageAffine::new(ref_graph),
-
-            bubbles_reached_m: ReachedBubbleExits::new(costs, AlignState::Match, ref_graph),
-            // bubbles_reached_i: ReachedBubbleExits::new(costs, AlignState::Insertion, ref_graph),
-            bubbles_reached_d: ReachedBubbleExits::new(costs, AlignState::Deletion, ref_graph),
+            bubbles_reached_m: ReachedBubbleExits::new(costs, ref_graph),
         }
     }
 
@@ -621,34 +616,16 @@ impl<N, O> AstarVisited<N, O> for AffineAstarData<N, O>
         self.visited.set_score(aln_node, aln_state, score)
     }
 
-    fn visit(&mut self, score: Score, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) {
+    fn visit(&mut self, score: Score, aln_node: &AlignmentGraphNode<N, O>, _: AlignState) {
         // eprintln!("VISIT: {aln_node:?} ({aln_state:?}), score: {score}");
 
-        if aln_state != AlignState::Insertion && self.bubble_index.is_exit(aln_node.node()) {
-            let bubble_map = match aln_state {
-                AlignState::Match => &mut self.bubbles_reached_m,
-                AlignState::Insertion => unreachable!(),
-                AlignState::Deletion => &mut self.bubbles_reached_d,
-                AlignState::Insertion2 | AlignState::Deletion2 => panic!("Invalid gap-affine alignment state {aln_state:?}")
-            };
-
-            bubble_map.mark_reached(aln_node.node(), aln_node.offset(), score);
+        if self.bubble_index.is_exit(aln_node.node()) {
+            self.bubbles_reached_m.mark_reached(aln_node.node(), aln_node.offset(), score);
         }
     }
 
     #[inline]
-    fn prune(&self, score: Score, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> bool {
-        // if aln_state == AlignState::Insertion
-        //     && !self.bubbles_reached_i.can_improve_alignment(&self.bubble_index, aln_node, score) {
-        //     return true
-        // }
-
-        if aln_state == AlignState::Deletion
-            && !self.bubbles_reached_d.can_improve_alignment(&self.bubble_index, aln_node, score) {
-            return true
-        }
-
-
+    fn prune(&self, score: Score, aln_node: &AlignmentGraphNode<N, O>, _: AlignState) -> bool {
         !self.bubbles_reached_m.can_improve_alignment(&self.bubble_index, aln_node, score)
     }
 
