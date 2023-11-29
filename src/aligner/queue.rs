@@ -13,6 +13,7 @@ pub trait QueueLayer : Default + Clone {
     fn capacity(&self) -> usize;
 }
 
+const MAX_REUSABLE_CAPACITY: usize = 4096;
 
 /// Layered (bucket) queue of items
 ///
@@ -21,6 +22,7 @@ pub struct LayeredQueue<L> {
     layers: VecDeque<L>,
     layer_min: usize,
     reusable_layers: Vec<L>,
+    reusable_capacity: usize,
 }
 
 impl<L> LayeredQueue<L>
@@ -43,7 +45,9 @@ impl<L> LayeredQueue<L>
 
                 let mut num_added = 0;
                 for _ in 0..std::cmp::min(self.reusable_layers.len(), diff) {
-                    self.layers.push_front(self.reusable_layers.pop().unwrap());
+                    let new_layer = self.reusable_layers.pop().unwrap();
+                    self.reusable_capacity -= new_layer.capacity();
+                    self.layers.push_front(new_layer);
                     num_added += 1;
                 }
 
@@ -55,7 +59,9 @@ impl<L> LayeredQueue<L>
             } else if priority >= layer_max {
                 let diff = priority - layer_max + 1;
                 for _ in 0..std::cmp::min(self.reusable_layers.len(), diff) {
-                    self.layers.push_back(self.reusable_layers.pop().unwrap());
+                    let new_layer = self.reusable_layers.pop().unwrap();
+                    self.reusable_capacity -= new_layer.capacity();
+                    self.layers.push_back(new_layer);
                 }
 
                 self.layers.resize(priority - self.layer_min + 1, L::default());
@@ -76,7 +82,8 @@ impl<L> LayeredQueue<L>
 
                 // Retain empty layers because we can reuse our hard-fought allocated memory
                 // for new layers
-                if popped_layer.capacity() > 32 {
+                if popped_layer.capacity() > 32 && self.reusable_capacity < MAX_REUSABLE_CAPACITY {
+                    self.reusable_capacity += popped_layer.capacity();
                     self.reusable_layers.push(popped_layer)
                 }
                 self.layer_min += 1;
@@ -97,6 +104,7 @@ impl<L> Default for LayeredQueue<L>
             layers: VecDeque::with_capacity(1024),
             layer_min: 0,
             reusable_layers: Vec::with_capacity(32),
+            reusable_capacity: 0,
         }
     }
 }
