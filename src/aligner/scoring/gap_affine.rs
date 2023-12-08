@@ -63,6 +63,10 @@ impl AlignmentCosts for GapAffine {
 
     #[inline]
     fn gap_cost(&self, current_state: AlignState, length: usize) -> usize {
+        if length == 0 {
+            return 0
+        }
+
         let gap_open = match current_state {
             AlignState::Insertion | AlignState::Deletion => 0,
             AlignState::Match => self.cost_gap_open,

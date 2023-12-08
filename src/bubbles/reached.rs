@@ -104,5 +104,61 @@ where
 
         true
     }
+}
 
+
+#[cfg(test)]
+mod tests {
+    use petgraph::graph::NodeIndex;
+    use crate::aligner::aln_graph::AlignmentGraphNode;
+    use crate::aligner::scoring::{GapAffine, Score};
+    use crate::bubbles::index::NodeBubbleMap;
+    use crate::bubbles::reached::ReachedBubbleExits;
+    use crate::graphs::mock::create_test_graph1;
+
+    #[test]
+    fn test_is_able_to_improve_bubble() {
+        let g = create_test_graph1();
+
+        let mut reached = ReachedBubbleExits::new(
+            GapAffine::new(4, 2, 6),
+            &g
+        );
+
+        reached.mark_reached(NodeIndex::<u32>::new(3), 5u32, Score::Score(4));
+
+        let bubble_map = NodeBubbleMap::new(NodeIndex::<u32>::new(3), 3);
+
+        // Score of 4 improves over opening a deletion from bubble exit
+        assert!(reached.can_improve_bubble(
+            &bubble_map, &AlignmentGraphNode::new(NodeIndex::<u32>::new(0), 0u32), Score::Score(4),
+        ));
+
+        // Score of 14 and 16 do not improve over opening a deletion from bubble exit
+        assert!(!reached.can_improve_bubble(
+            &bubble_map, &AlignmentGraphNode::new(NodeIndex::<u32>::new(0), 0u32), Score::Score(14),
+        ));
+        assert!(!reached.can_improve_bubble(
+            &bubble_map, &AlignmentGraphNode::new(NodeIndex::<u32>::new(0), 0u32), Score::Score(16),
+        ));
+
+        // Would reach bubble exit at same score and offset
+        assert!(!reached.can_improve_bubble(
+            &bubble_map, &AlignmentGraphNode::new(NodeIndex::<u32>::new(0), 2u32), Score::Score(4),
+        ));
+
+        // Improves over opening an insertion from bubble exit
+        assert!(reached.can_improve_bubble(
+            &bubble_map, &AlignmentGraphNode::new(NodeIndex::<u32>::new(0), 4u32), Score::Score(4),
+        ));
+
+        // Score of 14 and 16 do not improve over opening an insertion from bubble exit
+        assert!(!reached.can_improve_bubble(
+            &bubble_map, &AlignmentGraphNode::new(NodeIndex::<u32>::new(0), 4u32), Score::Score(14),
+        ));
+        assert!(!reached.can_improve_bubble(
+            &bubble_map, &AlignmentGraphNode::new(NodeIndex::<u32>::new(0), 4u32), Score::Score(14),
+        ));
+
+    }
 }
