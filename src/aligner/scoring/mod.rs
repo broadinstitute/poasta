@@ -60,22 +60,22 @@ pub enum Score {
 
 impl PartialOrd for Score {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        match self {
-            Self::Score(score) => match other {
-                Self::Score(other_score) => score.partial_cmp(other_score),
-                Self::Unvisited => Some(Ordering::Less),
-            },
-            Self::Unvisited => match other {
-                Self::Score(_) => Some(Ordering::Greater),
-                Self::Unvisited => Some(Ordering::Equal)
-            }
-        }
+        Some(self.cmp(other))
     }
 }
 
 impl Ord for Score {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap()
+        match self {
+            Self::Score(score) => match other {
+                Self::Score(other_score) => score.cmp(other_score),
+                Self::Unvisited => Ordering::Less,
+            },
+            Self::Unvisited => match other {
+                Self::Score(_) => Ordering::Greater,
+                Self::Unvisited => Ordering::Equal
+            }
+        }
     }
 }
 
