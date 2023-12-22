@@ -1,19 +1,12 @@
 use crate::aligner::aln_graph::{AlignmentGraphNode, AlignState};
 use crate::aligner::offsets::OffsetType;
 use crate::aligner::scoring::{AlignmentCosts, GapAffine};
-use crate::bubbles::index::BubbleIndex;
 use crate::graphs::NodeIndexType;
 
 pub trait AstarHeuristic {
     fn h<N, O>(&self, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> usize
         where N: NodeIndexType,
               O: OffsetType;
-}
-
-pub trait WithBubbleIndex<N>
-    where N: NodeIndexType,
-{
-    fn get_bubble_index(&self) -> &BubbleIndex<N>;
 }
 
 /// A* heuristic that always returns 0, such that
@@ -107,5 +100,11 @@ mod tests {
         // If already in deletion state, we wouldn't need to incur the gap-open cost
         assert_eq!(heuristic.h(&node2, AlignState::Deletion), 2);
         assert_eq!(heuristic.h(&node2, AlignState::Insertion), 8);
+
+        let node3 = AlignmentGraphNode::new(0u32, 6u32);
+        assert_eq!(heuristic.h(&node3, AlignState::Match), 0);
+        // If already in deletion state, we wouldn't need to incur the gap-open cost
+        assert_eq!(heuristic.h(&node3, AlignState::Deletion), 0);
+        assert_eq!(heuristic.h(&node3, AlignState::Insertion), 0);
     }
 }

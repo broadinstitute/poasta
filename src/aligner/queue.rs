@@ -108,3 +108,58 @@ impl<L> Default for LayeredQueue<L>
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use crate::aligner::queue::{LayeredQueue, QueueLayer};
+
+    impl QueueLayer for Vec<usize> {
+        type QueueItem = usize;
+
+        fn queue(&mut self, item: Self::QueueItem) {
+            self.push(item);
+        }
+
+        fn pop(&mut self) -> Option<Self::QueueItem> {
+            self.pop()
+        }
+
+        fn is_empty(&self) -> bool {
+            self.is_empty()
+        }
+
+        fn capacity(&self) -> usize {
+            self.capacity()
+        }
+    }
+
+    #[test]
+    fn test_layered_queue() {
+        let mut queue: LayeredQueue<Vec<usize>> = LayeredQueue::new();
+
+        queue.queue(10, 10);
+        assert_eq!(queue.layers.len(), 1);
+        assert_eq!(queue.layer_min, 10);
+
+        queue.queue(5, 5);
+        assert_eq!(queue.layers.len(), 6);
+        assert_eq!(queue.layer_min, 5);
+
+        let popped = queue.pop();
+        assert_eq!(popped, Some(5));
+
+        assert_eq!(queue.layers.len(), 1);
+        assert_eq!(queue.layer_min, 10);
+
+        queue.queue(15, 15);
+        assert_eq!(queue.layers.len(), 6);
+        assert_eq!(queue.layer_min, 10);
+
+        queue.queue(12, 12);
+        assert_eq!(queue.layers.len(), 6);
+        assert_eq!(queue.layer_min, 10);
+        assert_eq!(queue.layers[2], vec![12]);
+
+    }
+}

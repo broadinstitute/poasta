@@ -45,7 +45,7 @@ impl AlignableRefGraph for MockGraph {
     }
 
     fn end_node(&self) -> Self::NodeIndex {
-        self.node_indices().rev().next().unwrap()
+        self.node_indices().next_back().unwrap()
     }
 
     fn predecessors(&self, node: Self::NodeIndex) -> Self::PredecessorIterator<'_> {
