@@ -101,6 +101,9 @@ pub struct DepthFirstGreedyAlignment<'a, G, O>
     /// The current alignment score
     score: Score,
 
+    /// Number of alignment states visited
+    num_visited: usize,
+
     /// Stack for depth-first alignment of matches between query and graph
     stack: Vec<StackNode<G::NodeIndex, O, G::SuccessorIterator<'a>>>,
 }
@@ -120,8 +123,13 @@ where
             ref_graph,
             seq,
             score,
+            num_visited: 0,
             stack: vec![StackNode::new(*start_node, ref_graph.successors(start_node.node()))],
         }
+    }
+
+    pub fn get_num_visited(&self) -> usize {
+        self.num_visited
     }
 
     pub fn extend<V>(
@@ -145,6 +153,7 @@ where
                 )),
                 Successor::Match(child) => {
                     astar_visited.visit(self.score, &child, AlignState::Match);
+                    self.num_visited += 1;
 
                     let child_succ = self.ref_graph.successors(child.node());
                     self.stack.push(StackNode::new(child, child_succ));

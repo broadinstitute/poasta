@@ -14,8 +14,7 @@ use crate::aligner::offsets::OffsetType;
 use crate::aligner::scoring::AlignmentType;
 
 pub use alignment::{AlignedPair, Alignment};
-use scoring::Score;
-use crate::aligner::astar::astar_alignment;
+use crate::aligner::astar::{astar_alignment, AstarResult};
 use crate::aligner::config::AlignmentConfig;
 use crate::bubbles::index::BubbleIndex;
 use crate::debug::DebugOutputWriter;
@@ -68,7 +67,7 @@ impl<'a, C> PoastaAligner<'a, C>
         &self,
         ref_graph: &G,
         seq: &Seq,
-    ) -> (Score, Alignment<G::NodeIndex>)
+    ) -> AstarResult<G::NodeIndex>
         where O: OffsetType,
               G: AlignableRefGraph,
               Seq: AsRef<[u8]>,
@@ -81,7 +80,7 @@ impl<'a, C> PoastaAligner<'a, C>
         ref_graph: &G,
         seq: &Seq,
         existing_bubbles: (BubbleIndex<G::NodeIndex>, Vec<usize>),
-    ) -> (Score, Alignment<G::NodeIndex>)
+    ) -> AstarResult<G::NodeIndex>
         where O: OffsetType,
               G: AlignableRefGraph,
               Seq: AsRef<[u8]>,
@@ -94,7 +93,7 @@ impl<'a, C> PoastaAligner<'a, C>
         ref_graph: &G,
         seq: &[u8],
         existing_bubbles: Option<(BubbleIndex<G::NodeIndex>, Vec<usize>)>
-    ) -> (Score, Alignment<G::NodeIndex>)
+    ) -> AstarResult<G::NodeIndex>
     where
         O: OffsetType,
         G: AlignableRefGraph,

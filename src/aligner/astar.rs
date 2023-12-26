@@ -74,6 +74,32 @@ pub trait AstarVisited<N, O>
     fn write_tsv<W: Write>(&self, writer: &mut W) -> Result<(), PoastaError>;
 }
 
+pub struct AstarResult<N>
+    where N: NodeIndexType,
+{
+    pub score: Score,
+    pub alignment: Alignment<N>,
+
+    pub num_queued: usize,
+    pub num_visited: usize,
+    pub num_pruned: usize,
+}
+
+impl<N> Default for AstarResult<N>
+    where N: NodeIndexType
+{
+    fn default() -> Self {
+        Self {
+            score: Score::Score(0),
+            alignment: Vec::default(),
+
+            num_queued: 0,
+            num_visited: 0,
+            num_pruned: 0
+        }
+    }
+}
+
 
 pub fn astar_alignment<O, C, Costs, AG, Q, G>(
     config: &C,
@@ -82,7 +108,7 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
     aln_type: AlignmentType,
     debug_writer: Option<&DebugOutputWriter>,
     existing_bubbles: Option<(BubbleIndex<G::NodeIndex>, Vec<usize>)>
-) -> (Score, Alignment<G::NodeIndex>)
+) -> AstarResult<G::NodeIndex>
     where O: OffsetType,
           C: AlignmentConfig<Costs=Costs>,
           Costs: AlignmentCosts<AlignmentGraphType=AG, QueueType<G::NodeIndex, O>=Q>,
@@ -97,11 +123,14 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
             config.init_alignment(ref_graph, seq, aln_type)
         };
 
+    let mut result = AstarResult::default();
     let mut queue = Q::default();
     for initial_state in aln_graph.initial_states(ref_graph).into_iter() {
         let h = heuristic.h(&initial_state, AlignState::Match);
         queue.queue_aln_state(initial_state, AlignState::Match, Score::Score(0), h);
         visited_data.set_score(&initial_state, AlignState::Match, Score::Score(0));
+
+        result.num_queued += 1;
     }
 
     let (end_score, end_node) = 'main: loop {
@@ -116,15 +145,18 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
         // eprintln!("---- FRONT ---- [Score: {score}] {aln_node:?} {aln_state:?}");
         // eprintln!("- is end node? {:?} == {:?}", ref_graph.end_node(), aln_node.node());
         if aln_graph.is_end(ref_graph, seq, &aln_node, aln_state) {
+            result.num_visited += 1;
             break (score, aln_node);
         }
 
         if visited_data.prune(score, &aln_node, aln_state) {
             // eprintln!("PRUNE {aln_node:?} ({aln_state:?}), score: {score:?}");
+            result.num_pruned += 1;
             continue;
         }
 
         visited_data.visit(score, &aln_node, aln_state);
+        result.num_visited += 1;
 
         // Perform depth-first greedy aligning of matches between graph and query
         if aln_state == AlignState::Match {
@@ -143,6 +175,7 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
                         aln_graph.expand_ref_graph_end(&mut visited_data, &parent, score,
                                                        |score_delta, succ, succ_state| {
                             let h = heuristic.h(&succ, succ_state);
+                            result.num_queued += 1;
                             queue.queue_aln_state(succ, succ_state, score+score_delta, h);
                         });
                     },
@@ -151,6 +184,7 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
                         aln_graph.expand_query_end(&mut visited_data, &parent, child, score,
                                                    |score_delta, succ, succ_state| {
                             let h = heuristic.h(&succ, succ_state);
+                            result.num_queued += 1;
                             queue.queue_aln_state(succ, succ_state, score+score_delta, h);
                         })
                     },
@@ -159,17 +193,21 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
                         aln_graph.expand_mismatch(&mut visited_data, &parent, &child, score,
                                                   |score_delta, succ, succ_state| {
                             let h = heuristic.h(&succ, succ_state);
+                            result.num_queued += 1;
                             queue.queue_aln_state(succ, succ_state, score+score_delta, h);
                         })
                     }
                 }
             }
+
+            result.num_visited += dfa.get_num_visited();
         } else {
             // For states other than the match state, don't use depth-first matching and simply
             // queue the neighbors.
             aln_graph.expand_all(&mut visited_data, ref_graph, seq, score, &aln_node, aln_state,
                                  |score_delta, succ, succ_state| {
                 let h = heuristic.h(&succ, succ_state);
+                result.num_queued += 1;
                 queue.queue_aln_state(succ, succ_state, score+score_delta, h);
             })
         }
@@ -183,8 +221,10 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
         debug.log(DebugOutputMessage::new_from_astar_data(&visited_data));
     }
 
-    let alignment = visited_data.backtrace(ref_graph, &end_node);
-    (end_score, alignment)
+    result.score = end_score;
+    result.alignment = visited_data.backtrace(ref_graph, &end_node);
+
+    result
 }
 
 
