@@ -152,6 +152,10 @@ where
                     ref_node
                 )),
                 Successor::Match(child) => {
+                    if astar_visited.prune(self.score, &child, AlignState::Match) {
+                        continue;
+                    }
+
                     astar_visited.visit(self.score, &child, AlignState::Match);
                     self.num_visited += 1;
 
@@ -198,10 +202,6 @@ where
 
             let child_offset = parent.offset().increase_one();
             let child_node = AlignmentGraphNode::new(child, child_offset);
-
-            if astar_visited.prune(self.score, &child_node, AlignState::Match) {
-                continue;
-            }
 
             if self.ref_graph.is_symbol_equal(child, self.seq[child_offset.as_usize()-1]) {
                 if astar_visited
