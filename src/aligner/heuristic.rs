@@ -27,12 +27,12 @@ impl AstarHeuristic for Dijkstra {
 
 pub struct MinimumGapCostAffine {
     costs: GapAffine,
-    dist_to_end: Vec<usize>,
+    dist_to_end: Vec<(usize, usize)>,
     seq_length: usize,
 }
 
 impl MinimumGapCostAffine {
-    pub fn new(costs: GapAffine, dist_to_end: Vec<usize>, seq_length: usize) -> Self {
+    pub fn new(costs: GapAffine, dist_to_end: Vec<(usize, usize)>, seq_length: usize) -> Self {
         Self {
             costs,
             dist_to_end,
@@ -47,31 +47,34 @@ impl AstarHeuristic for MinimumGapCostAffine {
         where N: NodeIndexType,
               O: OffsetType,
     {
-        let dist_to_exit =  self.dist_to_end[aln_node.node().index()].saturating_sub(1);
-        if dist_to_exit == 0 && aln_node.offset().as_usize() == self.seq_length {
-            return 0;
-        }
+        let (mut min_dist_to_exit, mut max_dist_to_exit) =  self.dist_to_end[aln_node.node().index()];
 
-        let target_offset = aln_node.offset().as_usize() + dist_to_exit;
+        min_dist_to_exit = min_dist_to_exit.saturating_sub(1);
+        max_dist_to_exit = max_dist_to_exit.saturating_sub(1);
 
-        let gap_length;
-        if target_offset < self.seq_length {
-            gap_length = self.seq_length - target_offset;
+        let target_offset_min = aln_node.offset().as_usize() + min_dist_to_exit;
+        let target_offset_max = aln_node.offset().as_usize() + max_dist_to_exit;
+
+        let min_gap_length;
+        if target_offset_min > self.seq_length {
+            min_gap_length = target_offset_min - self.seq_length;
+
+            // requires deletions, so if in insertion or match state, we need to open a new gap
+            if aln_state != AlignState::Deletion {
+                aln_state = AlignState::Match;
+            }
+        } else if target_offset_max < self.seq_length {
+            min_gap_length = self.seq_length - target_offset_max;
 
             // requires insertions, so if in deletion or match state, we need to open a new gap
             if aln_state != AlignState::Insertion {
                 aln_state = AlignState::Match;
             }
         } else {
-            gap_length = target_offset - self.seq_length;
-
-            // requires deletions, so if in insertion or match state, we need to open a new gap
-            if aln_state != AlignState::Deletion {
-                aln_state = AlignState::Match;
-            }
+            min_gap_length = 0;
         }
 
-        self.costs.gap_cost(aln_state, gap_length)
+        self.costs.gap_cost(aln_state, min_gap_length)
     }
 }
 
@@ -87,7 +90,7 @@ mod tests {
     fn test_min_gap_cost() {
         let costs = GapAffine::new(4, 2, 6);
 
-        let heuristic = MinimumGapCostAffine::new(costs, vec![5], 10);
+        let heuristic = MinimumGapCostAffine::new(costs, vec![(5, 5)], 10);
 
         let node1 = AlignmentGraphNode::new(0u32, 2u32);
         assert_eq!(heuristic.h(&node1, AlignState::Match), 14);

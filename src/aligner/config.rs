@@ -28,7 +28,7 @@ pub trait AlignmentConfig {
         seq: &[u8],
         aln_type: AlignmentType,
         bubble_index: BubbleIndex<G::NodeIndex>,
-        dist_to_end: Vec<usize>,
+        dist_to_end: Vec<(usize, usize)>,
     ) -> (<Self::Costs as AlignmentCosts>::AlignmentGraphType, Self::AstarData<G::NodeIndex, O>, Self::Heuristic)
         where G: AlignableRefGraph,
               O: OffsetType;
@@ -70,7 +70,7 @@ impl AlignmentConfig for AffineDijkstra {
         _: &[u8],
         aln_type: AlignmentType,
         bubble_index: BubbleIndex<G::NodeIndex>,
-        _: Vec<usize>,
+        _: Vec<(usize, usize)>,
     ) -> (<Self::Costs as AlignmentCosts>::AlignmentGraphType, Self::AstarData<G::NodeIndex, O>, Self::Heuristic)
         where G: AlignableRefGraph,
               O: OffsetType
@@ -119,7 +119,7 @@ impl AlignmentConfig for AffineMinGapCost {
         seq: &[u8],
         aln_type: AlignmentType,
         bubble_index: BubbleIndex<G::NodeIndex>,
-        dist_to_end: Vec<usize>
+        dist_to_end: Vec<(usize, usize)>
     ) -> (<Self::Costs as AlignmentCosts>::AlignmentGraphType, Self::AstarData<G::NodeIndex, O>, Self::Heuristic)
         where G: AlignableRefGraph,
               O: OffsetType

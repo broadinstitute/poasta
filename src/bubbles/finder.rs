@@ -65,6 +65,14 @@ where
         }
     }
 
+    pub fn rev_postorder(&self) -> &[usize] {
+        &self.rev_postorder
+    }
+
+    pub fn inv_rev_postorder(&self) -> &[G::NodeIndex] {
+        &self.inv_rev_postorder
+    }
+
     pub fn iter(&self) -> SuperbubbleIterator<'_, G> {
         SuperbubbleIterator::new(self)
     }

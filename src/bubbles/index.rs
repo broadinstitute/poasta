@@ -1,3 +1,4 @@
+use std::cmp::max;
 use std::collections::VecDeque;
 use rustc_hash::FxHashSet;
 use crate::bubbles::finder::SuperbubbleFinder;
@@ -63,6 +64,9 @@ where
 {
     graph: &'a G,
 
+    /// Superbubble finder object, also stores node orderings (i.e., rev postorder).
+    finder: SuperbubbleFinder<'a, G>,
+
     /// Array indicating whether a node is a bubble entrance
     bubble_entrance: Vec<Option<BubbleNode<G::NodeIndex>>>,
 
@@ -72,8 +76,8 @@ where
     /// A list of bubbles containing a particular node
     node_bubble_map: Vec<Vec<NodeBubbleMap<G::NodeIndex>>>,
 
-    /// For each node, the distance to the graph end node
-    node_dist_to_end: Vec<usize>,
+    /// For each node, the minimum and maximum distance to the graph end node
+    node_dist_to_end: Vec<(usize, usize)>,
 }
 
 impl<'a, G> BubbleIndexBuilder<'a, G>
@@ -94,10 +98,11 @@ where
 
         Self {
             graph,
+            finder,
             bubble_entrance: bubble_entrances,
             bubble_exit: bubble_exits,
             node_bubble_map: vec![Vec::default(); graph.node_count_with_start_and_end()],
-            node_dist_to_end: vec![0; graph.node_count_with_start_and_end()],
+            node_dist_to_end: vec![(0, 0); graph.node_count_with_start_and_end()],
         }
     }
 
@@ -126,7 +131,7 @@ where
                 })
             }
 
-            self.node_dist_to_end[curr.index()] = dist_from_end;
+            self.node_dist_to_end[curr.index()].0 = dist_from_end;
 
             for pred in self.graph.predecessors(curr) {
                 if !visited.contains(&pred) {
@@ -152,8 +157,19 @@ where
         }
     }
 
-    pub fn build(mut self) -> (BubbleIndex<G::NodeIndex>, Vec<usize>) {
+    pub fn build(mut self) -> (BubbleIndex<G::NodeIndex>, Vec<(usize, usize)>) {
         self.backward_bfs();
+
+        // To obtain the maximum path length to the end node, process each node separately in post order.
+        for n in self.finder.inv_rev_postorder().iter().rev() {
+            let mut max_dist_to_end = 0;
+
+            for succ in self.graph.successors(*n) {
+                max_dist_to_end = max(max_dist_to_end, self.node_dist_to_end[succ.index()].1 + 1);
+            }
+
+            self.node_dist_to_end[n.index()].1 = max_dist_to_end;
+        }
 
         (BubbleIndex {
             bubble_entrance: self.bubble_entrance,
@@ -248,6 +264,31 @@ mod tests {
         for n in graph2.node_indices() {
             assert_eq!(index2.get_node_bubbles(n), &truth2[n.index()])
         }
+    }
+
+    #[test]
+    pub fn test_dist_to_exit() {
+        let graph = create_test_graph2();
+        let (_, dist_to_exit) = BubbleIndexBuilder::new(&graph)
+            .build();
+
+        assert_eq!(dist_to_exit, vec![
+            (4, 10),
+            (4, 9),
+            (3, 8),
+            (2, 4),
+            (4, 7),
+            (3, 6),
+            (2, 4),
+            (1, 3),
+            (4, 6),
+            (3, 5),
+            (3, 5),
+            (2, 4),
+            (1, 2),
+            (1, 1),
+            (0, 0)
+        ]);
     }
 
 }

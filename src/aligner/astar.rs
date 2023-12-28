@@ -107,7 +107,7 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
     seq: &[u8],
     aln_type: AlignmentType,
     debug_writer: Option<&DebugOutputWriter>,
-    existing_bubbles: Option<(BubbleIndex<G::NodeIndex>, Vec<usize>)>
+    existing_bubbles: Option<(BubbleIndex<G::NodeIndex>, Vec<(usize, usize)>)>
 ) -> AstarResult<G::NodeIndex>
     where O: OffsetType,
           C: AlignmentConfig<Costs=Costs>,
@@ -142,8 +142,8 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
             continue;
         }
 
-        // eprintln!("---- FRONT ---- [Score: {score}] {aln_node:?} {aln_state:?}");
-        // eprintln!("- is end node? {:?} == {:?}", ref_graph.end_node(), aln_node.node());
+        eprintln!("---- FRONT ---- [Score: {score}] {aln_node:?} {aln_state:?}");
+        eprintln!("- is end node? {:?} == {:?}", ref_graph.end_node(), aln_node.node());
         if aln_graph.is_end(ref_graph, seq, &aln_node, aln_state) {
             result.num_visited += 1;
             break (score, aln_node);

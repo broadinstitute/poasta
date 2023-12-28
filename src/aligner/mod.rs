@@ -79,7 +79,7 @@ impl<'a, C> PoastaAligner<'a, C>
         &self,
         ref_graph: &G,
         seq: &Seq,
-        existing_bubbles: (BubbleIndex<G::NodeIndex>, Vec<usize>),
+        existing_bubbles: (BubbleIndex<G::NodeIndex>, Vec<(usize, usize)>),
     ) -> AstarResult<G::NodeIndex>
         where O: OffsetType,
               G: AlignableRefGraph,
@@ -92,7 +92,7 @@ impl<'a, C> PoastaAligner<'a, C>
         &self,
         ref_graph: &G,
         seq: &[u8],
-        existing_bubbles: Option<(BubbleIndex<G::NodeIndex>, Vec<usize>)>
+        existing_bubbles: Option<(BubbleIndex<G::NodeIndex>, Vec<(usize, usize)>)>
     ) -> AstarResult<G::NodeIndex>
     where
         O: OffsetType,
