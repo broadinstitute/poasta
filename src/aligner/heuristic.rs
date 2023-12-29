@@ -1,10 +1,13 @@
+use std::marker::PhantomData;
+use std::rc::Rc;
 use crate::aligner::aln_graph::{AlignmentGraphNode, AlignState};
 use crate::aligner::offsets::OffsetType;
 use crate::aligner::scoring::{AlignmentCosts, GapAffine};
+use crate::bubbles::index::BubbleIndex;
 use crate::graphs::NodeIndexType;
 
-pub trait AstarHeuristic {
-    fn h<N, O>(&self, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> usize
+pub trait AstarHeuristic<N, O> {
+    fn h(&self, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> usize
         where N: NodeIndexType,
               O: OffsetType;
 }
@@ -12,11 +15,11 @@ pub trait AstarHeuristic {
 /// A* heuristic that always returns 0, such that
 /// A* reduces to standard Dijkstra's algorithm.
 #[derive(Default)]
-pub struct Dijkstra;
+pub struct Dijkstra<N, O>(PhantomData<(N, O)>);
 
 
-impl AstarHeuristic for Dijkstra {
-    fn h<N, O>(&self, _: &AlignmentGraphNode<N, O>, _: AlignState) -> usize
+impl<N, O> AstarHeuristic<N, O> for Dijkstra<N, O> {
+    fn h(&self, _: &AlignmentGraphNode<N, O>, _: AlignState) -> usize
         where N: NodeIndexType,
               O: OffsetType
     {
@@ -25,32 +28,34 @@ impl AstarHeuristic for Dijkstra {
 }
 
 
-pub struct MinimumGapCostAffine {
+pub struct MinimumGapCostAffine<N, O> {
     costs: GapAffine,
-    dist_to_end: Vec<(usize, usize)>,
+    bubble_index: Rc<BubbleIndex<N>>,
     seq_length: usize,
+    dummy: PhantomData<O>,
 }
 
-impl MinimumGapCostAffine {
-    pub fn new(costs: GapAffine, dist_to_end: Vec<(usize, usize)>, seq_length: usize) -> Self {
+impl<N, O> MinimumGapCostAffine<N, O> {
+    pub fn new(costs: GapAffine, bubble_index: Rc<BubbleIndex<N>>, seq_length: usize) -> Self {
         Self {
             costs,
-            dist_to_end,
+            bubble_index,
             seq_length,
+            dummy: PhantomData,
         }
     }
 }
 
-impl AstarHeuristic for MinimumGapCostAffine {
+impl<N, O> AstarHeuristic<N, O> for MinimumGapCostAffine<N, O> {
 
-    fn h<N, O>(&self, aln_node: &AlignmentGraphNode<N, O>, mut aln_state: AlignState) -> usize
+    fn h(&self, aln_node: &AlignmentGraphNode<N, O>, mut aln_state: AlignState) -> usize
         where N: NodeIndexType,
               O: OffsetType,
     {
-        let (mut min_dist_to_exit, mut max_dist_to_exit) =  self.dist_to_end[aln_node.node().index()];
-
-        min_dist_to_exit = min_dist_to_exit.saturating_sub(1);
-        max_dist_to_exit = max_dist_to_exit.saturating_sub(1);
+        let min_dist_to_exit = self.bubble_index.get_min_dist_to_end(aln_node.node())
+            .saturating_sub(1);
+        let max_dist_to_exit = self.bubble_index.get_max_dist_to_end(aln_node.node())
+            .saturating_sub(1);
 
         let target_offset_min = aln_node.offset().as_usize() + min_dist_to_exit;
         let target_offset_max = aln_node.offset().as_usize() + max_dist_to_exit;

@@ -153,6 +153,7 @@ where
                 )),
                 Successor::Match(child) => {
                     if astar_visited.prune(self.score, &child, AlignState::Match) {
+                        eprintln!("- pruned.");
                         continue;
                     }
 
@@ -180,7 +181,7 @@ where
     fn next_valid_successor<V>(
         &self,
         parent: &StackNode<G::NodeIndex, O, G::SuccessorIterator<'a>>,
-        // Separate mutable borrows for  visited data and reached bubble exits
+        // Separate mutable borrow for visited data
         // to prevent requiring mutable &self
         astar_visited: &mut V,
     ) -> Successor<G::NodeIndex, O>
@@ -188,15 +189,19 @@ where
         V: AstarVisited<G::NodeIndex, O>,
     {
         while let Some(child) = parent.children_iter().next() {
+            eprintln!("DFA: succ: {child:?}, offset: {:?}", parent.offset().increase_one());
+
             if child == self.ref_graph.end_node() {
                 let aln_termination = AlignmentGraphNode::new(child, parent.offset());
                 astar_visited.update_score_if_lower(&aln_termination, AlignState::Match,
                                                     parent.aln_graph_node(), AlignState::Match, self.score);
 
+                eprintln!("- at ref graph end.");
                 return Successor::RefGraphEnd(aln_termination);
             }
 
             if parent.offset().as_usize() >= self.seq.len() {
+                eprintln!("- at query end.");
                 return Successor::QueryEnd(child)
             }
 
@@ -204,13 +209,17 @@ where
             let child_node = AlignmentGraphNode::new(child, child_offset);
 
             if self.ref_graph.is_symbol_equal(child, self.seq[child_offset.as_usize()-1]) {
+                eprintln!("- match");
+
                 if astar_visited
                     .update_score_if_lower(&child_node, AlignState::Match,
                                            parent.aln_graph_node(), AlignState::Match, self.score)
                 {
+                    eprintln!(" - not visited before.");
                     return Successor::Match(child_node)
                 }
             } else {
+                eprintln!("- mismatch");
                 return Successor::Mismatch(child_node)
             }
         }

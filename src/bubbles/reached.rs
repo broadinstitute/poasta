@@ -14,6 +14,7 @@ where
 {
     costs: C,
     reached_exits: Vec<BTreeMap<O, Score>>,
+    seq_len: usize,
 }
 
 impl<C, O> ReachedBubbleExits<C, O>
@@ -21,11 +22,12 @@ where
     C: AlignmentCosts,
     O: OffsetType,
 {
-    pub fn new<G: AlignableRefGraph>(costs: C, ref_graph: &G) -> Self {
+    pub fn new<G: AlignableRefGraph>(costs: C, ref_graph: &G, seq_len: usize) -> Self {
         Self {
             costs,
             reached_exits: vec![BTreeMap::default();
                                 ref_graph.node_count_with_start_and_end()],
+            seq_len,
         }
     }
 
@@ -48,11 +50,12 @@ where
         bubble_index.get_node_bubbles(aln_node.node())
             .iter()
             .all(|bubble|
-                self.can_improve_bubble(bubble, aln_node, current_score))
+                self.can_improve_bubble(bubble_index, bubble, aln_node, current_score))
     }
 
     pub fn can_improve_bubble<N>(
-        &self, bubble: &NodeBubbleMap<N>,
+        &self, bubble_index: &BubbleIndex<N>,
+        bubble: &NodeBubbleMap<N>,
         aln_node: &AlignmentGraphNode<N, O>,
         current_score: Score
     ) -> bool
@@ -66,22 +69,26 @@ where
             return true;
         }
 
-        let target_offset = aln_node.offset() + O::new(bubble.dist_to_exit);
+        let target_offset_max = aln_node.offset() + O::new(bubble.max_dist_to_exit);
 
         // CASE 1: We could open an insertion from a reached bubble exit. Check if the most
         // optimal path from the current state (i.e., all matches, thus going diagonally and no
         // increase in alignment score) could improve over the score as reached when opening a
         // insertion from the bubble exit.
-        if let Some((prev_offset, prev_score)) = self.reached_exits[bubble.bubble_exit.index()]
-            .range(RangeTo { end: target_offset }).next_back()
-        {
-            let gap_length = target_offset - *prev_offset;
-            let ins_score_from_exit = *prev_score
-                + self.costs.gap_cost(AlignState::Match, gap_length.as_usize());
+        if target_offset_max.as_usize() <= self.seq_len {
+            if let Some((prev_offset, prev_score)) = self.reached_exits[bubble.bubble_exit.index()]
+                .range(RangeTo { end: target_offset_max }).next_back()
+            {
+                let gap_length = target_offset_max - *prev_offset;
+                let ins_score_from_exit = *prev_score
+                    + self.costs.gap_cost(AlignState::Match, gap_length.as_usize());
 
-            if ins_score_from_exit <= current_score {
-                // Previous offset that reached this exit can reach this new offset with a lower or equal score,
-                return false;
+                if ins_score_from_exit <= current_score {
+                    // Previous offset that reached this exit can reach this new offset with a lower or equal score,
+                    eprintln!("- Bubble {bubble:?}, reached at prev offset {prev_offset:?} at score {prev_score:?}");
+                    eprintln!("- Can't improve insertion score from exit {ins_score_from_exit:?} <= {current_score:?}");
+                    return false;
+                }
             }
         }
 
@@ -90,14 +97,19 @@ where
         // increase in alignment score) could improve over the score as reached when opening a
         // deletion from the bubble exit.
         if let Some((next_offset, next_score)) = self.reached_exits[bubble.bubble_exit.index()]
-            .range(RangeFrom { start: target_offset })
+            .range(RangeFrom { start: target_offset_max })
             .next()
         {
-            let gap_length = *next_offset - target_offset;
+            let gap_length = *next_offset - target_offset_max;
             let del_score_from_exit = *next_score
                 + self.costs.gap_cost(AlignState::Match, gap_length.as_usize());
 
-            if del_score_from_exit <= current_score {
+            if gap_length.as_usize() <= bubble_index.get_min_dist_to_end(bubble.bubble_exit).saturating_sub(1)
+                && del_score_from_exit <= current_score
+            {
+                eprintln!("- Bubble {bubble:?}, reached at next offset {next_offset:?} at score {next_score:?}");
+                eprintln!("- Gap length: {gap_length:?}, bubble exit dist to end: {:?}", bubble_index.get_min_dist_to_end(bubble.bubble_exit).saturating_sub(1));
+                eprintln!("- Can't improve deletion score from exit {del_score_from_exit:?} <= {current_score:?}");
                 return false;
             }
         }

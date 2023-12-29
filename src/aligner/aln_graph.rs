@@ -14,7 +14,6 @@ pub enum AlignState {
 }
 
 
-
 /// A struct that represents a node in the alignment graph
 ///
 /// It holds cursors to a node in the reference graph to which we are aligning,
@@ -82,7 +81,8 @@ pub trait AlignmentGraph {
         seq: &[u8],
         score: Score,
         node: &AlignmentGraphNode<G::NodeIndex, O>,
-        state: AlignState, f: F
+        state: AlignState,
+        f: F
     )
         where V: AstarVisited<G::NodeIndex, O>,
               G: AlignableRefGraph,

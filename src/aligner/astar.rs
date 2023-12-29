@@ -1,4 +1,5 @@
 use std::fmt::Write;
+use std::rc::Rc;
 use crate::aligner::Alignment;
 use crate::aligner::aln_graph::{AlignmentGraph, AlignmentGraphNode, AlignState};
 use crate::aligner::config::AlignmentConfig;
@@ -107,7 +108,7 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
     seq: &[u8],
     aln_type: AlignmentType,
     debug_writer: Option<&DebugOutputWriter>,
-    existing_bubbles: Option<(BubbleIndex<G::NodeIndex>, Vec<(usize, usize)>)>
+    existing_bubbles: Option<Rc<BubbleIndex<G::NodeIndex>>>
 ) -> AstarResult<G::NodeIndex>
     where O: OffsetType,
           C: AlignmentConfig<Costs=Costs>,
@@ -117,8 +118,8 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
           G: AlignableRefGraph,
 {
     let (aln_graph, mut visited_data, heuristic) =
-        if let Some((bubble_index, dist_to_end)) = existing_bubbles {
-            config.init_alignment_with_existing_bubbles(ref_graph, seq, aln_type, bubble_index, dist_to_end)
+        if let Some(bubble_index) = existing_bubbles {
+            config.init_alignment_with_existing_bubbles(ref_graph, seq, aln_type, bubble_index)
         } else {
             config.init_alignment(ref_graph, seq, aln_type)
         };
@@ -142,15 +143,15 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
             continue;
         }
 
-        // eprintln!("---- FRONT ---- [Score: {score}] {aln_node:?} {aln_state:?}");
-        // eprintln!("- is end node? {:?} == {:?}", ref_graph.end_node(), aln_node.node());
+        eprintln!("---- FRONT ---- [Score: {score}] {aln_node:?} {aln_state:?}");
+        eprintln!("- is end node? {:?} == {:?}", ref_graph.end_node(), aln_node.node());
         if aln_graph.is_end(ref_graph, seq, &aln_node, aln_state) {
             result.num_visited += 1;
             break (score, aln_node);
         }
 
         if visited_data.prune(score, &aln_node, aln_state) {
-            // eprintln!("PRUNE {aln_node:?} ({aln_state:?}), score: {score:?}");
+            eprintln!("PRUNE {aln_node:?} ({aln_state:?}), score: {score:?}");
             result.num_pruned += 1;
             continue;
         }

@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 use std::fmt::Write;
+use std::rc::Rc;
 use rustc_hash::FxHashMap;
 use crate::aligner::{AlignedPair, Alignment};
 
@@ -160,7 +161,7 @@ impl AlignmentGraph for AffineAlignmentGraph {
                     }
 
                     // Open deletion
-                    let score_delta = if ref_succ == ref_graph.end_node() { 0 } else { self.costs.cost_gap_open + self.costs.cost_gap_extend };
+                    let score_delta = self.costs.cost_gap_open + self.costs.cost_gap_extend;
                     let new_node_del = AlignmentGraphNode::new(ref_succ, node.offset());
                     let new_score_del = score + score_delta;
                     if visited_data
@@ -389,7 +390,7 @@ struct VisitedCellAffine<N, O>
     visited_d: AffineVisitedNodeData<N, O>
 }
 
-struct BlockedVisitedStorageAffine<N, O, const B: usize = 16>
+struct BlockedVisitedStorageAffine<N, O, const B: usize = 8>
     where N: NodeIndexType,
           O: OffsetType,
 {
@@ -576,7 +577,7 @@ pub struct AffineAstarData<N, O>
 where N: NodeIndexType,
       O: OffsetType,
 {
-    bubble_index: BubbleIndex<N>,
+    bubble_index: Rc<BubbleIndex<N>>,
     visited: BlockedVisitedStorageAffine<N, O>,
 
     bubbles_reached_m: ReachedBubbleExits<GapAffine, O>,
@@ -586,13 +587,13 @@ impl<N, O> AffineAstarData<N, O>
     where N: NodeIndexType,
           O: OffsetType
 {
-    pub fn new<G>(costs: GapAffine, ref_graph: &G, bubble_index: BubbleIndex<G::NodeIndex>) -> Self
+    pub fn new<G>(costs: GapAffine, ref_graph: &G, seq: &[u8], bubble_index: Rc<BubbleIndex<G::NodeIndex>>) -> Self
         where G: AlignableRefGraph<NodeIndex=N>,
     {
         Self {
             bubble_index,
             visited: BlockedVisitedStorageAffine::new(ref_graph),
-            bubbles_reached_m: ReachedBubbleExits::new(costs, ref_graph),
+            bubbles_reached_m: ReachedBubbleExits::new(costs, ref_graph, seq.len()),
         }
     }
 
@@ -620,10 +621,10 @@ impl<N, O> AstarVisited<N, O> for AffineAstarData<N, O>
         self.visited.set_score(aln_node, aln_state, score)
     }
 
-    fn visit(&mut self, score: Score, aln_node: &AlignmentGraphNode<N, O>, _: AlignState) {
+    fn visit(&mut self, score: Score, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) {
         // eprintln!("VISIT: {aln_node:?} ({aln_state:?}), score: {score}");
 
-        if self.bubble_index.is_exit(aln_node.node()) {
+        if aln_state == AlignState::Match && self.bubble_index.is_exit(aln_node.node()) {
             self.bubbles_reached_m.mark_reached(aln_node.node(), aln_node.offset(), score);
         }
     }
@@ -779,7 +780,7 @@ impl<N, O> AstarQueue<N, O> for AffineLayeredQueue<N, O>
         let priority = usize::from(score) + h;
         let item = AstarQueuedItem(score, node, aln_state);
 
-        // eprintln!("Queuing {node:?} ({aln_state:?}), score: {score:?}, heuristic: {h}, priority: {priority}");
+        eprintln!("Queuing {node:?} ({aln_state:?}), score: {score:?}, heuristic: {h}, priority: {priority}");
 
         self.queue(item, priority)
     }
