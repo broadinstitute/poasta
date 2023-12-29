@@ -85,8 +85,8 @@ where
 
                 if ins_score_from_exit <= current_score {
                     // Previous offset that reached this exit can reach this new offset with a lower or equal score,
-                    eprintln!("- Bubble {bubble:?}, reached at prev offset {prev_offset:?} at score {prev_score:?}");
-                    eprintln!("- Can't improve insertion score from exit {ins_score_from_exit:?} <= {current_score:?}");
+                    // eprintln!("- Bubble {bubble:?}, reached at prev offset {prev_offset:?} at score {prev_score:?}");
+                    // eprintln!("- Can't improve insertion score from exit {ins_score_from_exit:?} <= {current_score:?}");
                     return false;
                 }
             }
@@ -107,9 +107,9 @@ where
             if gap_length.as_usize() <= bubble_index.get_min_dist_to_end(bubble.bubble_exit).saturating_sub(1)
                 && del_score_from_exit <= current_score
             {
-                eprintln!("- Bubble {bubble:?}, reached at next offset {next_offset:?} at score {next_score:?}");
-                eprintln!("- Gap length: {gap_length:?}, bubble exit dist to end: {:?}", bubble_index.get_min_dist_to_end(bubble.bubble_exit).saturating_sub(1));
-                eprintln!("- Can't improve deletion score from exit {del_score_from_exit:?} <= {current_score:?}");
+                // eprintln!("- Bubble {bubble:?}, reached at next offset {next_offset:?} at score {next_score:?}");
+                // eprintln!("- Gap length: {gap_length:?}, bubble exit dist to end: {:?}", bubble_index.get_min_dist_to_end(bubble.bubble_exit).saturating_sub(1));
+                // eprintln!("- Can't improve deletion score from exit {del_score_from_exit:?} <= {current_score:?}");
                 return false;
             }
         }

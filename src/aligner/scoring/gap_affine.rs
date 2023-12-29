@@ -780,7 +780,7 @@ impl<N, O> AstarQueue<N, O> for AffineLayeredQueue<N, O>
         let priority = usize::from(score) + h;
         let item = AstarQueuedItem(score, node, aln_state);
 
-        eprintln!("Queuing {node:?} ({aln_state:?}), score: {score:?}, heuristic: {h}, priority: {priority}");
+        // eprintln!("Queuing {node:?} ({aln_state:?}), score: {score:?}, heuristic: {h}, priority: {priority}");
 
         self.queue(item, priority)
     }
