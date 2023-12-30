@@ -11,5 +11,5 @@ output/
 /*.png
 debug_test/
 debug_presentation/
+debug_*/
 __pycache__
-
