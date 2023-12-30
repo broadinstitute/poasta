@@ -39,6 +39,7 @@ where
     pub fn can_improve_alignment<N>(
         &self, bubble_index: &BubbleIndex<N>,
         aln_node: &AlignmentGraphNode<N, O>,
+        aln_state: AlignState,
         current_score: Score
     ) -> bool
         where N: NodeIndexType,
@@ -50,13 +51,14 @@ where
         bubble_index.get_node_bubbles(aln_node.node())
             .iter()
             .all(|bubble|
-                self.can_improve_bubble(bubble_index, bubble, aln_node, current_score))
+                self.can_improve_bubble(bubble_index, bubble, aln_node, aln_state, current_score))
     }
 
     pub fn can_improve_bubble<N>(
         &self, bubble_index: &BubbleIndex<N>,
         bubble: &NodeBubbleMap<N>,
         aln_node: &AlignmentGraphNode<N, O>,
+        aln_state: AlignState,
         current_score: Score
     ) -> bool
         where N: NodeIndexType
@@ -101,10 +103,8 @@ where
                     let del_score_from_exit = *prev_score
                         + self.costs.gap_cost(AlignState::Match, del_length.as_usize());
 
-                    let can_improve = (del_length == O::zero()
-                        && del_score_from_exit >= current_score) ||
-                    (del_length.as_usize() <= dist_exit_to_end
-                        && del_score_from_exit > current_score);
+                    let can_improve = del_length.as_usize() <= dist_exit_to_end
+                        && del_score_from_exit > current_score;
 
                     // if !can_improve {
                     //     eprintln!("- Bubble {bubble:?}, reached at prev offset {prev_offset:?} at score {prev_score:?}");
@@ -135,9 +135,12 @@ where
             let del_score_from_exit = *next_score
                 + self.costs.gap_cost(AlignState::Match, gap_length.as_usize());
 
-            if (gap_length == O::zero() && current_score > del_score_from_exit) ||
-                (gap_length > O::zero() && gap_length.as_usize() <= dist_exit_to_end
-                    && del_score_from_exit <= current_score)
+            if aln_state != AlignState::Match && *next_offset == target_offset_min {
+                if current_score > *next_score {
+                    return false
+                }
+            } else if gap_length.as_usize() <= dist_exit_to_end
+                && del_score_from_exit <= current_score
             {
                 // eprintln!("- Bubble {bubble:?}, reached at next offset {next_offset:?} at score {next_score:?}");
                 // eprintln!("- Gap length: {gap_length:?}, bubble exit dist to end: {:?}", dist_exit_to_end);

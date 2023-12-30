@@ -630,8 +630,8 @@ impl<N, O> AstarVisited<N, O> for AffineAstarData<N, O>
     }
 
     #[inline]
-    fn prune(&self, score: Score, aln_node: &AlignmentGraphNode<N, O>, _: AlignState) -> bool {
-        !self.bubbles_reached_m.can_improve_alignment(&self.bubble_index, aln_node, score)
+    fn prune(&self, score: Score, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> bool {
+        !self.bubbles_reached_m.can_improve_alignment(&self.bubble_index, aln_node, aln_state, score)
     }
 
     #[inline]
