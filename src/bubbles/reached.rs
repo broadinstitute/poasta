@@ -69,7 +69,10 @@ where
             return true;
         }
 
+        let target_offset_min = aln_node.offset() + O::new(bubble.min_dist_to_exit);
         let target_offset_max = aln_node.offset() + O::new(bubble.max_dist_to_exit);
+        let dist_exit_to_end = bubble_index.get_min_dist_to_end(bubble.bubble_exit)
+            .saturating_sub(1);
 
         // CASE 1: We could open an insertion from a reached bubble exit. Check if the most
         // optimal path from the current state (i.e., all matches, thus going diagonally and no
@@ -83,11 +86,39 @@ where
                 let ins_score_from_exit = *prev_score
                     + self.costs.gap_cost(AlignState::Match, gap_length.as_usize());
 
-                if ins_score_from_exit <= current_score {
-                    // Previous offset that reached this exit can reach this new offset with a lower or equal score,
-                    // eprintln!("- Bubble {bubble:?}, reached at prev offset {prev_offset:?} at score {prev_score:?}");
-                    // eprintln!("- Can't improve insertion score from exit {ins_score_from_exit:?} <= {current_score:?}");
-                    return false;
+                // Previous offset that reached this exit can reach this new offset with a lower or equal score,
+                let can_improve_ins = ins_score_from_exit > current_score;
+                // if !can_improve_ins {
+                //     eprintln!("- Bubble {bubble:?}, reached at prev offset {prev_offset:?} at score {prev_score:?}");
+                //     eprintln!("- Gap length: {gap_length:?}, bubble exit dist to end: {:?}", dist_exit_to_end);
+                //     eprintln!("- Can't improve insertion score from exit {ins_score_from_exit:?} <= {current_score:?}");
+                // }
+
+                // We should also check if the minimum length path to the exit can improve over a deletion
+                // from the bubble exit
+                let can_improve_del = if target_offset_min < *prev_offset {
+                    let del_length = *prev_offset - target_offset_min;
+                    let del_score_from_exit = *prev_score
+                        + self.costs.gap_cost(AlignState::Match, del_length.as_usize());
+
+                    let can_improve = (del_length == O::zero()
+                        && del_score_from_exit >= current_score) ||
+                    (del_length.as_usize() <= dist_exit_to_end
+                        && del_score_from_exit > current_score);
+
+                    // if !can_improve {
+                    //     eprintln!("- Bubble {bubble:?}, reached at prev offset {prev_offset:?} at score {prev_score:?}");
+                    //     eprintln!("- Gap length: {gap_length:?}, bubble exit dist to end: {:?}", dist_exit_to_end);
+                    //     eprintln!("- Can't improve deletion score from exit {del_score_from_exit:?} <= {current_score:?}");
+                    // }
+
+                    can_improve
+                } else {
+                    false
+                };
+
+                if !can_improve_ins && !can_improve_del {
+                    return false
                 }
             }
         }
@@ -100,15 +131,16 @@ where
             .range(RangeFrom { start: target_offset_max })
             .next()
         {
-            let gap_length = *next_offset - target_offset_max;
+            let gap_length = *next_offset - target_offset_min;
             let del_score_from_exit = *next_score
                 + self.costs.gap_cost(AlignState::Match, gap_length.as_usize());
 
-            if gap_length.as_usize() <= bubble_index.get_min_dist_to_end(bubble.bubble_exit).saturating_sub(1)
-                && del_score_from_exit <= current_score
+            if (gap_length == O::zero() && current_score > del_score_from_exit) ||
+                (gap_length > O::zero() && gap_length.as_usize() <= dist_exit_to_end
+                    && del_score_from_exit <= current_score)
             {
                 // eprintln!("- Bubble {bubble:?}, reached at next offset {next_offset:?} at score {next_score:?}");
-                // eprintln!("- Gap length: {gap_length:?}, bubble exit dist to end: {:?}", bubble_index.get_min_dist_to_end(bubble.bubble_exit).saturating_sub(1));
+                // eprintln!("- Gap length: {gap_length:?}, bubble exit dist to end: {:?}", dist_exit_to_end);
                 // eprintln!("- Can't improve deletion score from exit {del_score_from_exit:?} <= {current_score:?}");
                 return false;
             }
