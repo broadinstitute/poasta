@@ -12,4 +12,5 @@ output/
 debug_test/
 debug_presentation/
 debug_*/
+debug/
 __pycache__

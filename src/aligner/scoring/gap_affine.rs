@@ -726,15 +726,15 @@ impl<N, O> QueueLayer for AffineQueueLayer<N, O>
     }
 
     fn pop(&mut self) -> Option<Self::QueueItem> {
-        self.queued_states_m
+        self.queued_states_i
             .pop()
-            .map(|(score, node)| AstarQueuedItem(score, node, AlignState::Match))
+            .map(|(score, node)| AstarQueuedItem(score, node, AlignState::Insertion))
             .or_else(|| self.queued_states_d
                 .pop()
                 .map(|(score, node)| AstarQueuedItem(score, node, AlignState::Deletion))
-                .or_else(|| self.queued_states_i
+                .or_else(|| self.queued_states_m
                     .pop()
-                    .map(|(score, node)| AstarQueuedItem(score, node, AlignState::Insertion))
+                    .map(|(score, node)| AstarQueuedItem(score, node, AlignState::Match))
                 )
             )
     }
@@ -777,7 +777,7 @@ impl<N, O> AstarQueue<N, O> for AffineLayeredQueue<N, O>
     }
 
     fn queue_aln_state(&mut self, node: AlignmentGraphNode<N, O>, aln_state: AlignState, score: Score, h: usize) {
-        let priority = usize::from(score) + h;
+        let priority = u32::from(score) as usize + h;
         let item = AstarQueuedItem(score, node, aln_state);
 
         // eprintln!("Queuing {node:?} ({aln_state:?}), score: {score:?}, heuristic: {h}, priority: {priority}");

@@ -7,6 +7,7 @@ pub use gap_affine::GapAffine;
 use std::ops::{Add, AddAssign, Bound};
 use std::fmt::{Display, Formatter};
 use std::cmp::Ordering;
+use nonmax::NonMaxU32;
 use crate::aligner::astar::AstarQueue;
 use crate::aligner::offsets::OffsetType;
 use crate::graphs::NodeIndexType;
@@ -54,7 +55,7 @@ pub enum AlignmentType {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Score {
-    Score(usize),
+    Score(NonMaxU32),  // Use non-max, such that the maximum value can be used for Unvisited
     Unvisited
 }
 
@@ -84,16 +85,7 @@ impl Add<usize> for Score {
 
     fn add(self, rhs: usize) -> Self::Output {
         match self {
-            Self::Score(score) => Self::Score(score + rhs),
-            Self::Unvisited => panic!("Can't add to Score::Unvisited!")
-        }
-    }
-}
-
-impl AddAssign<usize> for Score {
-    fn add_assign(&mut self, rhs: usize) {
-        match self {
-            Self::Score(score) => *score += rhs,
+            Self::Score(score) => Self::Score(NonMaxU32::new(u32::from(score) + rhs as u32).unwrap()),
             Self::Unvisited => panic!("Can't add to Score::Unvisited!")
         }
     }
@@ -104,7 +96,7 @@ impl Add<u8> for Score {
 
     fn add(self, rhs: u8) -> Self::Output {
         match self {
-            Self::Score(score) => Self::Score(score + rhs as usize),
+            Self::Score(score) => Self::Score(NonMaxU32::new(u32::from(score) + rhs as u32).unwrap()),
             Self::Unvisited => panic!("Can't add to Score::Unvisited!")
         }
     }
@@ -113,16 +105,16 @@ impl Add<u8> for Score {
 impl AddAssign<u8> for Score {
     fn add_assign(&mut self, rhs: u8) {
         match self {
-            Self::Score(score) => *score += rhs as usize,
+            Self::Score(score) => *score = NonMaxU32::new(u32::from(*score) + rhs as u32).unwrap(),
             Self::Unvisited => panic!("Can't add to Score::Unvisited!")
         }
     }
 }
 
-impl From<Score> for usize {
+impl From<Score> for u32 {
     fn from(value: Score) -> Self {
         match value {
-            Score::Score(score) => score,
+            Score::Score(score) => score.into(),
             Score::Unvisited => panic!("Trying to convert Score::Unvisited!")
         }
     }
