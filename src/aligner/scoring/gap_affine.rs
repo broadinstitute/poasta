@@ -11,7 +11,7 @@ use crate::aligner::aln_graph::{AlignmentGraph, AlignmentGraphNode, AlignState};
 use crate::aligner::astar::{AstarQueue, AstarQueuedItem, AstarVisited};
 use crate::aligner::queue::{LayeredQueue, QueueLayer};
 use crate::bubbles::index::BubbleIndex;
-use crate::bubbles::reached::ReachedBubbleExits;
+use crate::bubbles::reached::{ReachedBubbleExits, ReachedDeletion, ReachedInsertion, ReachedMatch};
 use crate::errors::PoastaError;
 
 #[derive(Clone, Copy, Debug)]
@@ -580,7 +580,9 @@ where N: NodeIndexType,
     bubble_index: Rc<BubbleIndex<N>>,
     visited: BlockedVisitedStorageAffine<N, O>,
 
-    bubbles_reached_m: ReachedBubbleExits<GapAffine, O>,
+    bubbles_reached_m: ReachedBubbleExits<GapAffine, O, ReachedMatch>,
+    bubbles_reached_i: ReachedBubbleExits<GapAffine, O, ReachedInsertion>,
+    bubbles_reached_d: ReachedBubbleExits<GapAffine, O, ReachedDeletion>,
 }
 
 impl<N, O> AffineAstarData<N, O>
@@ -594,6 +596,8 @@ impl<N, O> AffineAstarData<N, O>
             bubble_index,
             visited: BlockedVisitedStorageAffine::new(ref_graph),
             bubbles_reached_m: ReachedBubbleExits::new(costs, ref_graph, seq.len()),
+            bubbles_reached_i: ReachedBubbleExits::new(costs, ref_graph, seq.len()),
+            bubbles_reached_d: ReachedBubbleExits::new(costs, ref_graph, seq.len()),
         }
     }
 
@@ -624,14 +628,32 @@ impl<N, O> AstarVisited<N, O> for AffineAstarData<N, O>
     fn visit(&mut self, score: Score, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) {
         // eprintln!("VISIT: {aln_node:?} ({aln_state:?}), score: {score}");
 
-        if aln_state == AlignState::Match && self.bubble_index.is_exit(aln_node.node()) {
-            self.bubbles_reached_m.mark_reached(aln_node.node(), aln_node.offset(), score);
+        if self.bubble_index.is_exit(aln_node.node()) {
+            match aln_state {
+                AlignState::Match =>
+                    self.bubbles_reached_m.mark_reached(aln_node.node(), aln_node.offset(), score),
+                AlignState::Insertion =>
+                    self.bubbles_reached_i.mark_reached(aln_node.node(), aln_node.offset(), score),
+                AlignState::Deletion =>
+                    self.bubbles_reached_d.mark_reached(aln_node.node(), aln_node.offset(), score),
+                AlignState::Insertion2 | AlignState::Deletion2 =>
+                    panic!("Invalid align state {aln_state:?} for gap-affine!")
+            }
         }
     }
 
     #[inline]
     fn prune(&self, score: Score, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> bool {
-        !self.bubbles_reached_m.can_improve_alignment(&self.bubble_index, aln_node, aln_state, score)
+        match aln_state {
+            AlignState::Match =>
+                !self.bubbles_reached_m.can_improve_alignment(&self.bubble_index, aln_node, aln_state, score),
+            AlignState::Insertion =>
+                !self.bubbles_reached_i.can_improve_alignment(&self.bubble_index, aln_node, aln_state, score),
+            AlignState::Deletion =>
+                !self.bubbles_reached_d.can_improve_alignment(&self.bubble_index, aln_node, aln_state, score),
+            AlignState::Insertion2 | AlignState::Deletion2 =>
+                panic!("Invalid align state {aln_state:?} for gap-affine!")
+        }
     }
 
     #[inline]
@@ -726,15 +748,15 @@ impl<N, O> QueueLayer for AffineQueueLayer<N, O>
     }
 
     fn pop(&mut self) -> Option<Self::QueueItem> {
-        self.queued_states_i
+        self.queued_states_m
             .pop()
-            .map(|(score, node)| AstarQueuedItem(score, node, AlignState::Insertion))
+            .map(|(score, node)| AstarQueuedItem(score, node, AlignState::Match))
             .or_else(|| self.queued_states_d
                 .pop()
                 .map(|(score, node)| AstarQueuedItem(score, node, AlignState::Deletion))
-                .or_else(|| self.queued_states_m
+                .or_else(|| self.queued_states_i
                     .pop()
-                    .map(|(score, node)| AstarQueuedItem(score, node, AlignState::Match))
+                    .map(|(score, node)| AstarQueuedItem(score, node, AlignState::Insertion))
                 )
             )
     }
@@ -759,8 +781,8 @@ where N: NodeIndexType,
     fn default() -> Self {
         Self {
             queued_states_m: Vec::with_capacity(16),
-            queued_states_i: Vec::with_capacity(8),
-            queued_states_d: Vec::with_capacity(8)
+            queued_states_i: Vec::with_capacity(4),
+            queued_states_d: Vec::with_capacity(4)
         }
     }
 }

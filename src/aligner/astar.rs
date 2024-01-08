@@ -1,5 +1,6 @@
 use std::fmt::Write;
 use std::rc::Rc;
+use nonmax::NonMaxU32;
 use crate::aligner::Alignment;
 use crate::aligner::aln_graph::{AlignmentGraph, AlignmentGraphNode, AlignState};
 use crate::aligner::config::AlignmentConfig;
@@ -91,7 +92,7 @@ impl<N> Default for AstarResult<N>
 {
     fn default() -> Self {
         Self {
-            score: Score::Score(0),
+            score: Score::Score(NonMaxU32::new(0).unwrap()),
             alignment: Vec::default(),
 
             num_queued: 0,
@@ -128,8 +129,8 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
     let mut queue = Q::default();
     for initial_state in aln_graph.initial_states(ref_graph).into_iter() {
         let h = heuristic.h(&initial_state, AlignState::Match);
-        queue.queue_aln_state(initial_state, AlignState::Match, Score::Score(0), h);
-        visited_data.set_score(&initial_state, AlignState::Match, Score::Score(0));
+        queue.queue_aln_state(initial_state, AlignState::Match, Score::Score(NonMaxU32::new(0).unwrap()), h);
+        visited_data.set_score(&initial_state, AlignState::Match, Score::Score(NonMaxU32::new(0).unwrap()));
 
         result.num_queued += 1;
     }

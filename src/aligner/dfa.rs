@@ -153,6 +153,7 @@ where
                 )),
                 Successor::Match(child) => {
                     if astar_visited.prune(self.score, &child, AlignState::Match) {
+                        // eprintln!("- dfa prune");
                         continue;
                     }
 
