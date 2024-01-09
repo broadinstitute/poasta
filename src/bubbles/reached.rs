@@ -149,31 +149,31 @@ impl CanImproveAlnCheck for ReachedMatch {
         match (prev_reached_bubble, next_reached_bubble) {
             (None, None) => true,
             (Some((prev_offset, prev_score)), Some((next_offset, next_score))) => {
-                eprintln!("- checking bubbles ({prev_offset:?}, score: {prev_score:?}), ({next_offset:?}, score: {next_score:?})");
+                // eprintln!("- checking bubbles ({prev_offset:?}, score: {prev_score:?}), ({next_offset:?}, score: {next_score:?})");
                 let gap_length = *next_offset - *prev_offset - O::one();
                 let ins_score_from_prev = *prev_score
                     + costs.gap_cost(AlignState::Match, gap_length.as_usize());
-                eprintln!("- ins score from prev: {ins_score_from_prev:?}, current: {current_score:?}");
+                // eprintln!("- ins score from prev: {ins_score_from_prev:?}, current: {current_score:?}");
 
                 let can_improve_ins = *current_score < ins_score_from_prev;
 
                 let del_score_from_next = *next_score
                     + costs.gap_cost(AlignState::Match, gap_length.as_usize());
-                eprintln!("- del score from next: {del_score_from_next:?}, current: {current_score:?}");
+                // eprintln!("- del score from next: {del_score_from_next:?}, current: {current_score:?}");
 
                 let can_improve_del = *current_score < del_score_from_next
                     && gap_length.as_usize() <= min_dist_to_end;
 
-                eprintln!("- ins: {can_improve_ins}, del: {can_improve_del}");
+                // eprintln!("- ins: {can_improve_ins}, del: {can_improve_del}");
                 can_improve_ins && can_improve_del
             },
             (None, Some((next_offset, next_score))) => {
-                eprintln!("- checking bubbles (None), ({next_offset:?}, score: {next_score:?})");
+                // eprintln!("- checking bubbles (None), ({next_offset:?}, score: {next_score:?})");
                 let gap_length = *next_offset - target_offset_min;
                 let del_score_from_next = *next_score +
                     costs.gap_cost(AlignState::Match, gap_length.as_usize());
 
-                eprintln!("- del score from next: {del_score_from_next:?}, current: {current_score:?}");
+                // eprintln!("- del score from next: {del_score_from_next:?}, current: {current_score:?}");
 
                 if gap_length.as_usize() > min_dist_to_end {
                     true
@@ -182,7 +182,7 @@ impl CanImproveAlnCheck for ReachedMatch {
                 }
             },
             (Some((prev_offset, prev_score)), None) => {
-                eprintln!("- checking bubbles ({prev_offset:?}, score: {prev_score:?}), (None)");
+                // eprintln!("- checking bubbles ({prev_offset:?}, score: {prev_score:?}), (None)");
                 if target_offset_max.as_usize() > seq_len {
                     true
                 } else {
@@ -190,7 +190,7 @@ impl CanImproveAlnCheck for ReachedMatch {
                     let ins_score_from_prev = *prev_score
                         + costs.gap_cost(AlignState::Match, gap_length.as_usize());
 
-                    eprintln!("- ins score: {ins_score_from_prev:?}, curr: {current_score:?}");
+                    // eprintln!("- ins score: {ins_score_from_prev:?}, curr: {current_score:?}");
 
                     *current_score < ins_score_from_prev
                 }
@@ -219,24 +219,24 @@ impl CanImproveAlnCheck for ReachedInsertion {
         match (prev_reached_bubble, next_reached_bubble) {
             (None, None) => true,
             (Some((prev_offset, prev_score)), Some((next_offset, _))) => {
-                eprintln!("- checking bubbles ({prev_offset:?}, score: {prev_score:?}), ({next_offset:?})");
+                // eprintln!("- checking bubbles ({prev_offset:?}, score: {prev_score:?}), ({next_offset:?})");
                 let gap_length = *next_offset - *prev_offset - O::one();
                 let ins_score_from_prev = *prev_score
                     + costs.gap_cost(AlignState::Insertion, gap_length.as_usize());
 
-                eprintln!("- ins score from prev: {ins_score_from_prev:?}, current: {current_score:?}");
+                // eprintln!("- ins score from prev: {ins_score_from_prev:?}, current: {current_score:?}");
                 *current_score < ins_score_from_prev
             },
             (None, Some(_)) => true,
             (Some((prev_offset, prev_score)), None) => {
-                eprintln!("- checking bubbles ({prev_offset:?}, score: {prev_score:?}), (None)");
+                // eprintln!("- checking bubbles ({prev_offset:?}, score: {prev_score:?}), (None)");
                 if target_offset_max.as_usize() > seq_len {
                     true
                 } else {
                     let gap_length = target_offset_max - *prev_offset;
                     let ins_score_from_prev = *prev_score
                         + costs.gap_cost(AlignState::Insertion, gap_length.as_usize());
-                    eprintln!("- ins score from prev: {ins_score_from_prev:?}, current: {current_score:?}");
+                    // eprintln!("- ins score from prev: {ins_score_from_prev:?}, current: {current_score:?}");
 
                     *current_score < ins_score_from_prev
                 }
@@ -265,22 +265,22 @@ impl CanImproveAlnCheck for ReachedDeletion {
         match (prev_reached_bubble, next_reached_bubble) {
             (None, None) => true,
             (Some((prev_offset, _)), Some((next_offset, next_score))) => {
-                eprintln!("- checking bubbles ({prev_offset:?}), ({next_offset:?}, score: {next_score:?})");
+                // eprintln!("- checking bubbles ({prev_offset:?}), ({next_offset:?}, score: {next_score:?})");
                 let gap_length = *next_offset - *prev_offset - O::one();
                 let del_score_from_next = *next_score
                     + costs.gap_cost(AlignState::Deletion, gap_length.as_usize());
 
-                eprintln!("- del score from next: {del_score_from_next:?}, current: {current_score:?}");
+                // eprintln!("- del score from next: {del_score_from_next:?}, current: {current_score:?}");
                 *current_score < del_score_from_next
                     && gap_length.as_usize() <= min_dist_to_end
             },
             (None, Some((next_offset, next_score))) => {
-                eprintln!("- checking bubbles (None), ({next_offset:?}, score: {next_score:?})");
+                // eprintln!("- checking bubbles (None), ({next_offset:?}, score: {next_score:?})");
                 let gap_length = *next_offset - target_offset_min;
                 let del_score_from_next = *next_score +
                     costs.gap_cost(AlignState::Deletion, gap_length.as_usize());
 
-                eprintln!("- del score from next: {del_score_from_next:?}, current: {current_score:?}");
+                // eprintln!("- del score from next: {del_score_from_next:?}, current: {current_score:?}");
                 if gap_length.as_usize() > min_dist_to_end {
                     true
                 } else {

@@ -153,7 +153,7 @@ where
                 )),
                 Successor::Match(child) => {
                     if astar_visited.prune(self.score, &child, AlignState::Match) {
-                        eprintln!("- dfa prune");
+                        // eprintln!("- dfa prune");
                         continue;
                     }
 
@@ -189,7 +189,7 @@ where
         V: AstarVisited<G::NodeIndex, O>,
     {
         while let Some(child) = parent.children_iter().next() {
-            eprintln!("DFA: succ: {child:?}, offset: {:?}", parent.offset().increase_one());
+            // eprintln!("DFA: succ: {child:?}, offset: {:?}", parent.offset().increase_one());
 
             if child == self.ref_graph.end_node() {
                 let aln_termination = AlignmentGraphNode::new(child, parent.offset());

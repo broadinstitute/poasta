@@ -146,7 +146,7 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
             continue;
         }
 
-        eprintln!("---- FRONT ---- [Score: {score}] {aln_node:?} {aln_state:?}");
+        // eprintln!("---- FRONT ---- [Score: {score}] {aln_node:?} {aln_state:?}");
         // eprintln!("- is end node? {:?} == {:?}", ref_graph.end_node(), aln_node.node());
         if aln_graph.is_end(ref_graph, seq, &aln_node, aln_state) {
             result.num_visited += 1;
@@ -154,7 +154,7 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
         }
 
         if visited_data.prune(score, &aln_node, aln_state) {
-            eprintln!("PRUNE {aln_node:?} ({aln_state:?}), score: {score:?}");
+            // eprintln!("PRUNE {aln_node:?} ({aln_state:?}), score: {score:?}");
             result.num_pruned += 1;
             continue;
         }
