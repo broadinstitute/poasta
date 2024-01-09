@@ -577,6 +577,7 @@ pub struct AffineAstarData<N, O>
 where N: NodeIndexType,
       O: OffsetType,
 {
+    costs: GapAffine,
     bubble_index: Rc<BubbleIndex<N>>,
     visited: BlockedVisitedStorageAffine<N, O>,
 
@@ -593,6 +594,7 @@ impl<N, O> AffineAstarData<N, O>
         where G: AlignableRefGraph<NodeIndex=N>,
     {
         Self {
+            costs,
             bubble_index,
             visited: BlockedVisitedStorageAffine::new(ref_graph),
             bubbles_reached_m: ReachedBubbleExits::new(costs, ref_graph, seq.len()),
@@ -625,8 +627,8 @@ impl<N, O> AstarVisited<N, O> for AffineAstarData<N, O>
         self.visited.set_score(aln_node, aln_state, score)
     }
 
-    fn visit(&mut self, score: Score, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) {
-        // eprintln!("VISIT: {aln_node:?} ({aln_state:?}), score: {score}");
+    fn mark_reached(&mut self, score: Score, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) {
+        // eprintln!("REACHED: {aln_node:?} ({aln_state:?}), score: {score}");
 
         if self.bubble_index.is_exit(aln_node.node()) {
             match aln_state {
@@ -640,6 +642,16 @@ impl<N, O> AstarVisited<N, O> for AffineAstarData<N, O>
                     panic!("Invalid align state {aln_state:?} for gap-affine!")
             }
         }
+    }
+
+    fn dfa_match(&mut self, score: Score, parent: &AlignmentGraphNode<N, O>, child: &AlignmentGraphNode<N, O>) {
+        self.mark_reached(score, child, AlignState::Match);
+
+        // Also mark I/D states as reached such that pruning is more effective
+        let ins = AlignmentGraphNode::new(parent.node(), child.offset());
+        let del = AlignmentGraphNode::new(child.node(), parent.offset());
+        self.mark_reached(score + self.costs.gap_open() + self.costs.gap_extend(), &ins, AlignState::Insertion);
+        self.mark_reached(score + self.costs.gap_open() + self.costs.gap_extend(), &del, AlignState::Deletion);
     }
 
     #[inline]
@@ -802,7 +814,7 @@ impl<N, O> AstarQueue<N, O> for AffineLayeredQueue<N, O>
         let priority = u32::from(score) as usize + h;
         let item = AstarQueuedItem(score, node, aln_state);
 
-        // eprintln!("Queuing {node:?} ({aln_state:?}), score: {score:?}, heuristic: {h}, priority: {priority}");
+        eprintln!("Queuing {node:?} ({aln_state:?}), score: {score:?}, heuristic: {h}, priority: {priority}");
 
         self.queue(item, priority)
     }
