@@ -42,8 +42,8 @@ pub fn load_graph_from_fasta_msa(path: impl AsRef<Path>) -> Result<POAGraphWithI
     };
     let mut reader = fasta::Reader::new(reader_inner);
 
-    let mut graph = POAGraph::<usize>::new();
-    let mut nodes_per_col: Vec<Vec<POANodeIndex<usize>>> = Vec::new();
+    let mut graph = POAGraph::<u32>::new();
+    let mut nodes_per_col: Vec<Vec<POANodeIndex<u32>>> = Vec::new();
     for (seq_id, record) in reader.records().enumerate() {
         let seq = record?;
 
@@ -88,7 +88,7 @@ pub fn load_graph_from_fasta_msa(path: impl AsRef<Path>) -> Result<POAGraphWithI
 
     graph.post_process()?;
 
-    Ok(POAGraphWithIx::USIZE(graph))
+    Ok(POAGraphWithIx::U32(graph))
 }
 
 pub fn format_as_dot<Ix: IndexType>(writer: &mut impl fmt::Write, graph: &POAGraph<Ix>) -> fmt::Result {

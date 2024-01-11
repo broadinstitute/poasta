@@ -213,7 +213,7 @@ fn align_subcommand(align_args: &AlignArgs) -> Result<()> {
             load_graph(&file_in)?
         }
     } else {
-        POAGraphWithIx::USIZE(POAGraph::new())
+        POAGraphWithIx::U32(POAGraph::new())
     };
 
     // TODO: make configurable through CLI
