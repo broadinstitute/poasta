@@ -13,16 +13,12 @@ pub trait QueueLayer : Default + Clone {
     fn capacity(&self) -> usize;
 }
 
-const MAX_REUSABLE_CAPACITY: usize = 4096;
-
 /// Layered (bucket) queue of items
 ///
 /// The layer number represents the priority of the queued item.
 pub struct LayeredQueue<L> {
     layers: VecDeque<L>,
     layer_min: usize,
-    reusable_layers: Vec<L>,
-    reusable_capacity: usize,
 }
 
 impl<L> LayeredQueue<L>
@@ -43,27 +39,12 @@ impl<L> LayeredQueue<L>
                 let diff = self.layer_min - priority;
                 self.layers.reserve(diff);
 
-                let mut num_added = 0;
-                for _ in 0..std::cmp::min(self.reusable_layers.len(), diff) {
-                    let new_layer = self.reusable_layers.pop().unwrap();
-                    self.reusable_capacity -= new_layer.capacity();
-                    self.layers.push_front(new_layer);
-                    num_added += 1;
-                }
-
-                for _ in 0..(diff-num_added) {
+                for _ in 0..diff {
                     self.layers.push_front(L::default())
                 }
 
                 self.layer_min = priority;
             } else if priority >= layer_max {
-                let diff = priority - layer_max + 1;
-                for _ in 0..std::cmp::min(self.reusable_layers.len(), diff) {
-                    let new_layer = self.reusable_layers.pop().unwrap();
-                    self.reusable_capacity -= new_layer.capacity();
-                    self.layers.push_back(new_layer);
-                }
-
                 self.layers.resize(priority - self.layer_min + 1, L::default());
             }
         }
@@ -78,14 +59,7 @@ impl<L> LayeredQueue<L>
 
         while !self.layers.is_empty() {
             if self.layers[0].is_empty() {
-                let popped_layer = self.layers.pop_front().unwrap();
-
-                // Retain empty layers because we can reuse our hard-fought allocated memory
-                // for new layers
-                if popped_layer.capacity() > 32 && self.reusable_capacity < MAX_REUSABLE_CAPACITY {
-                    self.reusable_capacity += popped_layer.capacity();
-                    self.reusable_layers.push(popped_layer)
-                }
+                self.layers.pop_front();
                 self.layer_min += 1;
             } else {
                 break
@@ -101,10 +75,8 @@ impl<L> Default for LayeredQueue<L>
 {
     fn default() -> Self {
         Self {
-            layers: VecDeque::with_capacity(1024),
+            layers: VecDeque::with_capacity(64),
             layer_min: 0,
-            reusable_layers: Vec::with_capacity(32),
-            reusable_capacity: 0,
         }
     }
 }
