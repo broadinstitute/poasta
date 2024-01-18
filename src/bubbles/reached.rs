@@ -162,7 +162,7 @@ impl CanImproveAlnCheck for ReachedMatch {
                 // eprintln!("- del score from next: {del_score_from_next:?}, current: {current_score:?}");
 
                 let can_improve_del = *current_score < del_score_from_next
-                    && gap_length.as_usize() <= min_dist_to_end;
+                    || gap_length.as_usize() > min_dist_to_end;
 
                 // eprintln!("- ins: {can_improve_ins}, del: {can_improve_del}");
                 can_improve_ins && can_improve_del
@@ -272,7 +272,7 @@ impl CanImproveAlnCheck for ReachedDeletion {
 
                 // eprintln!("- del score from next: {del_score_from_next:?}, current: {current_score:?}");
                 *current_score < del_score_from_next
-                    && gap_length.as_usize() <= min_dist_to_end
+                    || gap_length.as_usize() > min_dist_to_end
             },
             (None, Some((next_offset, next_score))) => {
                 // eprintln!("- checking bubbles (None), ({next_offset:?}, score: {next_score:?})");
