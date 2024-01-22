@@ -168,13 +168,6 @@ impl AlignmentGraph for AffineAlignmentGraph {
                         .update_score_if_lower(&new_node_del, AlignState::Deletion, node, state, new_score_del)
                     {
                         f(score_delta, new_node_del, AlignState::Deletion);
-
-                        // Also immediately traverse zero-cost D->M edge
-                        if visited_data
-                            .update_score_if_lower(&new_node_del, AlignState::Match, &new_node_del, AlignState::Deletion, new_score_del)
-                        {
-                            f(score_delta, new_node_del, AlignState::Match);
-                        }
                     }
                 }
 
@@ -185,16 +178,15 @@ impl AlignmentGraph for AffineAlignmentGraph {
                     .update_score_if_lower(&new_node_ins, AlignState::Insertion, node, state, new_score_ins)
                 {
                     f(self.costs.cost_gap_open + self.costs.cost_gap_extend, new_node_ins, AlignState::Insertion);
-
-                    // Also immediately traverse zero-cost I->M edge
-                    if visited_data
-                        .update_score_if_lower(&new_node_ins, AlignState::Match, &new_node_ins, AlignState::Insertion, new_score_ins)
-                    {
-                        f(self.costs.cost_gap_open + self.costs.cost_gap_extend, new_node_ins, AlignState::Match);
-                    }
                 }
             },
             AlignState::Insertion => {
+                // I->M edge has zero cost
+                if visited_data.update_score_if_lower(node, AlignState::Match, node, AlignState::Insertion, score) {
+                    f(0, *node, AlignState::Match);
+                }
+
+                // Extend insertion
                 let new_node_ins = AlignmentGraphNode::new(node.node(), node.offset().increase_one());
                 let new_score_ins = score + self.costs.cost_gap_extend;
 
@@ -202,18 +194,16 @@ impl AlignmentGraph for AffineAlignmentGraph {
                     .update_score_if_lower(&new_node_ins, AlignState::Insertion, node, state, new_score_ins)
                 {
                     f(self.costs.cost_gap_extend, new_node_ins, AlignState::Insertion);
-
-                    // Also immediately traverse zero-cost I->M edge
-                    if visited_data
-                        .update_score_if_lower(&new_node_ins, AlignState::Match, &new_node_ins, AlignState::Insertion, new_score_ins)
-                    {
-                        f(self.costs.cost_gap_extend, new_node_ins, AlignState::Match);
-                    }
                 }
             },
             AlignState::Deletion => {
+                // D->M edge has zero cost
+                if visited_data.update_score_if_lower(node, AlignState::Match, node, AlignState::Deletion, score) {
+                    f(0, *node, AlignState::Match);
+                }
+
                 for ref_succ in ref_graph.successors(node.node()) {
-                    let score_delta = if ref_succ == ref_graph.end_node() { 0 } else { self.costs.gap_extend() };
+                    let score_delta = self.costs.gap_extend();
 
                     // Extend deletion
                     let new_node_del = AlignmentGraphNode::new(ref_succ, node.offset());
@@ -222,13 +212,6 @@ impl AlignmentGraph for AffineAlignmentGraph {
                         .update_score_if_lower(&new_node_del, AlignState::Deletion, node, state, new_score_del)
                     {
                         f(score_delta, new_node_del, AlignState::Deletion);
-
-                        // Also immediately traverse zero-cost D->M edge
-                        if visited_data
-                            .update_score_if_lower(&new_node_del, AlignState::Match, &new_node_del, AlignState::Deletion, new_score_del)
-                        {
-                            f(score_delta, new_node_del, AlignState::Match);
-                        }
                     }
                 }
             },
@@ -248,19 +231,14 @@ impl AlignmentGraph for AffineAlignmentGraph {
               O: OffsetType,
               F: FnMut(u8, AlignmentGraphNode<N, O>, AlignState)
     {
+        // At ref graph end, so it's not possible to expand to a (mis)match or deletion, since there are no nodes left.
+        // We can still open an insertion though.
         let new_node_ins = AlignmentGraphNode::new(parent.node(), parent.offset().increase_one());
         let new_score_ins = score + self.costs.cost_gap_open + self.costs.cost_gap_extend;
         if visited_data
             .update_score_if_lower(&new_node_ins, AlignState::Insertion, parent, AlignState::Match, new_score_ins)
         {
             f(self.costs.cost_gap_open + self.costs.cost_gap_extend, new_node_ins, AlignState::Insertion);
-
-            // Also immediately traverse zero-cost I->M edge
-            if visited_data
-                .update_score_if_lower(&new_node_ins, AlignState::Match, &new_node_ins, AlignState::Insertion, new_score_ins)
-            {
-                f(self.costs.cost_gap_open + self.costs.cost_gap_extend, new_node_ins, AlignState::Match);
-            }
         }
     }
 
@@ -277,19 +255,14 @@ impl AlignmentGraph for AffineAlignmentGraph {
               O: OffsetType,
               F: FnMut(u8, AlignmentGraphNode<N, O>, AlignState)
     {
+        // At query end, so we can't continue with a (mis)match or insertion, since there is no query sequence left.
+        // We can still open a deletion.
         let new_node_del = AlignmentGraphNode::new(child, parent.offset());
         let new_score_del = score + self.costs.cost_gap_open + self.costs.cost_gap_extend;
         if visited_data
             .update_score_if_lower(&new_node_del, AlignState::Deletion, parent, AlignState::Match, new_score_del)
         {
             f(self.costs.cost_gap_open + self.costs.cost_gap_extend, new_node_del, AlignState::Deletion);
-
-            // Also immediately traverse zero-cost D->M edge
-            if visited_data
-                .update_score_if_lower(&new_node_del, AlignState::Match, &new_node_del, AlignState::Deletion, new_score_del)
-            {
-                f(self.costs.cost_gap_open + self.costs.cost_gap_extend, new_node_del, AlignState::Match);
-            }
         }
     }
 
@@ -321,13 +294,6 @@ impl AlignmentGraph for AffineAlignmentGraph {
             .update_score_if_lower(&new_node_ins, AlignState::Insertion, parent, AlignState::Match, new_score_ins)
         {
             f(self.costs.cost_gap_open + self.costs.cost_gap_extend, new_node_ins, AlignState::Insertion);
-
-            // Also immediately traverse zero-cost I->M edge
-            if visited_data
-                .update_score_if_lower(&new_node_ins, AlignState::Match, &new_node_ins, AlignState::Insertion, new_score_ins)
-            {
-                f(self.costs.cost_gap_open + self.costs.cost_gap_extend, new_node_ins, AlignState::Match);
-            }
         }
 
         let new_node_del = AlignmentGraphNode::new(child.node(), parent.offset());
@@ -336,13 +302,6 @@ impl AlignmentGraph for AffineAlignmentGraph {
             .update_score_if_lower(&new_node_del, AlignState::Deletion, parent, AlignState::Match, new_score_del)
         {
             f(self.costs.cost_gap_open + self.costs.cost_gap_extend, new_node_del, AlignState::Deletion);
-
-            // Also immediately traverse zero-cost D->M edge
-            if visited_data
-                .update_score_if_lower(&new_node_del, AlignState::Match, &new_node_del, AlignState::Deletion, new_score_del)
-            {
-                f(self.costs.cost_gap_open + self.costs.cost_gap_extend, new_node_del, AlignState::Match);
-            }
         }
     }
 
@@ -634,12 +593,13 @@ impl<N, O> AstarVisited<N, O> for AffineAstarData<N, O>
             match aln_state {
                 AlignState::Match =>
                     self.bubbles_reached_m.mark_reached(aln_node.node(), aln_node.offset(), score),
-                AlignState::Insertion =>
-                    self.bubbles_reached_i.mark_reached(aln_node.node(), aln_node.offset(), score),
-                AlignState::Deletion =>
-                    self.bubbles_reached_d.mark_reached(aln_node.node(), aln_node.offset(), score),
+                // AlignState::Insertion =>
+                    // self.bubbles_reached_i.mark_reached(aln_node.node(), aln_node.offset(), score),
+                // AlignState::Deletion =>
+                    // self.bubbles_reached_d.mark_reached(aln_node.node(), aln_node.offset(), score),
                 AlignState::Insertion2 | AlignState::Deletion2 =>
-                    panic!("Invalid align state {aln_state:?} for gap-affine!")
+                    panic!("Invalid align state {aln_state:?} for gap-affine!"),
+                _ => (),
             }
         }
     }
@@ -648,24 +608,29 @@ impl<N, O> AstarVisited<N, O> for AffineAstarData<N, O>
         self.mark_reached(score, child, AlignState::Match);
 
         // Also mark I/D states as reached such that pruning is more effective
-        let ins = AlignmentGraphNode::new(parent.node(), child.offset());
-        let del = AlignmentGraphNode::new(child.node(), parent.offset());
-        self.mark_reached(score + self.costs.gap_open() + self.costs.gap_extend(), &ins, AlignState::Insertion);
-        self.mark_reached(score + self.costs.gap_open() + self.costs.gap_extend(), &del, AlignState::Deletion);
+        // let ins = AlignmentGraphNode::new(parent.node(), child.offset());
+        // let del = AlignmentGraphNode::new(child.node(), parent.offset());
+        // self.mark_reached(score + self.costs.gap_open() + self.costs.gap_extend(), &ins, AlignState::Insertion);
+        // self.mark_reached(score + self.costs.gap_open() + self.costs.gap_extend(), &del, AlignState::Deletion);
     }
 
     #[inline]
     fn prune(&self, score: Score, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> bool {
-        match aln_state {
-            AlignState::Match =>
-                !self.bubbles_reached_m.can_improve_alignment(&self.bubble_index, aln_node, aln_state, score),
-            AlignState::Insertion =>
-                !self.bubbles_reached_i.can_improve_alignment(&self.bubble_index, aln_node, aln_state, score),
-            AlignState::Deletion =>
-                !self.bubbles_reached_d.can_improve_alignment(&self.bubble_index, aln_node, aln_state, score),
-            AlignState::Insertion2 | AlignState::Deletion2 =>
-                panic!("Invalid align state {aln_state:?} for gap-affine!")
-        }
+        // let can_improve_indel = match aln_state {
+        //     AlignState::Match => true,
+        //     AlignState::Insertion =>
+        //         self.bubbles_reached_i.can_improve_alignment(&self.bubble_index, aln_node, aln_state, score),
+        //     AlignState::Deletion =>
+        //         self.bubbles_reached_d.can_improve_alignment(&self.bubble_index, aln_node, aln_state, score),
+        //     AlignState::Insertion2 | AlignState::Deletion2 =>
+        //         panic!("Invalid align state {aln_state:?} for gap-affine!")
+        // };
+        //
+        // if !can_improve_indel {
+        //     return true
+        // }
+
+        !self.bubbles_reached_m.can_improve_alignment(&self.bubble_index, aln_node, aln_state, score)
     }
 
     #[inline]
