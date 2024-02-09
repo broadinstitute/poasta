@@ -154,7 +154,6 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
         }
 
         if visited_data.prune(score, &aln_node, aln_state) {
-            // eprintln!("PRUNE {aln_node:?} ({aln_state:?}), score: {score:?}");
             result.num_pruned += 1;
             continue;
         }
@@ -214,10 +213,6 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
                 result.num_queued += 1;
                 queue.queue_aln_state(succ, succ_state, score+score_delta, h);
             })
-        }
-
-        if let Some(debug) = debug_writer {
-            debug.log(DebugOutputMessage::new_from_astar_data(&visited_data));
         }
     };
 

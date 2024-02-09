@@ -33,6 +33,12 @@ pub trait AlignmentCosts: Copy {
     fn gap_cost(&self, current_state: AlignState, length: usize) -> usize;
 }
 
+pub trait GetAlignmentCosts {
+    type Costs: AlignmentCosts;
+    
+    fn get_costs(&self) -> &Self::Costs;
+}
+
 
 /// Type of alignment to perform
 ///

@@ -4,8 +4,9 @@ use std::ops::{BitAnd, Not, Shr};
 
 use num::{FromPrimitive, Unsigned, One, Bounded};
 use num::traits::{SaturatingAdd, SaturatingSub};
+use range_set_blaze::Integer;
 
-pub trait OffsetType: FromPrimitive + Unsigned + PartialEq + Eq
+pub trait OffsetType: Integer + FromPrimitive + Unsigned + PartialEq + Eq
     + PartialOrd + Ord + Default + Copy + Hash + Debug + Bounded + SaturatingSub + SaturatingAdd
     + Not<Output=Self> + BitAnd<Output=Self> + Shr<Output=Self>
 {

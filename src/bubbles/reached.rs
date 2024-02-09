@@ -1,75 +1,48 @@
-use std::cmp::min;
-use std::collections::BTreeMap;
+use std::cmp::{max, min};
 use std::marker::PhantomData;
 use std::ops::{RangeFrom, RangeTo};
+use range_set_blaze::{RangeSetBlaze, Integer};
 use crate::aligner::offsets::OffsetType;
-use crate::aligner::scoring::{AlignmentCosts, Score};
+use crate::aligner::scoring::{AlignmentCosts, GetAlignmentCosts, Score};
 use crate::aligner::aln_graph::{AlignmentGraphNode, AlignState};
+use crate::aligner::astar::AstarVisited;
 use crate::bubbles::index::{BubbleIndex, NodeBubbleMap};
-use crate::graphs::{AlignableRefGraph, NodeIndexType};
+use crate::graphs::NodeIndexType;
 
 
-pub struct ReachedBubbleExits<C, O, S>
-    where C: AlignmentCosts,
-          O: OffsetType,
-          S: CanImproveAlnCheck,
+pub struct ReachedBubbleExitsMatch<'a, V, N, O>
+    where V: AstarVisited<N, O> + GetAlignmentCosts,
+          N: NodeIndexType,
+          O: OffsetType + Integer,
 {
-    costs: C,
-    reached_exits: Vec<BTreeMap<O, Score>>,
+    visited: &'a V,
+    reached_offsets: &'a RangeSetBlaze<O>,
     seq_len: usize,
-    dummy: PhantomData<S>,
+    dummy: PhantomData<N>,
 }
 
-impl<C, O, S> ReachedBubbleExits<C, O, S>
-    where C: AlignmentCosts,
-          O: OffsetType,
-          S: CanImproveAlnCheck,
+impl<'a, V, N, O> ReachedBubbleExitsMatch<'a, V, N, O>
+    where V: AstarVisited<N, O> + GetAlignmentCosts,
+          N: NodeIndexType,
+          O: OffsetType + Integer,
 {
-    pub fn new<G: AlignableRefGraph>(costs: C, ref_graph: &G, seq_len: usize) -> Self {
+    pub fn new(visited: &'a V, reached_offsets: &'a RangeSetBlaze<O>, seq_len: usize) -> Self {
         Self {
-            costs,
-            reached_exits: vec![BTreeMap::default();
-                                ref_graph.node_count_with_start_and_end()],
+            visited,
+            reached_offsets,
             seq_len,
             dummy: PhantomData,
         }
     }
 
-    pub fn mark_reached<N: NodeIndexType>(&mut self, node: N, offset: O, score: Score) {
-        self.reached_exits[node.index()]
-            .entry(offset)
-            .and_modify(|v| *v = min(*v, score))
-            .or_insert_with(|| score);
-    }
-
-    pub fn can_improve_alignment<N>(
-        &self, bubble_index: &BubbleIndex<N>,
-        aln_node: &AlignmentGraphNode<N, O>,
-        aln_state: AlignState,
-        current_score: Score
-    ) -> bool
-        where N: NodeIndexType,
-    {
-        if !bubble_index.node_is_part_of_bubble(aln_node.node()) {
-            return true;
-        }
-
-        bubble_index.get_node_bubbles(aln_node.node())
-            .iter()
-            .all(|bubble|
-                self.can_improve_bubble(bubble_index, bubble, aln_node, aln_state, current_score))
-    }
-
-    pub fn can_improve_bubble<N>(
+    pub fn can_improve_bubble(
         &self, bubble_index: &BubbleIndex<N>,
         bubble: &NodeBubbleMap<N>,
         aln_node: &AlignmentGraphNode<N, O>,
-        _: AlignState,
-        current_score: Score
-    ) -> bool
-        where N: NodeIndexType
-    {
-        if self.reached_exits[bubble.bubble_exit.index()].is_empty() {
+        aln_state: AlignState,
+        current_score: &Score
+    ) -> bool {
+        if self.reached_offsets.is_empty() {
             return true;
         }
 
@@ -81,271 +54,212 @@ impl<C, O, S> ReachedBubbleExits<C, O, S>
         let target_offset_max = aln_node.offset() + O::new(bubble.max_dist_to_exit);
         let min_dist_to_end = bubble_index.get_min_dist_to_end(bubble.bubble_exit)
             .saturating_sub(1);
+        let max_dist_to_end = bubble_index.get_max_dist_to_end(bubble.bubble_exit)
+            .saturating_sub(1);
 
-        // eprintln!("Checking for improving over bubble, [o^min, o^max] = [{target_offset_min:?}, {target_offset_max:?}]");
+        if target_offset_max.as_usize() > self.seq_len {
+            return true;
+        }
 
-        let mut prev_reached = self.reached_exits[bubble.bubble_exit.index()]
+        // eprintln!("Checking for improving over bubble, [o, o'^min, o'^max] = [{:?}, {target_offset_min:?}, {target_offset_max:?}]", aln_node.offset());
+        // eprintln!("Bubble exit: {:?}", bubble.bubble_exit);
+
+        let mut prev_reached = self.reached_offsets
             .range(RangeTo { end: target_offset_min }).next_back();
 
-        // eprintln!("- prev reached before loop: {prev_reached:?}");
+        let mut last_offset = None;
 
-        for next_reached in self.reached_exits[bubble.bubble_exit.index()]
+        for next_reached in self.reached_offsets
             .range(target_offset_min..=target_offset_max)
         {
-            if S::can_improve_bubble(&self.costs, self.seq_len, min_dist_to_end, &current_score,
-                target_offset_min, target_offset_max, prev_reached, Some(next_reached))
+            let offset1 = prev_reached.map_or(
+                target_offset_min,
+                |v| max(target_offset_min, v + O::one())
+            );
+
+            // Gap-affine and 2-piece alignment costs only:
+            // For the first reached bubble to the right of the current alignment state offset,
+            // we additionally check if the current state is already in deletion state and if extending that deletion
+            // can ultimately improve over a newly opened deletion from the bubble exit (that will incur the gap open cost).
+            if aln_state == AlignState::Deletion || aln_state == AlignState::Deletion2
+                && offset1 == target_offset_min
+            {
+                // Extend the gap as far as we can, such that we can still reach the query offset of the
+                // next reached bubble with match edges.
+                let num_required_match = next_reached - aln_node.offset();
+                if num_required_match.as_usize() < max_dist_to_end {
+                    let gap_ext = max_dist_to_end - (next_reached - aln_node.offset()).as_usize();
+                    let longest_deletion = bubble_index.get_max_dist_to_end(bubble.bubble_exit)
+                        .saturating_sub(1);
+
+                    let gap_cost_ext = self.visited.get_costs().gap_cost(aln_state, gap_ext);
+                    let gap_cost_open = self.visited.get_costs().gap_cost(AlignState::Match, longest_deletion);
+
+                    // eprintln!("INDEL Extension test: gap ext len: {gap_ext:?} (cost: {gap_cost_ext:?})");
+                    // eprintln!("INDEL Extension test: gap open len: {longest_deletion:?} (cost: {gap_cost_open:?})");
+
+                    if gap_cost_ext < gap_cost_open {
+                        return true
+                    }
+                }
+            }
+
+            // eprintln!("Checking o1... {offset1:?} (at score {current_score:?}");
+            if self
+                .can_improve_at_offset(bubble.bubble_exit, offset1, current_score, prev_reached, Some(next_reached), min_dist_to_end)
             {
                 return true;
             }
 
+            let offset2 = min(target_offset_max, max(target_offset_min, next_reached - O::one()));
+            if offset2 != offset1 {
+                // eprintln!("Checking o2... {offset2:?} (at score {current_score:?}");
+
+                if self
+                    .can_improve_at_offset(bubble.bubble_exit, offset2, current_score, prev_reached, Some(next_reached), min_dist_to_end)
+                {
+                    return true;
+                }
+            }
+
+            if aln_state == AlignState::Insertion || aln_state == AlignState::Insertion2 {
+                if let Some(offset_left) = prev_reached {
+                    // For gap-affine and 2-piece alignment costs only:
+                    // If the current alignment state is already in insertion state, check if this state
+                    // could ultimately improve over an existing bubble by extending this insertion
+                    // up until we reach `next_reached` with match edges
+                    let ext_end_offset = next_reached.as_usize() - bubble.max_dist_to_exit;
+                    if ext_end_offset > aln_node.offset().as_usize() {
+                        let gap_ext = (ext_end_offset - aln_node.offset().as_usize()).saturating_sub(1);
+                        let longest_insertion = (next_reached - offset_left).as_usize().saturating_sub(1);
+
+                        let gap_cost_ext = self.visited.get_costs().gap_cost(aln_state, gap_ext);
+                        let gap_cost_open = self.visited.get_costs().gap_cost(AlignState::Match, longest_insertion);
+
+                        // eprintln!("INS Extension test: gap ext len: {gap_ext:?} (cost: {gap_cost_ext:?})");
+                        // eprintln!("INS Extension test: gap open len: {longest_insertion:?} (cost: {gap_cost_open:?})");
+
+                        if gap_cost_ext < gap_cost_open {
+                            return true
+                        }
+
+                    }
+                }
+            }
+
             prev_reached = Some(next_reached);
+            last_offset = Some(offset2);
         }
 
-        // Let's check if a bubble has been reached at an offset > target_offset_max
-        let next_reached = self.reached_exits[bubble.bubble_exit.index()]
-            .range(RangeFrom { start: target_offset_max.saturating_add(&O::one()) }).next();
+        let next_reached = self.reached_offsets
+            .range(RangeFrom { start: target_offset_max.saturating_add(&O::one()) })
+            .next();
 
-        if S::can_improve_bubble(&self.costs, self.seq_len, min_dist_to_end, &current_score,
-            target_offset_min, target_offset_max, prev_reached, next_reached)
+        if last_offset.is_none()
+            && self.can_improve_at_offset(bubble.bubble_exit, target_offset_min, current_score, prev_reached, next_reached, min_dist_to_end)
         {
             return true;
         }
 
+
+        if last_offset.map_or(true, |v| v < target_offset_max)
+            && self.can_improve_at_offset(bubble.bubble_exit, target_offset_max, current_score, prev_reached, next_reached, min_dist_to_end)
+        {
+            return true;
+        }
+
+        if let Some(offset_left) = prev_reached {
+            if aln_state == AlignState::Insertion || aln_state == AlignState::Insertion2 {
+                // For gap-affine and 2-piece alignment costs only:
+                // If the current alignment state is already in insertion state, check if this state
+                // could ultimately improve over an existing bubble by extending this insertion as far as we can,
+                // such that we still can reach the bubble exit with match edges.
+                let ext_end_offset = self.seq_len - bubble.max_dist_to_exit;
+                if ext_end_offset > aln_node.offset().as_usize() {
+                    let gap_ext = ext_end_offset - aln_node.offset().as_usize();
+                    let longest_insertion = self.seq_len - offset_left.as_usize();
+
+                    let gap_cost_ext = self.visited.get_costs().gap_cost(aln_state, gap_ext);
+                    let gap_cost_open = self.visited.get_costs().gap_cost(AlignState::Match, longest_insertion);
+
+                    // eprintln!("INS Extension extreme test: gap ext len: {gap_ext:?} (cost: {gap_cost_ext:?})");
+                    // eprintln!("INS Extension extreme test: gap open len: {longest_insertion:?} (cost: {gap_cost_open:?})");
+
+                    if gap_cost_ext < gap_cost_open {
+                        return true
+                    }
+                }
+            }
+        }
+
+        // eprintln!("PRUNE");
+
         false
     }
-}
 
-pub trait CanImproveAlnCheck {
-    fn can_improve_bubble<C, O>(
-        costs: &C,
-        seq_len: usize,
+    fn can_improve_at_offset(
+        &self,
+        bubble_node: N,
+        offset_to_check: O,
+        score: &Score,
+        reached_bubble_left: Option<O>,
+        reached_bubble_right: Option<O>,
         min_dist_to_end: usize,
-        current_score: &Score,
-        target_offset_min: O,
-        target_offset_max: O,
-        prev_reached_bubble: Option<(&O, &Score)>,
-        next_reached_bubble: Option<(&O, &Score)>
-    ) -> bool
-        where C: AlignmentCosts,
-              O: OffsetType;
-}
+    ) -> bool {
+        let implicit_score = match (reached_bubble_left, reached_bubble_right) {
+            (None, None) => None,
+            (Some(offset_left), Some(offset_right)) => {
+                let left_score = self.visited.get_score(&AlignmentGraphNode::new(bubble_node, offset_left), AlignState::Match);
+                let right_score = self.visited.get_score(&AlignmentGraphNode::new(bubble_node, offset_right), AlignState::Match);
 
-pub struct ReachedMatch;
+                let gap_from_left = offset_to_check - offset_left;
+                let gap_from_right = offset_right - offset_to_check;
 
-impl CanImproveAlnCheck for ReachedMatch {
-    fn can_improve_bubble<C, O>(
-        costs: &C,
-        seq_len: usize,
-        min_dist_to_end: usize,
-        current_score: &Score,
-        target_offset_min: O,
-        target_offset_max: O,
-        prev_reached_bubble: Option<(&O, &Score)>,
-        next_reached_bubble: Option<(&O, &Score)>
-    ) -> bool
-        where C: AlignmentCosts,
-              O: OffsetType
-    {
-        match (prev_reached_bubble, next_reached_bubble) {
-            (None, None) => true,
-            (Some((prev_offset, prev_score)), Some((next_offset, next_score))) => {
-                // eprintln!("- checking bubbles ({prev_offset:?}, score: {prev_score:?}), ({next_offset:?}, score: {next_score:?})");
-                let gap_length = *next_offset - *prev_offset - O::one();
-                let ins_score_from_prev = *prev_score
-                    + costs.gap_cost(AlignState::Match, gap_length.as_usize());
-                // eprintln!("- ins score from prev: {ins_score_from_prev:?}, current: {current_score:?}");
+                let implicit_score_from_left = left_score
+                    + self.visited.get_costs().gap_cost(AlignState::Match, gap_from_left.as_usize());
 
-                let can_improve_ins = *current_score < ins_score_from_prev;
+                let implicit_score_from_right = right_score
+                    + self.visited.get_costs().gap_cost(AlignState::Match, gap_from_right.as_usize());
 
-                let del_score_from_next = *next_score
-                    + costs.gap_cost(AlignState::Match, gap_length.as_usize());
-                // eprintln!("- del score from next: {del_score_from_next:?}, current: {current_score:?}");
+                // eprintln!("Bubbles visited ({offset_left:?}, {offset_right:?}), scores: ({implicit_score_from_left:?}, {implicit_score_from_right:?})");
 
-                let can_improve_del = *current_score < del_score_from_next
-                    || gap_length.as_usize() > min_dist_to_end;
-
-                // eprintln!("- ins: {can_improve_ins}, del: {can_improve_del}");
-                can_improve_ins && can_improve_del
-            },
-            (None, Some((next_offset, next_score))) => {
-                // eprintln!("- checking bubbles (None), ({next_offset:?}, score: {next_score:?})");
-                let gap_length = *next_offset - target_offset_min;
-                let del_score_from_next = *next_score +
-                    costs.gap_cost(AlignState::Match, gap_length.as_usize());
-
-                // eprintln!("- del score from next: {del_score_from_next:?}, current: {current_score:?}");
-
-                if gap_length.as_usize() > min_dist_to_end {
-                    true
+                // Only take deletion score into consideration if the deletion length is smaller than
+                // the path length to the POA graph end node
+                if gap_from_right.as_usize() > min_dist_to_end {
+                    Some(implicit_score_from_left)
                 } else {
-                    *current_score < del_score_from_next
+                    Some(min(implicit_score_from_left, implicit_score_from_right))
                 }
             },
-            (Some((prev_offset, prev_score)), None) => {
-                // eprintln!("- checking bubbles ({prev_offset:?}, score: {prev_score:?}), (None)");
-                if target_offset_max.as_usize() > seq_len {
-                    true
+            (None, Some(offset_right)) => {
+                let right_score = self.visited.get_score(&AlignmentGraphNode::new(bubble_node, offset_right), AlignState::Match);
+                let gap_from_right = offset_right - offset_to_check;
+                let implicit_score_from_right = right_score
+                    + self.visited.get_costs().gap_cost(AlignState::Match, gap_from_right.as_usize());
+
+                // eprintln!("Bubbles visited (None, {offset_right:?}), scores: (None, {implicit_score_from_right:?})");
+
+                // Only take deletion score into consideration if the deletion length is smaller than
+                // the path length to the POA graph end node
+                if gap_from_right.as_usize() > min_dist_to_end {
+                    None
                 } else {
-                    let gap_length = target_offset_max - *prev_offset;
-                    let ins_score_from_prev = *prev_score
-                        + costs.gap_cost(AlignState::Match, gap_length.as_usize());
-
-                    // eprintln!("- ins score: {ins_score_from_prev:?}, curr: {current_score:?}");
-
-                    *current_score < ins_score_from_prev
+                    Some(implicit_score_from_right)
                 }
             },
-        }
-    }
-}
+            (Some(offset_left), None) => {
+                let left_score = self.visited.get_score(&AlignmentGraphNode::new(bubble_node, offset_left), AlignState::Match);
+                let gap_from_left = offset_to_check - offset_left;
+                let implicit_score_from_left = left_score
+                    + self.visited.get_costs().gap_cost(AlignState::Match, gap_from_left.as_usize());
 
+                // eprintln!("Bubbles visited ({offset_left:?}, None), scores: ({implicit_score_from_left:?}, None)");
 
-pub struct ReachedInsertion;
+                Some(implicit_score_from_left)
+            }
+        };
 
-impl CanImproveAlnCheck for ReachedInsertion {
-    fn can_improve_bubble<C, O>(
-        costs: &C,
-        seq_len: usize,
-        _: usize,
-        current_score: &Score,
-        _: O,
-        target_offset_max: O,
-        prev_reached_bubble: Option<(&O, &Score)>,
-        next_reached_bubble: Option<(&O, &Score)>
-    ) -> bool
-        where C: AlignmentCosts,
-              O: OffsetType
-    {
-        match (prev_reached_bubble, next_reached_bubble) {
-            (None, None) => true,
-            (Some((prev_offset, prev_score)), Some((next_offset, _))) => {
-                // eprintln!("- checking bubbles ({prev_offset:?}, score: {prev_score:?}), ({next_offset:?})");
-                let gap_length = *next_offset - *prev_offset - O::one();
-                let ins_score_from_prev = *prev_score
-                    + costs.gap_cost(AlignState::Insertion, gap_length.as_usize());
-
-                // eprintln!("- ins score from prev: {ins_score_from_prev:?}, current: {current_score:?}");
-                *current_score < ins_score_from_prev
-            },
-            (None, Some(_)) => true,
-            (Some((prev_offset, prev_score)), None) => {
-                // eprintln!("- checking bubbles ({prev_offset:?}, score: {prev_score:?}), (None)");
-                if target_offset_max.as_usize() > seq_len {
-                    true
-                } else {
-                    let gap_length = target_offset_max - *prev_offset;
-                    let ins_score_from_prev = *prev_score
-                        + costs.gap_cost(AlignState::Insertion, gap_length.as_usize());
-                    // eprintln!("- ins score from prev: {ins_score_from_prev:?}, current: {current_score:?}");
-
-                    *current_score < ins_score_from_prev
-                }
-            },
-        }
-    }
-}
-
-
-pub struct ReachedDeletion;
-
-impl CanImproveAlnCheck for ReachedDeletion {
-    fn can_improve_bubble<C, O>(
-        costs: &C,
-        _: usize,
-        min_dist_to_end: usize,
-        current_score: &Score,
-        target_offset_min: O,
-        _: O,
-        prev_reached_bubble: Option<(&O, &Score)>,
-        next_reached_bubble: Option<(&O, &Score)>
-    ) -> bool
-        where C: AlignmentCosts,
-              O: OffsetType
-    {
-        match (prev_reached_bubble, next_reached_bubble) {
-            (None, None) => true,
-            (Some((prev_offset, _)), Some((next_offset, next_score))) => {
-                // eprintln!("- checking bubbles ({prev_offset:?}), ({next_offset:?}, score: {next_score:?})");
-                let gap_length = *next_offset - *prev_offset - O::one();
-                let del_score_from_next = *next_score
-                    + costs.gap_cost(AlignState::Deletion, gap_length.as_usize());
-
-                // eprintln!("- del score from next: {del_score_from_next:?}, current: {current_score:?}");
-                *current_score < del_score_from_next
-                    || gap_length.as_usize() > min_dist_to_end
-            },
-            (None, Some((next_offset, next_score))) => {
-                // eprintln!("- checking bubbles (None), ({next_offset:?}, score: {next_score:?})");
-                let gap_length = *next_offset - target_offset_min;
-                let del_score_from_next = *next_score +
-                    costs.gap_cost(AlignState::Deletion, gap_length.as_usize());
-
-                // eprintln!("- del score from next: {del_score_from_next:?}, current: {current_score:?}");
-                if gap_length.as_usize() > min_dist_to_end {
-                    true
-                } else {
-                    *current_score < del_score_from_next
-                }
-            },
-            (Some(_), None) => {
-                true
-            },
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use petgraph::graph::NodeIndex;
-    use crate::aligner::aln_graph::AlignmentGraphNode;
-    use crate::aligner::scoring::{GapAffine, Score};
-    use crate::bubbles::index::NodeBubbleMap;
-    use crate::bubbles::reached::ReachedBubbleExits;
-    use crate::graphs::mock::create_test_graph1;
-
-    #[test]
-    fn test_is_able_to_improve_bubble() {
-        let g = create_test_graph1();
-
-        let mut reached = ReachedBubbleExits::new(
-            GapAffine::new(4, 2, 6),
-            &g
-        );
-
-        reached.mark_reached(NodeIndex::<u32>::new(3), 5u32, Score::Score(4));
-
-        let bubble_map = NodeBubbleMap::new(NodeIndex::<u32>::new(3), 3);
-
-        // Score of 4 improves over opening a deletion from bubble exit
-        assert!(reached.can_improve_bubble(
-            &bubble_map, &AlignmentGraphNode::new(NodeIndex::<u32>::new(0), 0u32), Score::Score(4),
-        ));
-
-        // Score of 14 and 16 do not improve over opening a deletion from bubble exit
-        assert!(!reached.can_improve_bubble(
-            &bubble_map, &AlignmentGraphNode::new(NodeIndex::<u32>::new(0), 0u32), Score::Score(14),
-        ));
-        assert!(!reached.can_improve_bubble(
-            &bubble_map, &AlignmentGraphNode::new(NodeIndex::<u32>::new(0), 0u32), Score::Score(16),
-        ));
-
-        // Would reach bubble exit at same score and offset
-        assert!(!reached.can_improve_bubble(
-            &bubble_map, &AlignmentGraphNode::new(NodeIndex::<u32>::new(0), 2u32), Score::Score(4),
-        ));
-
-        // Improves over opening an insertion from bubble exit
-        assert!(reached.can_improve_bubble(
-            &bubble_map, &AlignmentGraphNode::new(NodeIndex::<u32>::new(0), 4u32), Score::Score(4),
-        ));
-
-        // Score of 14 and 16 do not improve over opening an insertion from bubble exit
-        assert!(!reached.can_improve_bubble(
-            &bubble_map, &AlignmentGraphNode::new(NodeIndex::<u32>::new(0), 4u32), Score::Score(14),
-        ));
-        assert!(!reached.can_improve_bubble(
-            &bubble_map, &AlignmentGraphNode::new(NodeIndex::<u32>::new(0), 4u32), Score::Score(14),
-        ));
-
+        // eprintln!("Implicit gap score: {implicit_score:?}, score from align state: {score:?}");
+        implicit_score.map_or(true, |s| *score < s)
     }
 }

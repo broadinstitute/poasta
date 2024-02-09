@@ -1,17 +1,18 @@
 use std::cmp::Ordering;
 use std::fmt::Write;
 use std::rc::Rc;
+use range_set_blaze::{Integer, RangeSetBlaze};
 use rustc_hash::FxHashMap;
 use crate::aligner::{AlignedPair, Alignment};
 
 use crate::graphs::{AlignableRefGraph, NodeIndexType};
 use crate::aligner::offsets::OffsetType;
-use crate::aligner::scoring::{AlignmentCosts, AlignmentType, Score};
+use crate::aligner::scoring::{AlignmentCosts, AlignmentType, GetAlignmentCosts, Score};
 use crate::aligner::aln_graph::{AlignmentGraph, AlignmentGraphNode, AlignState};
 use crate::aligner::astar::{AstarQueue, AstarQueuedItem, AstarVisited};
 use crate::aligner::queue::{LayeredQueue, QueueLayer};
 use crate::bubbles::index::BubbleIndex;
-use crate::bubbles::reached::{ReachedBubbleExits, ReachedDeletion, ReachedInsertion, ReachedMatch};
+use crate::bubbles::reached::ReachedBubbleExitsMatch;
 use crate::errors::PoastaError;
 
 #[derive(Clone, Copy, Debug)]
@@ -534,31 +535,29 @@ impl<N, O, const B: usize> BlockedVisitedStorageAffine<N, O, B>
 
 pub struct AffineAstarData<N, O>
 where N: NodeIndexType,
-      O: OffsetType,
+      O: OffsetType + Integer,
 {
     costs: GapAffine,
+    seq_len: usize,
     bubble_index: Rc<BubbleIndex<N>>,
     visited: BlockedVisitedStorageAffine<N, O>,
 
-    bubbles_reached_m: ReachedBubbleExits<GapAffine, O, ReachedMatch>,
-    bubbles_reached_i: ReachedBubbleExits<GapAffine, O, ReachedInsertion>,
-    bubbles_reached_d: ReachedBubbleExits<GapAffine, O, ReachedDeletion>,
+    bubbles_reached_m: Vec<RangeSetBlaze<O>>,
 }
 
 impl<N, O> AffineAstarData<N, O>
     where N: NodeIndexType,
-          O: OffsetType
+          O: OffsetType + Integer
 {
     pub fn new<G>(costs: GapAffine, ref_graph: &G, seq: &[u8], bubble_index: Rc<BubbleIndex<G::NodeIndex>>) -> Self
         where G: AlignableRefGraph<NodeIndex=N>,
     {
         Self {
             costs,
+            seq_len: seq.len(),
             bubble_index,
             visited: BlockedVisitedStorageAffine::new(ref_graph),
-            bubbles_reached_m: ReachedBubbleExits::new(costs, ref_graph, seq.len()),
-            bubbles_reached_i: ReachedBubbleExits::new(costs, ref_graph, seq.len()),
-            bubbles_reached_d: ReachedBubbleExits::new(costs, ref_graph, seq.len()),
+            bubbles_reached_m: vec![RangeSetBlaze::new(); ref_graph.node_count_with_start_and_end()],
         }
     }
 
@@ -572,9 +571,20 @@ impl<N, O> AffineAstarData<N, O>
     }
 }
 
+impl<N, O> GetAlignmentCosts for AffineAstarData<N, O>
+    where N: NodeIndexType, 
+          O: OffsetType + Integer
+{
+    type Costs = GapAffine;
+
+    fn get_costs(&self) -> &Self::Costs {
+        &self.costs
+    }
+}
+
 impl<N, O> AstarVisited<N, O> for AffineAstarData<N, O>
     where N: NodeIndexType,
-          O: OffsetType,
+          O: OffsetType + Integer,
 {
     #[inline]
     fn get_score(&self, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> Score {
@@ -586,51 +596,31 @@ impl<N, O> AstarVisited<N, O> for AffineAstarData<N, O>
         self.visited.set_score(aln_node, aln_state, score)
     }
 
-    fn mark_reached(&mut self, score: Score, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) {
-        // eprintln!("REACHED: {aln_node:?} ({aln_state:?}), score: {score}");
+    fn mark_reached(&mut self, _: Score, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) {
+        // eprintln!("REACHED: {aln_node:?} ({aln_state:?})");
 
-        if self.bubble_index.is_exit(aln_node.node()) {
-            match aln_state {
-                AlignState::Match =>
-                    self.bubbles_reached_m.mark_reached(aln_node.node(), aln_node.offset(), score),
-                // AlignState::Insertion =>
-                    // self.bubbles_reached_i.mark_reached(aln_node.node(), aln_node.offset(), score),
-                // AlignState::Deletion =>
-                    // self.bubbles_reached_d.mark_reached(aln_node.node(), aln_node.offset(), score),
-                AlignState::Insertion2 | AlignState::Deletion2 =>
-                    panic!("Invalid align state {aln_state:?} for gap-affine!"),
-                _ => (),
-            }
+        if aln_state == AlignState::Match && self.bubble_index.is_exit(aln_node.node()) {
+            self.bubbles_reached_m[aln_node.node().index()].insert(aln_node.offset());
         }
     }
 
-    fn dfa_match(&mut self, score: Score, parent: &AlignmentGraphNode<N, O>, child: &AlignmentGraphNode<N, O>) {
+    fn dfa_match(&mut self, score: Score, _: &AlignmentGraphNode<N, O>, child: &AlignmentGraphNode<N, O>) {
         self.mark_reached(score, child, AlignState::Match);
-
-        // Also mark I/D states as reached such that pruning is more effective
-        // let ins = AlignmentGraphNode::new(parent.node(), child.offset());
-        // let del = AlignmentGraphNode::new(child.node(), parent.offset());
-        // self.mark_reached(score + self.costs.gap_open() + self.costs.gap_extend(), &ins, AlignState::Insertion);
-        // self.mark_reached(score + self.costs.gap_open() + self.costs.gap_extend(), &del, AlignState::Deletion);
     }
 
     #[inline]
     fn prune(&self, score: Score, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> bool {
-        // let can_improve_indel = match aln_state {
-        //     AlignState::Match => true,
-        //     AlignState::Insertion =>
-        //         self.bubbles_reached_i.can_improve_alignment(&self.bubble_index, aln_node, aln_state, score),
-        //     AlignState::Deletion =>
-        //         self.bubbles_reached_d.can_improve_alignment(&self.bubble_index, aln_node, aln_state, score),
-        //     AlignState::Insertion2 | AlignState::Deletion2 =>
-        //         panic!("Invalid align state {aln_state:?} for gap-affine!")
-        // };
-        //
-        // if !can_improve_indel {
-        //     return true
-        // }
+        if !self.bubble_index.node_is_part_of_bubble(aln_node.node()) {
+            return false;
+        }
 
-        !self.bubbles_reached_m.can_improve_alignment(&self.bubble_index, aln_node, aln_state, score)
+        !self.bubble_index.get_node_bubbles(aln_node.node())
+            .iter()
+            .all(|bubble|
+                ReachedBubbleExitsMatch::new(self, &self.bubbles_reached_m[bubble.bubble_exit.index()], self.seq_len)
+                    .can_improve_bubble(&self.bubble_index, bubble, aln_node, aln_state, &score)
+            )
+
     }
 
     #[inline]

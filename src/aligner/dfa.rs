@@ -23,11 +23,6 @@ where
     }
 
     #[inline(always)]
-    fn node(&self) -> N {
-        self.0.node()
-    }
-
-    #[inline(always)]
     fn offset(&self) -> O {
         self.0.offset()
     }
@@ -104,6 +99,9 @@ pub struct DepthFirstGreedyAlignment<'a, G, O>
     /// Number of alignment states visited
     num_visited: usize,
 
+    /// Number of alignment states pruned
+    num_pruned: usize,
+
     /// Stack for depth-first alignment of matches between query and graph
     stack: Vec<StackNode<G::NodeIndex, O, G::SuccessorIterator<'a>>>,
 }
@@ -124,6 +122,7 @@ where
             seq,
             score,
             num_visited: 0,
+            num_pruned: 0,
             stack: vec![StackNode::new(*start_node, ref_graph.successors(start_node.node()))],
         }
     }
@@ -154,6 +153,7 @@ where
                 Successor::Match(child) => {
                     if astar_visited.prune(self.score, &child, AlignState::Match) {
                         // eprintln!("- dfa prune");
+                        self.num_pruned += 1;
                         continue;
                     }
 
