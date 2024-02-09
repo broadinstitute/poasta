@@ -1,7 +1,7 @@
 use std::cmp::{max, min};
+use std::collections::BTreeSet;
 use std::marker::PhantomData;
 use std::ops::{RangeFrom, RangeTo};
-use range_set_blaze::{RangeSetBlaze, Integer};
 use crate::aligner::offsets::OffsetType;
 use crate::aligner::scoring::{AlignmentCosts, GetAlignmentCosts, Score};
 use crate::aligner::aln_graph::{AlignmentGraphNode, AlignState};
@@ -13,10 +13,10 @@ use crate::graphs::NodeIndexType;
 pub struct ReachedBubbleExitsMatch<'a, V, N, O>
     where V: AstarVisited<N, O> + GetAlignmentCosts,
           N: NodeIndexType,
-          O: OffsetType + Integer,
+          O: OffsetType,
 {
     visited: &'a V,
-    reached_offsets: &'a RangeSetBlaze<O>,
+    reached_offsets: &'a BTreeSet<O>,
     seq_len: usize,
     dummy: PhantomData<N>,
 }
@@ -24,9 +24,9 @@ pub struct ReachedBubbleExitsMatch<'a, V, N, O>
 impl<'a, V, N, O> ReachedBubbleExitsMatch<'a, V, N, O>
     where V: AstarVisited<N, O> + GetAlignmentCosts,
           N: NodeIndexType,
-          O: OffsetType + Integer,
+          O: OffsetType,
 {
-    pub fn new(visited: &'a V, reached_offsets: &'a RangeSetBlaze<O>, seq_len: usize) -> Self {
+    pub fn new(visited: &'a V, reached_offsets: &'a BTreeSet<O>, seq_len: usize) -> Self {
         Self {
             visited,
             reached_offsets,
@@ -74,7 +74,7 @@ impl<'a, V, N, O> ReachedBubbleExitsMatch<'a, V, N, O>
         {
             let offset1 = prev_reached.map_or(
                 target_offset_min,
-                |v| max(target_offset_min, v + O::one())
+                |v| max(target_offset_min, *v + O::one())
             );
 
             // Gap-affine and 2-piece alignment costs only:
@@ -86,9 +86,9 @@ impl<'a, V, N, O> ReachedBubbleExitsMatch<'a, V, N, O>
             {
                 // Extend the gap as far as we can, such that we can still reach the query offset of the
                 // next reached bubble with match edges.
-                let num_required_match = next_reached - aln_node.offset();
+                let num_required_match = *next_reached - aln_node.offset();
                 if num_required_match.as_usize() < max_dist_to_end {
-                    let gap_ext = max_dist_to_end - (next_reached - aln_node.offset()).as_usize();
+                    let gap_ext = max_dist_to_end - (*next_reached - aln_node.offset()).as_usize();
                     let longest_deletion = bubble_index.get_max_dist_to_end(bubble.bubble_exit)
                         .saturating_sub(1);
 
@@ -111,7 +111,7 @@ impl<'a, V, N, O> ReachedBubbleExitsMatch<'a, V, N, O>
                 return true;
             }
 
-            let offset2 = min(target_offset_max, max(target_offset_min, next_reached - O::one()));
+            let offset2 = min(target_offset_max, max(target_offset_min, *next_reached - O::one()));
             if offset2 != offset1 {
                 // eprintln!("Checking o2... {offset2:?} (at score {current_score:?}");
 
@@ -131,7 +131,7 @@ impl<'a, V, N, O> ReachedBubbleExitsMatch<'a, V, N, O>
                     let ext_end_offset = next_reached.as_usize() - bubble.max_dist_to_exit;
                     if ext_end_offset > aln_node.offset().as_usize() {
                         let gap_ext = (ext_end_offset - aln_node.offset().as_usize()).saturating_sub(1);
-                        let longest_insertion = (next_reached - offset_left).as_usize().saturating_sub(1);
+                        let longest_insertion = (*next_reached - *offset_left).as_usize().saturating_sub(1);
 
                         let gap_cost_ext = self.visited.get_costs().gap_cost(aln_state, gap_ext);
                         let gap_cost_open = self.visited.get_costs().gap_cost(AlignState::Match, longest_insertion);
@@ -202,18 +202,18 @@ impl<'a, V, N, O> ReachedBubbleExitsMatch<'a, V, N, O>
         bubble_node: N,
         offset_to_check: O,
         score: &Score,
-        reached_bubble_left: Option<O>,
-        reached_bubble_right: Option<O>,
+        reached_bubble_left: Option<&O>,
+        reached_bubble_right: Option<&O>,
         min_dist_to_end: usize,
     ) -> bool {
         let implicit_score = match (reached_bubble_left, reached_bubble_right) {
             (None, None) => None,
             (Some(offset_left), Some(offset_right)) => {
-                let left_score = self.visited.get_score(&AlignmentGraphNode::new(bubble_node, offset_left), AlignState::Match);
-                let right_score = self.visited.get_score(&AlignmentGraphNode::new(bubble_node, offset_right), AlignState::Match);
+                let left_score = self.visited.get_score(&AlignmentGraphNode::new(bubble_node, *offset_left), AlignState::Match);
+                let right_score = self.visited.get_score(&AlignmentGraphNode::new(bubble_node, *offset_right), AlignState::Match);
 
-                let gap_from_left = offset_to_check - offset_left;
-                let gap_from_right = offset_right - offset_to_check;
+                let gap_from_left = offset_to_check - *offset_left;
+                let gap_from_right = *offset_right - offset_to_check;
 
                 let implicit_score_from_left = left_score
                     + self.visited.get_costs().gap_cost(AlignState::Match, gap_from_left.as_usize());
@@ -232,8 +232,8 @@ impl<'a, V, N, O> ReachedBubbleExitsMatch<'a, V, N, O>
                 }
             },
             (None, Some(offset_right)) => {
-                let right_score = self.visited.get_score(&AlignmentGraphNode::new(bubble_node, offset_right), AlignState::Match);
-                let gap_from_right = offset_right - offset_to_check;
+                let right_score = self.visited.get_score(&AlignmentGraphNode::new(bubble_node, *offset_right), AlignState::Match);
+                let gap_from_right = *offset_right - offset_to_check;
                 let implicit_score_from_right = right_score
                     + self.visited.get_costs().gap_cost(AlignState::Match, gap_from_right.as_usize());
 
@@ -248,8 +248,8 @@ impl<'a, V, N, O> ReachedBubbleExitsMatch<'a, V, N, O>
                 }
             },
             (Some(offset_left), None) => {
-                let left_score = self.visited.get_score(&AlignmentGraphNode::new(bubble_node, offset_left), AlignState::Match);
-                let gap_from_left = offset_to_check - offset_left;
+                let left_score = self.visited.get_score(&AlignmentGraphNode::new(bubble_node, *offset_left), AlignState::Match);
+                let gap_from_left = offset_to_check - *offset_left;
                 let implicit_score_from_left = left_score
                     + self.visited.get_costs().gap_cost(AlignState::Match, gap_from_left.as_usize());
 

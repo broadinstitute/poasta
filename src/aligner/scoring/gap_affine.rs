@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
+use std::collections::BTreeSet;
 use std::fmt::Write;
 use std::rc::Rc;
-use range_set_blaze::{Integer, RangeSetBlaze};
 use rustc_hash::FxHashMap;
 use crate::aligner::{AlignedPair, Alignment};
 
@@ -317,18 +317,6 @@ pub struct AffineVisitedNodeData<N, O>
     prev: Option<(AlignmentGraphNode<N, O>, AlignState)>
 }
 
-impl<N, O> AffineVisitedNodeData<N, O>
-    where N: NodeIndexType,
-          O: OffsetType,
-{
-    fn new(score: Score, parent: &AlignmentGraphNode<N, O>, parent_state: AlignState) -> Self {
-        Self {
-            score,
-            prev: Some((*parent, parent_state))
-        }
-    }
-}
-
 impl<N, O> Default for AffineVisitedNodeData<N, O>
     where N: NodeIndexType,
           O: OffsetType,
@@ -535,19 +523,19 @@ impl<N, O, const B: usize> BlockedVisitedStorageAffine<N, O, B>
 
 pub struct AffineAstarData<N, O>
 where N: NodeIndexType,
-      O: OffsetType + Integer,
+      O: OffsetType,
 {
     costs: GapAffine,
     seq_len: usize,
     bubble_index: Rc<BubbleIndex<N>>,
     visited: BlockedVisitedStorageAffine<N, O>,
 
-    bubbles_reached_m: Vec<RangeSetBlaze<O>>,
+    bubbles_reached_m: Vec<BTreeSet<O>>,
 }
 
 impl<N, O> AffineAstarData<N, O>
     where N: NodeIndexType,
-          O: OffsetType + Integer
+          O: OffsetType
 {
     pub fn new<G>(costs: GapAffine, ref_graph: &G, seq: &[u8], bubble_index: Rc<BubbleIndex<G::NodeIndex>>) -> Self
         where G: AlignableRefGraph<NodeIndex=N>,
@@ -557,7 +545,7 @@ impl<N, O> AffineAstarData<N, O>
             seq_len: seq.len(),
             bubble_index,
             visited: BlockedVisitedStorageAffine::new(ref_graph),
-            bubbles_reached_m: vec![RangeSetBlaze::new(); ref_graph.node_count_with_start_and_end()],
+            bubbles_reached_m: vec![BTreeSet::new(); ref_graph.node_count_with_start_and_end()],
         }
     }
 
@@ -573,7 +561,7 @@ impl<N, O> AffineAstarData<N, O>
 
 impl<N, O> GetAlignmentCosts for AffineAstarData<N, O>
     where N: NodeIndexType, 
-          O: OffsetType + Integer
+          O: OffsetType
 {
     type Costs = GapAffine;
 
@@ -584,7 +572,7 @@ impl<N, O> GetAlignmentCosts for AffineAstarData<N, O>
 
 impl<N, O> AstarVisited<N, O> for AffineAstarData<N, O>
     where N: NodeIndexType,
-          O: OffsetType + Integer,
+          O: OffsetType
 {
     #[inline]
     fn get_score(&self, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> Score {
