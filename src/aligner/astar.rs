@@ -72,7 +72,7 @@ pub trait AstarVisited<N, O>
         score: Score,
     ) -> bool;
 
-    fn backtrace<G>(&self, ref_graph: &G, aln_node: &AlignmentGraphNode<N, O>) -> Alignment<N>
+    fn backtrace<G>(&self, ref_graph: &G, seq: &[u8], aln_node: &AlignmentGraphNode<N, O>) -> Alignment<N>
         where G: AlignableRefGraph<NodeIndex=N>;
 
     fn write_tsv<W: Write>(&self, writer: &mut W) -> Result<(), PoastaError>;
@@ -221,7 +221,7 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
     }
 
     result.score = end_score;
-    result.alignment = visited_data.backtrace(ref_graph, &end_node);
+    result.alignment = visited_data.backtrace(ref_graph, seq, &end_node);
 
     result
 }

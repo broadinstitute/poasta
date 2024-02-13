@@ -4,7 +4,7 @@ pub mod gap_affine;
 use crate::aligner::aln_graph::{AlignmentGraph, AlignState};
 
 pub use gap_affine::GapAffine;
-use std::ops::{Add, AddAssign, Bound};
+use std::ops::{Add, AddAssign, Sub, SubAssign, Bound};
 use std::fmt::{Display, Formatter};
 use std::cmp::Ordering;
 use nonmax::NonMaxU32;
@@ -65,6 +65,12 @@ pub enum Score {
     Unvisited
 }
 
+impl Default for Score {
+    fn default() -> Self {
+        Score::Unvisited
+    }
+}
+
 impl PartialOrd for Score {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
@@ -112,6 +118,46 @@ impl AddAssign<u8> for Score {
     fn add_assign(&mut self, rhs: u8) {
         match self {
             Self::Score(score) => *score = NonMaxU32::new(u32::from(*score) + rhs as u32).unwrap(),
+            Self::Unvisited => panic!("Can't add to Score::Unvisited!")
+        }
+    }
+}
+
+impl Sub<usize> for Score {
+    type Output = Self;
+
+    fn sub(self, rhs: usize) -> Self::Output {
+        match self {
+            Self::Score(score) => Self::Score(NonMaxU32::new(u32::from(score) - rhs as u32).unwrap()),
+            Self::Unvisited => panic!("Can't subtract from Score::Unvisited!")
+        }
+    }
+}
+
+impl SubAssign<usize> for Score {
+    fn sub_assign(&mut self, rhs: usize) {
+        match self {
+            Self::Score(score) => *score = NonMaxU32::new(u32::from(*score) - rhs as u32).unwrap(),
+            Self::Unvisited => panic!("Can't add to Score::Unvisited!")
+        }
+    }
+}
+
+impl Sub<u8> for Score {
+    type Output = Self;
+
+    fn sub(self, rhs: u8) -> Self::Output {
+        match self {
+            Self::Score(score) => Self::Score(NonMaxU32::new(u32::from(score) - rhs as u32).unwrap()),
+            Self::Unvisited => panic!("Can't subtract from Score::Unvisited!")
+        }
+    }
+}
+
+impl SubAssign<u8> for Score {
+    fn sub_assign(&mut self, rhs: u8) {
+        match self {
+            Self::Score(score) => *score = NonMaxU32::new(u32::from(*score) - rhs as u32).unwrap(),
             Self::Unvisited => panic!("Can't add to Score::Unvisited!")
         }
     }
