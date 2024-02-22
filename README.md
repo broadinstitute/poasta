@@ -96,7 +96,7 @@ can specify a different output format.
 Supported formats:
 
 * DOT (GraphViz): Specify with `-O dot`
-* TODO: ~~FASTA MSA~~
+* FASTA MSA: Specify with `-O fasta`
 * TODO: ~~Graph GFA~~
 
 For example, to visualize the graph with GraphViz:

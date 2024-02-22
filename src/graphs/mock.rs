@@ -70,7 +70,7 @@ impl AlignableRefGraph for MockGraph {
         false
     }
 
-    fn get_symbol(&self, _: Self::NodeIndex) -> char {
+    fn get_symbol_char(&self, _: Self::NodeIndex) -> char {
         '-'
     }
 

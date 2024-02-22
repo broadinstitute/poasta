@@ -311,8 +311,7 @@ impl AlignmentGraph for AffineAlignmentGraph {
 
 
 #[derive(Default, Copy, Clone)]
-struct VisitedCellAffine
-{
+struct VisitedCellAffine {
     visited_m: Score,
     visited_i: Score,
     visited_d: Score
@@ -417,7 +416,7 @@ impl<N, O, const B: usize> BlockedVisitedStorageAffine<N, O, B>
             AlignState::Insertion2 | AlignState::Deletion2 => panic!("Invalid gap-affine state {aln_state:?}")
         };
 
-        match score.cmp(&node) {
+        match score.cmp(node) {
             Ordering::Less => {
                 *node = score;
                 true

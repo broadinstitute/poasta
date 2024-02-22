@@ -45,14 +45,14 @@ where
 
     for pair in aln {
         if pair.is_aligned() {
-            let node = graph.get_symbol(pair.rpos.unwrap());
+            let node = graph.get_symbol_char(pair.rpos.unwrap());
             let qry = char::from(seq[pair.qpos.unwrap()]);
 
             graph_chars.push(node);
             aln_chars.push(if node == qry { '|' } else { '·' });
             query_chars.push(qry);
         } else if let Some(nix) = pair.rpos {
-            let node = graph.get_symbol(nix);
+            let node = graph.get_symbol_char(nix);
             graph_chars.push(node);
             aln_chars.push(' ');
             query_chars.push('-');

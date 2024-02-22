@@ -5,6 +5,7 @@ use petgraph::algo::toposort;
 use petgraph::prelude::{NodeIndex, StableDiGraph};
 use petgraph::stable_graph::{Neighbors, NodeIndices};
 use petgraph::visit::{GraphBase, EdgeRef};
+use rustc_hash::FxHashSet;
 
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
@@ -74,7 +75,7 @@ impl POAEdgeData {
 
     fn new_for_start_or_end() -> Self {
         POAEdgeData {
-            weight: 0, sequence_ids: vec![]
+            weight: 0, sequence_ids: Vec::default()
         }
     }
 }
@@ -328,6 +329,15 @@ where
         ranks
     }
 
+    pub fn get_aligned_nodes(&self, node: POANodeIndex<Ix>) -> &[POANodeIndex<Ix>] {
+        &self.graph[node].aligned_nodes
+    }
+
+    #[inline]
+    pub fn get_symbol(&self, node: POANodeIndex<Ix>) -> u8 {
+        self.graph[node].symbol
+    }
+
 }
 
 impl<Ix> AlignableRefGraph for POAGraph<Ix>
@@ -398,7 +408,7 @@ where
     }
 
     #[inline]
-    fn get_symbol(&self, node: Self::NodeIndex) -> char {
+    fn get_symbol_char(&self, node: Self::NodeIndex) -> char {
         char::from(self.graph[node].symbol)
     }
 

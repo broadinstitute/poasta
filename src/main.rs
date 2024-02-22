@@ -21,6 +21,7 @@ use poasta::aligner::PoastaAligner;
 use poasta::aligner::scoring::{AlignmentType, GapAffine};
 use poasta::errors::PoastaError;
 use poasta::graphs::AlignableRefGraph;
+use poasta::io::fasta::poa_graph_to_fasta;
 use poasta::io::graph::load_graph_from_fasta_msa;
 use poasta::io::load_graph;
 
@@ -77,6 +78,9 @@ enum CliSubcommand {
     /// Perform multiple sequence alignment and create or update POA graphs
     Align(AlignArgs),
 
+    /// Convert POASTA POA graphs to various output formats
+    View(ViewArgs),
+
     /// Print graph statistics
     Stats(StatsArgs),
 }
@@ -132,6 +136,20 @@ struct AlignArgs {
 struct StatsArgs {
     /// The POASTA graph or an existing MSA in FASTA format to analyze
     graph: PathBuf
+}
+
+#[derive(Args, Debug)]
+struct ViewArgs {
+    /// Input POA graph
+    graph: PathBuf,
+
+    /// Output filename. If not given, defaults to stdout
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+
+    /// Output file type
+    #[arg(value_enum, short='O', long)]
+    output_type: OutputType,
 }
 
 fn perform_alignment<N, C>(
@@ -258,6 +276,14 @@ fn align_subcommand(align_args: &AlignArgs) -> Result<()> {
         },
         OutputType::Dot => {
             write!(writer, "{}", &graph)?
+        },
+        OutputType::Fasta => {
+            match graph {
+                POAGraphWithIx::U8(ref g) => poa_graph_to_fasta(g, writer),
+                POAGraphWithIx::U16(ref g) => poa_graph_to_fasta(g, writer),
+                POAGraphWithIx::U32(ref g) => poa_graph_to_fasta(g, writer),
+                POAGraphWithIx::USIZE(ref g) => poa_graph_to_fasta(g, writer),
+            }?
         }
         _ => return Err(PoastaError::Other).with_context(|| "Other output formats not supported yet!".to_string())
     }
@@ -266,6 +292,53 @@ fn align_subcommand(align_args: &AlignArgs) -> Result<()> {
         eprintln!("Waiting for debug writer thread to finish...");
         debug.log(DebugOutputMessage::Terminate);
         debug.join()?;
+    }
+
+    Ok(())
+}
+
+fn view_subcommand(view_args: &ViewArgs) -> Result<()> {
+    let fasta_extensions = vec![".fa", ".fa.gz", ".fna", ".fna.gz", ".fasta", ".fasta.gz"];
+    let path_as_str = view_args.graph.to_string_lossy();
+    let graph = if fasta_extensions.into_iter().any(|ext| path_as_str.ends_with(ext)) {
+        load_graph_from_fasta_msa(&view_args.graph)?
+    } else {
+        let file_in = File::open(&view_args.graph)?;
+        load_graph(&file_in)?
+    };
+
+    // Determine where to write the graph to
+    let mut writer: Box<dyn Output> = if let Some(path) = &view_args.output {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?
+        }
+
+        let file = File::create(path)?;
+        Box::new(file) as Box<dyn Output>
+    } else {
+        Box::new(stdout()) as Box<dyn Output>
+    };
+
+    match view_args.output_type {
+        OutputType::Poasta => {
+            if !writer.is_terminal() {
+                poasta::io::save_graph(&graph, writer)?
+            } else {
+                eprintln!("WARNING: not writing binary graph data to terminal standard output!");
+            }
+        },
+        OutputType::Dot => {
+            write!(writer, "{}", &graph)?
+        },
+        OutputType::Fasta => {
+            match graph {
+                POAGraphWithIx::U8(ref g) => poa_graph_to_fasta(g, writer),
+                POAGraphWithIx::U16(ref g) => poa_graph_to_fasta(g, writer),
+                POAGraphWithIx::U32(ref g) => poa_graph_to_fasta(g, writer),
+                POAGraphWithIx::USIZE(ref g) => poa_graph_to_fasta(g, writer),
+            }?
+        }
+        _ => return Err(PoastaError::Other).with_context(|| "Other output formats not supported yet!".to_string())
     }
 
     Ok(())
@@ -316,6 +389,9 @@ fn main() -> Result<()> {
         Some(CliSubcommand::Align(v)) => {
             align_subcommand(v)?
         },
+        Some(CliSubcommand::View(v)) => {
+            view_subcommand(v)?
+        }
         Some(CliSubcommand::Stats(v)) => {
             stats_subcommand(v)?
         }
