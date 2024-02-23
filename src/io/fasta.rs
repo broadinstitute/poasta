@@ -74,6 +74,7 @@ pub fn poa_graph_to_fasta<Ix, W>(graph: &POAGraph<Ix>, output: W) -> Result<(), 
         None
     };
 
+    // DFS, visiting nodes in post order
     let mut visited = FxHashSet::default();
     let mut rev_postorder = vec![];
     while !stack.is_empty() {

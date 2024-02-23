@@ -22,7 +22,7 @@ use poasta::aligner::scoring::{AlignmentType, GapAffine};
 use poasta::errors::PoastaError;
 use poasta::graphs::AlignableRefGraph;
 use poasta::io::fasta::poa_graph_to_fasta;
-use poasta::io::graph::load_graph_from_fasta_msa;
+use poasta::io::graph::{graph_to_gfa, load_graph_from_fasta_msa};
 use poasta::io::load_graph;
 
 
@@ -279,13 +279,20 @@ fn align_subcommand(align_args: &AlignArgs) -> Result<()> {
         },
         OutputType::Fasta => {
             match graph {
-                POAGraphWithIx::U8(ref g) => poa_graph_to_fasta(g, writer),
-                POAGraphWithIx::U16(ref g) => poa_graph_to_fasta(g, writer),
-                POAGraphWithIx::U32(ref g) => poa_graph_to_fasta(g, writer),
-                POAGraphWithIx::USIZE(ref g) => poa_graph_to_fasta(g, writer),
+                POAGraphWithIx::U8(ref g) => poa_graph_to_fasta(g, &mut writer),
+                POAGraphWithIx::U16(ref g) => poa_graph_to_fasta(g, &mut writer),
+                POAGraphWithIx::U32(ref g) => poa_graph_to_fasta(g, &mut writer),
+                POAGraphWithIx::USIZE(ref g) => poa_graph_to_fasta(g, &mut writer),
+            }?
+        },
+        OutputType::Gfa => {
+            match graph {
+                POAGraphWithIx::U8(ref g) => graph_to_gfa(&mut writer, g),
+                POAGraphWithIx::U16(ref g) => graph_to_gfa(&mut writer, g),
+                POAGraphWithIx::U32(ref g) => graph_to_gfa(&mut writer, g),
+                POAGraphWithIx::USIZE(ref g) => graph_to_gfa(&mut writer, g),
             }?
         }
-        _ => return Err(PoastaError::Other).with_context(|| "Other output formats not supported yet!".to_string())
     }
 
     if let Some(debug) = debug_writer {
@@ -332,13 +339,20 @@ fn view_subcommand(view_args: &ViewArgs) -> Result<()> {
         },
         OutputType::Fasta => {
             match graph {
-                POAGraphWithIx::U8(ref g) => poa_graph_to_fasta(g, writer),
-                POAGraphWithIx::U16(ref g) => poa_graph_to_fasta(g, writer),
-                POAGraphWithIx::U32(ref g) => poa_graph_to_fasta(g, writer),
-                POAGraphWithIx::USIZE(ref g) => poa_graph_to_fasta(g, writer),
+                POAGraphWithIx::U8(ref g) => poa_graph_to_fasta(g, &mut writer),
+                POAGraphWithIx::U16(ref g) => poa_graph_to_fasta(g, &mut writer),
+                POAGraphWithIx::U32(ref g) => poa_graph_to_fasta(g, &mut writer),
+                POAGraphWithIx::USIZE(ref g) => poa_graph_to_fasta(g, &mut writer),
+            }?
+        },
+        OutputType::Gfa => {
+            match graph {
+                POAGraphWithIx::U8(ref g) => graph_to_gfa(&mut writer, g),
+                POAGraphWithIx::U16(ref g) => graph_to_gfa(&mut writer, g),
+                POAGraphWithIx::U32(ref g) => graph_to_gfa(&mut writer, g),
+                POAGraphWithIx::USIZE(ref g) => graph_to_gfa(&mut writer, g),
             }?
         }
-        _ => return Err(PoastaError::Other).with_context(|| "Other output formats not supported yet!".to_string())
     }
 
     Ok(())

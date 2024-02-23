@@ -1,16 +1,23 @@
 //! Graph serialization to disk using serde
 
-use std::{char, fmt};
+use std::{char, fmt, iter};
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{Read, Write, BufReader};
 use std::path::Path;
+
 use petgraph::dot::Dot;
 use petgraph::graph::IndexType;
-use crate::errors::PoastaError;
-use crate::graphs::poa::{POAGraph, POAGraphWithIx, POANodeData, POANodeIndex, Sequence};
-
+use petgraph::visit::EdgeRef;
 use noodles::fasta;
 use flate2::read::GzDecoder;
+use petgraph::visit::IntoEdgeReferences;
+use rustc_hash::{FxHashMap, FxHashSet};
+use serde::de::DeserializeOwned;
+
+use crate::errors::PoastaError;
+use crate::graphs::AlignableRefGraph;
+use crate::graphs::poa::{POAGraph, POAGraphWithIx, POANodeData, POANodeIndex, Sequence};
 
 pub fn save_graph(graph: &POAGraphWithIx, out: impl Write) -> Result<(), PoastaError> {
     bincode::serialize_into(out, graph)?;
@@ -102,6 +109,114 @@ pub fn format_as_dot<Ix: IndexType>(writer: &mut impl fmt::Write, graph: &POAGra
     let dot = Dot::new(&transformed);
 
     writeln!(writer, "{}", dot)?;
+
+    Ok(())
+}
+
+
+pub fn graph_to_gfa<Ix>(writer: &mut impl Write, graph: &POAGraph<Ix>) -> Result<(), PoastaError>
+    where Ix: IndexType + DeserializeOwned
+{
+    let mut visited = FxHashSet::default();
+    let mut queue = VecDeque::default();
+    queue.push_back(graph.start_node());
+    visited.insert(graph.start_node());
+
+    writeln!(writer, "H\tVN:Z:1.1")?;
+
+    // Compress non-branching paths into GFA segments
+    let mut node_to_segment = FxHashMap::default();
+    let mut segment_lengths = FxHashMap::default();
+    let mut curr_segment_id = 0;
+    while let Some(front) = queue.pop_front() {
+        if front == graph.start_node() {
+            for succ in graph.successors(front) {
+                if !visited.contains(&succ) {
+                    queue.push_back(succ);
+                    visited.insert(succ);
+                }
+            }
+        } else {
+            let mut segment = vec![graph.get_symbol(front)];
+            let mut curr_node = front;
+            let mut curr_out_degree = graph.out_degree(front);
+
+            let mut seg_pos = 0usize;
+            node_to_segment.insert(front, (curr_segment_id, seg_pos));
+            while curr_out_degree == 1 {
+                let next_node = graph.successors(curr_node).next().unwrap();
+                let in_degree_next = graph.in_degree(next_node);
+
+                if in_degree_next == 1 && next_node != graph.end_node() {
+                    segment.push(graph.get_symbol(next_node));
+                    node_to_segment.insert(next_node, (curr_segment_id, seg_pos));
+                } else {
+                    break;
+                }
+
+                curr_node = next_node;
+                curr_out_degree = graph.out_degree(curr_node);
+                seg_pos += 1;
+            }
+
+            writeln!(writer, "S\ts{curr_segment_id}\t{}", String::from_utf8_lossy(&segment))?;
+            segment_lengths.insert(curr_segment_id, segment.len());
+            visited.insert(curr_node);
+
+            for succ in graph.successors(curr_node) {
+                if !visited.contains(&succ) && succ != graph.end_node() {
+                    visited.insert(succ);
+                    queue.push_back(succ);
+                }
+            }
+
+            curr_segment_id += 1;
+        }
+    }
+
+    // Add links between segments
+    for edge in graph.graph.edge_references() {
+        if node_to_segment.contains_key(&edge.source()) && node_to_segment.contains_key(&edge.target()) {
+            let src = node_to_segment[&edge.source()].0;
+            let target = node_to_segment[&edge.target()].0;
+            writeln!(writer, "L\ts{src}\t+\ts{target}\t+\t0M")?;
+        }
+    }
+
+    // Add walks indicating each individual aligned sequence
+    for (seq_id, seq) in graph.sequences.iter().enumerate() {
+        let mut curr = Some(seq.start_node());
+        let (mut prev_segment, start_pos) = node_to_segment[&seq.start_node()];
+        let mut walk_segments = vec![prev_segment];
+        let mut last_pos = 0;
+        let mut total_segments_length = segment_lengths[&prev_segment];
+        while let Some(n) = curr {
+            let node_segment;
+            (node_segment, last_pos) = node_to_segment[&n];
+
+            if node_segment != prev_segment {
+                walk_segments.push(node_segment);
+                total_segments_length += segment_lengths[&node_segment];
+            }
+
+            curr = None;
+            for out_edge in graph.graph.edges(n) {
+                if out_edge.weight().sequence_ids.binary_search(&seq_id).is_ok() {
+                    curr = Some(out_edge.target())
+                }
+            }
+
+            prev_segment = node_segment;
+        }
+        
+        // End position with respect to total path length of all segments concatenated
+        let end_pos = total_segments_length - segment_lengths[&prev_segment] + last_pos;
+        writeln!(writer, "W\t*\t0\t{}\t{start_pos}\t{end_pos}\t{}", seq.name(),
+            walk_segments.into_iter().map(|v| format!(">s{v}"))
+                .collect::<Vec<String>>().join("")
+        )?
+
+    }
 
     Ok(())
 }

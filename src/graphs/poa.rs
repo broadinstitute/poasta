@@ -5,7 +5,6 @@ use petgraph::algo::toposort;
 use petgraph::prelude::{NodeIndex, StableDiGraph};
 use petgraph::stable_graph::{Neighbors, NodeIndices};
 use petgraph::visit::{GraphBase, EdgeRef};
-use rustc_hash::FxHashSet;
 
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
