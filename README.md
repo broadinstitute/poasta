@@ -90,16 +90,19 @@ poasta align -g msa.fasta -o graph_updated.poasta new_sequences.fasta
 
 ### Other output formats
 
-The default output format is POASTA's binary file format storing the graph data structure. With the `-O` option you
-can specify a different output format.
+The default output format is POASTA's binary file format storing the graph data structure.
+This the recommended output because you can always convert this binary file
+to other formats using `poasta view`.
+If you don't need the binary file, however,
+you can specify the output format with the `-O` option:
 
-Supported formats:
+Other supported formats:
 
 * DOT (GraphViz): Specify with `-O dot`
 * FASTA MSA: Specify with `-O fasta`
-* TODO: ~~Graph GFA~~
+* Graph GFA: Specify with `-O gfa`
 
-For example, to visualize the graph with GraphViz:
+For example, to visualize the graph directly with GraphViz:
 
 ```bash
 poasta align -Odot sequences.fasta | dot -Tpng -o graph.png
@@ -107,6 +110,26 @@ poasta align -Odot sequences.fasta | dot -Tpng -o graph.png
 
 Note that we did not specify an output file for `poasta align` (we did not use the `-o` option). If no output filename
 is given, standard output will be used, so the output can be directly piped to `dot` to create the visualization.
+
+### Using `poasta view` to convert between output formats
+
+By default, POASTA stores the computed graph/MSA in its own binary file format.
+To convert a previously computed MSA to other file formats, you can use `poasta view`.
+The supported output formats are the same as described above, i.e.:
+
+* DOT (GraphViz): Specify with `-O dot`
+* FASTA MSA: Specify with `-O fasta`
+* Graph GFA: Specify with `-O gfa`
+
+Example:
+
+```bash
+# Convert to GFA
+poasta view -Ogfa existing_msa.poasta > poa_graph.gfa
+
+# Convert to FASTA MSA
+poasta view -Ofasta existing_msa.poasta > poa_msa.fasta
+```
 
 
 ## Related repositories
