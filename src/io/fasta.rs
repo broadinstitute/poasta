@@ -1,25 +1,29 @@
+use noodles::fasta::{
+    self as fasta,
+    record::{Definition, Sequence},
+    Record,
+};
+use petgraph::graph::IndexType;
+use petgraph::visit::EdgeRef;
+use rustc_hash::FxHashSet;
+use serde::de::DeserializeOwned;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Write;
 use std::iter;
-use petgraph::graph::IndexType;
-use petgraph::visit::EdgeRef;
-use serde::de::DeserializeOwned;
-use noodles::fasta::{self as fasta, record::{Definition, Sequence}, Record};
-use rustc_hash::FxHashSet;
 
 use crate::errors::PoastaError;
-use crate::graphs::AlignableRefGraph;
 use crate::graphs::poa::{POAGraph, POANodeIndex};
-
+use crate::graphs::AlignableRefGraph;
 
 fn fasta_aln_for_seq<Ix>(
     graph: &POAGraph<Ix>,
     node_to_column: &HashMap<POANodeIndex<Ix>, usize>,
     seq_id: usize,
-    start_node: POANodeIndex<Ix>
+    start_node: POANodeIndex<Ix>,
 ) -> Vec<u8>
-    where Ix: IndexType + DeserializeOwned
+where
+    Ix: IndexType + DeserializeOwned,
 {
     let mut seq = Vec::new();
     let mut curr = Some(start_node);
@@ -33,7 +37,12 @@ fn fasta_aln_for_seq<Ix>(
 
         curr = None;
         for out_edge in graph.graph.edges(n) {
-            if out_edge.weight().sequence_ids.binary_search(&seq_id).is_ok() {
+            if out_edge
+                .weight()
+                .sequence_ids
+                .binary_search(&seq_id)
+                .is_ok()
+            {
                 curr = Some(out_edge.target())
             }
         }
@@ -49,25 +58,25 @@ fn fasta_aln_for_seq<Ix>(
     seq
 }
 
-
 pub fn poa_graph_to_fasta<Ix, W>(graph: &POAGraph<Ix>, output: W) -> Result<(), PoastaError>
-    where Ix: IndexType + DeserializeOwned,
-          W: Write
+where
+    Ix: IndexType + DeserializeOwned,
+    W: Write,
 {
     // First assign a column in the final MSA output for every node in the graph,
     // by visiting nodes in topological order, taking into account 'aligned_nodes'
     let mut node_to_column = HashMap::new();
-    let mut stack = vec![
-        (graph.start_node(), RefCell::new(Vec::from_iter(graph.successors(graph.start_node()))))
-    ];
+    let mut stack = vec![(
+        graph.start_node(),
+        RefCell::new(Vec::from_iter(graph.successors(graph.start_node()))),
+    )];
 
-    let next_valid_child = |
-        succ_iter: &RefCell<Vec<POANodeIndex<Ix>>>,
-        visited: &FxHashSet<POANodeIndex<Ix>>
-    | -> Option<POANodeIndex<Ix>> {
+    let next_valid_child = |succ_iter: &RefCell<Vec<POANodeIndex<Ix>>>,
+                            visited: &FxHashSet<POANodeIndex<Ix>>|
+     -> Option<POANodeIndex<Ix>> {
         while let Some(succ) = succ_iter.borrow_mut().pop() {
             if !visited.contains(&succ) {
-                return Some(succ)
+                return Some(succ);
             }
         }
 
@@ -83,6 +92,10 @@ pub fn poa_graph_to_fasta<Ix, W>(graph: &POAGraph<Ix>, output: W) -> Result<(), 
         if let Some(child) = next_valid_child(succ_iter, &visited) {
             visited.insert(child);
             let mut successors = Vec::from_iter(graph.successors(child));
+
+            // When visiting a node, we also consider all aligned nodes visited,
+            // since they will be part of the same column in the FASTA.
+            // Let's also add their successors to the stack.
             for aln_node in graph.get_aligned_nodes(child) {
                 if !visited.contains(aln_node) {
                     visited.insert(*aln_node);
@@ -94,7 +107,6 @@ pub fn poa_graph_to_fasta<Ix, W>(graph: &POAGraph<Ix>, output: W) -> Result<(), 
             let (last, _) = stack.pop().unwrap();
             rev_postorder.push(last);
         }
-
     }
 
     rev_postorder.reverse();
@@ -121,12 +133,16 @@ pub fn poa_graph_to_fasta<Ix, W>(graph: &POAGraph<Ix>, output: W) -> Result<(), 
     for (seq_id, seq) in graph.sequences.iter().enumerate() {
         let header = Definition::new(seq.name(), None);
 
-        let seq = Sequence::from_iter(fasta_aln_for_seq(graph, &node_to_column, seq_id, seq.start_node()));
+        let seq = Sequence::from_iter(fasta_aln_for_seq(
+            graph,
+            &node_to_column,
+            seq_id,
+            seq.start_node(),
+        ));
         let record = Record::new(header, seq);
 
         writer.write_record(&record)?;
     }
-
 
     Ok(())
 }
