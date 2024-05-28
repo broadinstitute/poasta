@@ -1,16 +1,16 @@
-use std::fmt::{Display, Formatter};
-use petgraph::graph::{IndexType as PetgraphIndexType};
-use petgraph::{Incoming, Outgoing};
 use petgraph::algo::toposort;
+use petgraph::graph::IndexType as PetgraphIndexType;
 use petgraph::prelude::{NodeIndex, StableDiGraph};
 use petgraph::stable_graph::{Neighbors, NodeIndices};
-use petgraph::visit::{GraphBase, EdgeRef};
+use petgraph::visit::{EdgeRef, GraphBase};
+use petgraph::{Incoming, Outgoing};
+use std::fmt::{Display, Formatter};
 
-use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
-use crate::errors::PoastaError;
 use crate::aligner::alignment::{AlignedPair, Alignment};
+use crate::errors::PoastaError;
 use crate::graphs::{AlignableRefGraph, NodeIndexType};
 use crate::io::graph::format_as_dot;
 
@@ -20,12 +20,11 @@ use crate::io::graph::format_as_dot;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sequence<N>(pub(crate) String, pub(crate) N)
 where
-    N: NodeIndexType
-;
+    N: NodeIndexType;
 
 impl<N> Sequence<N>
 where
-    N: NodeIndexType
+    N: NodeIndexType,
 {
     pub fn name(&self) -> &String {
         &self.0
@@ -36,11 +35,10 @@ where
     }
 }
 
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct POANodeData<N>
 where
-    N: NodeIndexType
+    N: NodeIndexType,
 {
     pub symbol: u8,
     pub aligned_nodes: Vec<N>,
@@ -48,7 +46,7 @@ where
 
 impl<N> POANodeData<N>
 where
-    N: NodeIndexType
+    N: NodeIndexType,
 {
     pub(crate) fn new(symbol: u8) -> Self {
         POANodeData {
@@ -74,7 +72,8 @@ impl POAEdgeData {
 
     fn new_for_start_or_end() -> Self {
         POAEdgeData {
-            weight: 0, sequence_ids: Vec::default()
+            weight: 0,
+            sequence_ids: Vec::default(),
         }
     }
 }
@@ -85,7 +84,7 @@ pub(crate) type POANodeIndex<Ix> = <POAGraphType<Ix> as GraphBase>::NodeId;
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct POAGraph<Ix = u32>
 where
-    Ix: PetgraphIndexType
+    Ix: PetgraphIndexType,
 {
     pub(crate) graph: POAGraphType<Ix>,
     pub sequences: Vec<Sequence<POANodeIndex<Ix>>>,
@@ -96,7 +95,7 @@ where
 
 impl<Ix> POAGraph<Ix>
 where
-    Ix: PetgraphIndexType + DeserializeOwned
+    Ix: PetgraphIndexType + DeserializeOwned,
 {
     pub fn new() -> Self {
         let mut graph = POAGraphType::<Ix>::default();
@@ -116,14 +115,21 @@ where
         self.node_count() == 0
     }
 
-    pub(crate) fn add_edge(&mut self, s: POANodeIndex<Ix>, t: POANodeIndex<Ix>, sequence_id: usize, weight: usize) {
+    pub(crate) fn add_edge(
+        &mut self,
+        s: POANodeIndex<Ix>,
+        t: POANodeIndex<Ix>,
+        sequence_id: usize,
+        weight: usize,
+    ) {
         // If edge exists, update sequence ID and weight of the existing one
         if let Some(e) = self.graph.find_edge(s, t) {
             let edge_data = self.graph.edge_weight_mut(e).unwrap();
             edge_data.sequence_ids.push(sequence_id);
             edge_data.weight += weight;
         } else {
-            self.graph.add_edge(s, t, POAEdgeData::new(sequence_id, weight));
+            self.graph
+                .add_edge(s, t, POAEdgeData::new(sequence_id, weight));
         }
     }
 
@@ -150,7 +156,12 @@ where
             }
 
             if let Some(prev_node) = prev {
-                self.add_edge(prev_node, curr_node, self.sequences.len(), weights[pos - 1] + weights[pos])
+                self.add_edge(
+                    prev_node,
+                    curr_node,
+                    self.sequences.len(),
+                    weights[pos - 1] + weights[pos],
+                )
             }
 
             prev = Some(curr_node)
@@ -164,30 +175,34 @@ where
         sequence_name: &str,
         sequence: T,
         alignment_opt: Option<&Alignment<POANodeIndex<Ix>>>,
-        weights: &[usize]
+        weights: &[usize],
     ) -> Result<(), PoastaError> {
         let seq = sequence.as_ref();
 
         if seq.len() != weights.len() {
-            return Err(PoastaError::WeightsUnequalSize(seq.len(), weights.len()))
+            return Err(PoastaError::WeightsUnequalSize(seq.len(), weights.len()));
         }
 
         if alignment_opt.is_none() {
             // No aligned bases, just add unaligned nodes
-            let (nfirst, _) = self.add_nodes_for_sequence(
-                seq, weights, 0, seq.len()).unwrap();
-            self.sequences.push(Sequence(sequence_name.to_owned(), nfirst));
+            let (nfirst, _) = self
+                .add_nodes_for_sequence(seq, weights, 0, seq.len())
+                .unwrap();
+            self.sequences
+                .push(Sequence(sequence_name.to_owned(), nfirst));
             self.post_process()?;
 
-            return Ok(())
+            return Ok(());
         }
 
         let alignment = alignment_opt.unwrap();
 
         // Check start and end of alignment
-        let valid_ix: Vec<usize> = alignment.iter()
+        let valid_ix: Vec<usize> = alignment
+            .iter()
             .filter_map(|e| e.qpos)
-            .filter(|qpos| *qpos < seq.len()).collect();
+            .filter(|qpos| *qpos < seq.len())
+            .collect();
 
         if valid_ix.is_empty() {
             return Err(PoastaError::InvalidAlignment);
@@ -197,8 +212,7 @@ where
         let first = valid_ix.first().unwrap();
         let last = valid_ix.last().unwrap();
 
-        let mut nodes_unaligned_begin = self.add_nodes_for_sequence(
-            seq, weights, 0, *first);
+        let mut nodes_unaligned_begin = self.add_nodes_for_sequence(seq, weights, 0, *first);
 
         let mut prev = if let Some((_, begin_n2)) = nodes_unaligned_begin {
             Some(begin_n2)
@@ -206,11 +220,10 @@ where
             None
         };
 
-        let nodes_unaligned_end = self.add_nodes_for_sequence(
-            seq, weights, last+1, seq.len());
+        let nodes_unaligned_end = self.add_nodes_for_sequence(seq, weights, last + 1, seq.len());
 
         // Add aligned bases
-        for AlignedPair {rpos, qpos} in alignment {
+        for AlignedPair { rpos, qpos } in alignment {
             if qpos.is_none() {
                 continue;
             }
@@ -236,7 +249,7 @@ where
 
                     if curr.is_none() {
                         // Even the selected node does not have any matching aligning nodes, create a new node with this symbol
-                        let new_node = self.graph.add_node(POANodeData::new(qsymbol.clone()));
+                        let new_node = self.graph.add_node(POANodeData::new(qsymbol));
                         curr = Some(new_node);
 
                         // Add this new node to the `aligned_nodes` in the other existing nodes
@@ -262,17 +275,30 @@ where
 
             // `curr` should be set by now. Add edge from previous node if exists.
             if let Some(ref p) = prev {
-                self.add_edge(*p, curr.unwrap(), self.sequences.len(), weights[q - 1] + weights[q]);
+                self.add_edge(
+                    *p,
+                    curr.unwrap(),
+                    self.sequences.len(),
+                    weights[q - 1] + weights[q],
+                );
             }
 
             prev = curr;
         }
 
         if let Some((unaligned_end, _)) = nodes_unaligned_end {
-            self.add_edge(prev.unwrap(), unaligned_end, self.sequences.len(), weights[*last] + weights[*last + 1]);
+            self.add_edge(
+                prev.unwrap(),
+                unaligned_end,
+                self.sequences.len(),
+                weights[*last] + weights[*last + 1],
+            );
         }
 
-        self.sequences.push(Sequence(sequence_name.to_owned(), nodes_unaligned_begin.unwrap().0));
+        self.sequences.push(Sequence(
+            sequence_name.to_owned(),
+            nodes_unaligned_begin.unwrap().0,
+        ));
 
         self.post_process()?;
 
@@ -300,7 +326,8 @@ where
                 && *node != self.end_node
                 && self.graph.neighbors_directed(*node, Incoming).count() == 0
             {
-                self.graph.add_edge(self.start_node, *node, POAEdgeData::new_for_start_or_end());
+                self.graph
+                    .add_edge(self.start_node, *node, POAEdgeData::new_for_start_or_end());
             }
         }
 
@@ -310,7 +337,8 @@ where
                 && *node != self.start_node
                 && self.graph.neighbors_directed(*node, Outgoing).count() == 0
             {
-                self.graph.add_edge(*node, self.end_node, POAEdgeData::new_for_start_or_end());
+                self.graph
+                    .add_edge(*node, self.end_node, POAEdgeData::new_for_start_or_end());
             }
         }
 
@@ -336,7 +364,6 @@ where
     pub fn get_symbol(&self, node: POANodeIndex<Ix>) -> u8 {
         self.graph[node].symbol
     }
-
 }
 
 impl<Ix> AlignableRefGraph for POAGraph<Ix>
@@ -367,8 +394,14 @@ where
     fn edge_count(&self) -> usize {
         // Exclude edges from start and end node
         self.graph.edge_count()
-            - self.graph.neighbors_directed(self.start_node, Outgoing).count()
-            - self.graph.neighbors_directed(self.end_node, Incoming).count()
+            - self
+                .graph
+                .neighbors_directed(self.start_node, Outgoing)
+                .count()
+            - self
+                .graph
+                .neighbors_directed(self.end_node, Incoming)
+                .count()
     }
 
     #[inline]
@@ -424,7 +457,7 @@ where
 
 impl<Ix> Display for POAGraph<Ix>
 where
-    Ix: PetgraphIndexType
+    Ix: PetgraphIndexType,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         format_as_dot(f, self)
@@ -437,7 +470,7 @@ pub enum POAGraphWithIx {
     U8(POAGraph<u8>),
     U16(POAGraph<u16>),
     U32(POAGraph<u32>),
-    USIZE(POAGraph<usize>)
+    USIZE(POAGraph<usize>),
 }
 
 impl Display for POAGraphWithIx {
@@ -446,7 +479,7 @@ impl Display for POAGraphWithIx {
             Self::U8(g) => format_as_dot(f, g),
             Self::U16(g) => format_as_dot(f, g),
             Self::U32(g) => format_as_dot(f, g),
-            Self::USIZE(g) => format_as_dot(f, g)
+            Self::USIZE(g) => format_as_dot(f, g),
         }
     }
 }

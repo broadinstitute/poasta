@@ -6,7 +6,7 @@ use std::io::{BufReader, Read, Write};
 use std::path::Path;
 use std::{char, fmt};
 
-use flate2::read::GzDecoder;
+use flate2::read::MultiGzDecoder;
 use noodles::fasta;
 use petgraph::dot::Dot;
 use petgraph::graph::IndexType;
@@ -41,7 +41,7 @@ pub fn load_graph_from_fasta_msa(path: impl AsRef<Path>) -> Result<POAGraphWithI
 
     // Check if we have a gzipped file
     let reader_inner: Box<dyn std::io::BufRead> = if is_gzipped {
-        Box::new(File::open(p).map(GzDecoder::new).map(BufReader::new)?)
+        Box::new(File::open(p).map(MultiGzDecoder::new).map(BufReader::new)?)
     } else {
         Box::new(File::open(p).map(BufReader::new)?)
     };
@@ -240,4 +240,110 @@ where
     }
 
     Ok(())
+}
+
+pub fn graph_to_dot<Ix>(writer: &mut impl Write, graph: &POAGraph<Ix>) -> Result<(), PoastaError>
+where
+    Ix: IndexType + DeserializeOwned,
+{
+    let seq_names_str = graph
+        .sequences
+        .iter()
+        .map(|v| format!("{}:{}", v.name(), v.start_node().index()))
+        .collect::<Vec<String>>()
+        .join("\t");
+
+    writeln!(writer, "# seq:\t{seq_names_str}")?;
+
+    writeln!(writer, "digraph {{")?;
+    writeln!(writer, "rankdir=\"LR\"")?;
+    writeln!(
+        writer,
+        "node [shape=square, style=filled, fillcolor=\"#e3e3e3\", penwidth=0]"
+    )?;
+    writeln!(writer)?;
+
+    for n in graph.all_nodes() {
+        writeln!(
+            writer,
+            "{} [label=\"{}\"; fontcolor=\"{}\"]",
+            n.index(),
+            graph.get_symbol_char(n),
+            graphviz_node_color(graph.get_symbol(n))
+        )?;
+    }
+
+    let mut aligned_nodes_processed = FxHashSet::default();
+    for n in graph.all_nodes() {
+        if aligned_nodes_processed.contains(&n) {
+            continue;
+        }
+
+        let mut node_list = vec![n];
+        node_list.extend(graph.graph[n].aligned_nodes.iter().copied());
+
+        if node_list.len() > 1 {
+            let node_list_str = node_list
+                .iter()
+                .map(|v| format!("{}", v.index()))
+                .collect::<Vec<String>>()
+                .join("; ");
+
+            writeln!(writer, "{{rank=same; {node_list_str}}}")?;
+        }
+
+        aligned_nodes_processed.extend(node_list);
+    }
+
+    let max_num_seq = graph
+        .graph
+        .edge_references()
+        .map(|e| e.weight().sequence_ids.len())
+        .max()
+        .unwrap_or(1);
+    let min_weight = 1.0;
+    let max_weight = 40.0;
+    let min_penwidth = 0.5;
+    let max_penwidth = 3.5;
+
+    for e in graph.graph.edge_references() {
+        let seq_list_str = e
+            .weight()
+            .sequence_ids
+            .iter()
+            .map(|v| format!("s{v}"))
+            .collect::<Vec<String>>()
+            .join(" ");
+
+        let num_seq = e.weight().sequence_ids.len();
+        let scaled_weight = (min_weight
+            + ((num_seq as f64 / max_num_seq as f64) * (max_weight - min_weight)))
+            .round() as i64;
+        let scaled_penwidth =
+            min_penwidth + ((num_seq as f64 / max_num_seq as f64) * (max_penwidth - min_penwidth));
+
+        writeln!(
+            writer,
+            "{} -> {} [weight={}; penwidth={}; label={}; class=\"{}\"]",
+            e.source().index(),
+            e.target().index(),
+            scaled_weight,
+            scaled_penwidth,
+            num_seq,
+            seq_list_str
+        )?;
+    }
+
+    writeln!(writer, "}}")?;
+    Ok(())
+}
+
+fn graphviz_node_color(label: u8) -> &'static str {
+    match label {
+        b'A' => "#80BC42",
+        b'C' => "#006DB6",
+        b'G' => "#F36C3E",
+        b'T' => "#B12028",
+        _ => "#939393",
+    }
 }
