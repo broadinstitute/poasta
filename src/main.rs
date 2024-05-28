@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use noodles::fasta;
 
-use flate2::read::GzDecoder;
+use flate2::read::MultiGzDecoder;
 use petgraph::graph::IndexType;
 use serde::de::DeserializeOwned;
 
@@ -22,7 +22,7 @@ use poasta::errors::PoastaError;
 use poasta::graphs::poa::{POAGraph, POAGraphWithIx};
 use poasta::graphs::AlignableRefGraph;
 use poasta::io::fasta::poa_graph_to_fasta;
-use poasta::io::graph::{graph_to_gfa, load_graph_from_fasta_msa};
+use poasta::io::graph::{graph_to_dot, graph_to_gfa, load_graph_from_fasta_msa};
 use poasta::io::load_graph;
 
 trait Output: Write + IsTerminal {}
@@ -171,7 +171,7 @@ where
     let reader_inner: Box<dyn std::io::BufRead> = if is_gzipped {
         Box::new(
             File::open(sequences_fname)
-                .map(GzDecoder::new)
+                .map(MultiGzDecoder::new)
                 .map(BufReader::new)?,
         )
     } else {
@@ -360,7 +360,12 @@ fn view_subcommand(view_args: &ViewArgs) -> Result<()> {
                 eprintln!("WARNING: not writing binary graph data to terminal standard output!");
             }
         }
-        OutputType::Dot => write!(writer, "{}", &graph)?,
+        OutputType::Dot => match graph {
+            POAGraphWithIx::U8(ref g) => graph_to_dot(&mut writer, g),
+            POAGraphWithIx::U16(ref g) => graph_to_dot(&mut writer, g),
+            POAGraphWithIx::U32(ref g) => graph_to_dot(&mut writer, g),
+            POAGraphWithIx::USIZE(ref g) => graph_to_dot(&mut writer, g),
+        }?,
         OutputType::Fasta => match graph {
             POAGraphWithIx::U8(ref g) => poa_graph_to_fasta(g, &mut writer),
             POAGraphWithIx::U16(ref g) => poa_graph_to_fasta(g, &mut writer),
