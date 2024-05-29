@@ -247,8 +247,12 @@ fn align_subcommand(align_args: &AlignArgs) -> Result<()> {
         POAGraphWithIx::U32(POAGraph::new())
     };
 
-    // TODO: make configurable through CLI
-    let scoring = GapAffine::new(4, 2, 6);
+    // TODO: separate implementations for edit distance/linear gap penalties
+    let scoring = GapAffine::new(
+        align_args.cost_mismatch.unwrap_or(4),
+        align_args.cost_gap_extend.unwrap_or(2),
+        align_args.cost_gap_open.unwrap_or(6),
+    );
     let mut aligner = if let Some(ref debug) = debug_writer {
         PoastaAligner::new_with_debug(AffineMinGapCost(scoring), AlignmentType::Global, debug)
     } else {
