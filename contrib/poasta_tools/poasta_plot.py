@@ -16,7 +16,7 @@ import numpy
 import numpy as np
 import pandas
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation, PillowWriter
+from matplotlib.animation import FuncAnimation, FFMpegWriter
 import seaborn
 import networkx as nx
 
@@ -132,8 +132,10 @@ def load_astar_data(fname):
             kv[k] = v
 
     df = pandas.read_csv(fname, sep='\t', comment='#')
+    df = df.set_index('matrix').sort_index()
+    df['score'] = df['score'].astype(int)
 
-    return df.set_index('matrix').sort_index(), kv
+    return df, kv
 
 
 iter_num_regexp = re.compile(r"iter(\d+)")
@@ -221,6 +223,8 @@ def create_animation(g, graph_layout_data, sequence, all_astar_df, output_dir, p
 
     max_score = all_astar_df['score'].max()
 
+    writer = FFMpegWriter(fps=10, codec='libwebp')
+
     for row, kind in enumerate(["match", "deletion", "insertion"]):
         fig, axes = plt.subplots(1, 3, figsize=(fig_width, fig_height), width_ratios=[1, 8.75, 0.25],
                                  constrained_layout=True)
@@ -243,11 +247,15 @@ def create_animation(g, graph_layout_data, sequence, all_astar_df, output_dir, p
             graph_layout_data=graph_layout_data,
             axes=axes
         )
-        animation = FuncAnimation(fig, func, init_func=init_func, frames=all_astar_df.index.unique(level=0), interval=50)
 
-        writer = PillowWriter(fps=5, bitrate=1800)
-        animation.save(output_dir / f'{prefix}.{kind}.gif', writer=writer)
-        plt.close(fig)
+        iters = all_astar_df.index.unique(level=0)
+        max_iter = iters.max()
+
+        # animation = FuncAnimation(fig, func, init_func=init_func, frames=all_astar_df.index.unique(level=0), interval=50)
+        # animation.save(output_dir / f'{prefix}.{kind}.webp', writer=writer)
+        init_func()
+        func(max_iter)
+        fig.savefig(output_dir / f'{prefix}.{kind}.pdf', bbox_inches='tight')
 
 
 def draw_graph(g, graph_layout_data, ax):
