@@ -2,7 +2,9 @@
 
 use std::collections::VecDeque;
 use std::fs::File;
-use std::io::{BufReader, Read, Write};
+#[cfg(feature = "serialize")]
+use std::io::Read;
+use std::io::{BufReader, Write};
 use std::path::Path;
 use std::{char, fmt};
 
@@ -19,12 +21,14 @@ use crate::errors::PoastaError;
 use crate::graphs::poa::{POAGraph, POAGraphWithIx, POANodeData, POANodeIndex, Sequence};
 use crate::graphs::AlignableRefGraph;
 
+#[cfg(feature = "serialize")]
 pub fn save_graph(graph: &POAGraphWithIx, out: impl Write) -> Result<(), PoastaError> {
     bincode::serialize_into(out, graph)?;
 
     Ok(())
 }
 
+#[cfg(feature = "serialize")]
 pub fn load_graph(reader: impl Read) -> Result<POAGraphWithIx, PoastaError> {
     let graph: POAGraphWithIx = bincode::deserialize_from(reader)?;
 

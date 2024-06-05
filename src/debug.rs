@@ -8,13 +8,15 @@ use crate::errors::PoastaError;
 
 pub mod messages {
     use petgraph::graph::IndexType;
+    #[cfg(feature = "serialize")]
     use serde::{Deserialize, Serialize};
     use crate::aligner::astar::AstarVisited;
     use crate::aligner::offsets::OffsetType;
     use crate::graphs::NodeIndexType;
     use crate::graphs::poa::POAGraph;
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
+    #[derive(Debug)]
     pub enum DebugOutputMessage {
         Empty,
         NewSequence { seq_name: String, sequence: String, max_rank: usize },
