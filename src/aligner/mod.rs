@@ -1,111 +1,62 @@
-pub mod offsets;
-pub mod aln_graph;
-pub mod scoring;
-pub mod queue;
-pub mod alignment;
-mod dfa;
-pub mod astar;
-pub mod heuristic;
-pub mod config;
-
 use std::ops::Bound;
-use std::rc::Rc;
-use crate::graphs::AlignableRefGraph;
-use crate::aligner::offsets::OffsetType;
-use crate::aligner::scoring::AlignmentType;
 
-pub use alignment::{AlignedPair, Alignment};
-use crate::aligner::astar::{astar_alignment, AstarResult};
-use crate::aligner::config::AlignmentConfig;
-use crate::bubbles::index::BubbleIndex;
-use crate::debug::DebugOutputWriter;
+use astar::{AstarAlignableGraph, AstarState};
+use config::AlignerConfig;
+use cost_models::AlignmentCostModel;
 
+use crate::graph::alignment::GraphAlignment;
 
-pub enum AlignmentMode<O> {
+pub mod config;
+pub mod cost_models;
+pub(crate) mod astar;
+pub(crate) mod fr_points;
+
+/// Enum representing the kind of alignment to perform
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlignmentMode {
     /// Perform global alignment of the query sequence to the graph
     Global,
 
-    /// Allow free indels at the beginning or end (optionally up to a given maximum)
+    /// Allow free indels at the beginning or end (optionally up to a given maximum),
+    /// e.g., for semi-global alignment.
     EndsFree {
-        qry_free_begin: Bound<O>,
-        qry_free_end: Bound<O>,
-        graph_free_begin: Bound<O>,
-        graph_free_end: Bound<O>
-    }
+        qry_free_begin: Bound<usize>,
+        qry_free_end: Bound<usize>,
+        graph_free_begin: Bound<usize>,
+        graph_free_end: Bound<usize>,
+    },
 }
 
-
-pub struct PoastaAligner<'a, C>
-where
-    C: AlignmentConfig,
-{
+pub struct PoastaAligner<C> {
     config: C,
-    aln_type: AlignmentType,
-    debug_writer: Option<&'a DebugOutputWriter>
 }
 
-
-impl<'a, C> PoastaAligner<'a, C>
-    where C: AlignmentConfig,
+impl<C> PoastaAligner<C>
+where C: AlignerConfig,
 {
-    pub fn new(config: C, aln_type: AlignmentType) -> Self {
+    pub fn new(config: C) -> Self {
         Self {
             config,
-            aln_type,
-            debug_writer: None
         }
     }
-
-    pub fn new_with_debug(config: C, aln_type: AlignmentType, debug_writer: &'a DebugOutputWriter) -> Self {
-        Self {
-            config,
-            aln_type,
-            debug_writer: Some(debug_writer)
-        }
-    }
-
-    pub fn align<O, G, Seq>(
-        &self,
-        ref_graph: &G,
-        seq: &Seq,
-    ) -> AstarResult<G::NodeIndex>
-        where O: OffsetType,
-              G: AlignableRefGraph,
-              Seq: AsRef<[u8]>,
+    
+    pub fn align<D, G, CM, AS>(&self, graph: &G, seq: impl AsRef<[u8]>) -> GraphAlignment<G::NodeType>
+        where G: AstarAlignableGraph,
+            CM: AlignmentCostModel<AstarState<G::NodeType, D> = AS>,
+            C: AlignerConfig<CostModel=CM>,
+            AS: AstarState
     {
-        self.align_u8::<O, _>(ref_graph, seq.as_ref(), None)
+        self.align_u8::<D, G, CM, AS>(graph, seq.as_ref())
     }
-
-    pub fn align_with_existing_bubbles<O, G, Seq>(
-        &self,
-        ref_graph: &G,
-        seq: &Seq,
-        existing_bubbles: Rc<BubbleIndex<G::NodeIndex>>,
-    ) -> AstarResult<G::NodeIndex>
-        where O: OffsetType,
-              G: AlignableRefGraph,
-              Seq: AsRef<[u8]>,
+    
+    fn align_u8<D, G, CM, AS>(&self, graph: &G, seq: &[u8]) -> GraphAlignment<G::NodeType> 
+        where G: AstarAlignableGraph,
+              CM: AlignmentCostModel<AstarState<G::NodeType, D> = AS>,
+              C: AlignerConfig<CostModel=CM>,
+              AS: AstarState
     {
-        self.align_u8::<O, _>(ref_graph, seq.as_ref(), Some(existing_bubbles))
-    }
-
-    fn align_u8<O, G>(
-        &self,
-        ref_graph: &G,
-        seq: &[u8],
-        existing_bubbles: Option<Rc<BubbleIndex<G::NodeIndex>>>
-    ) -> AstarResult<G::NodeIndex>
-    where
-        O: OffsetType,
-        G: AlignableRefGraph,
-    {
-        astar_alignment::<O, _, _, _, _, _>(
-            &self.config,
-            ref_graph,
-            seq,
-            self.aln_type,
-            self.debug_writer,
-            existing_bubbles,
-        )
+        let mut astar_state = AS::init();
+        
+        GraphAlignment::new()
     }
 }

@@ -4,7 +4,37 @@ use std::io;
 use std::sync::mpsc::SendError;
 use petgraph::algo::Cycle;
 
-use crate::debug::messages::DebugOutputMessage;
+use crate::graph::poa::POANodeIndex;
+
+// use crate::debug::messages::DebugOutputMessage;
+
+#[derive(Debug)]
+pub enum GraphError<Ix> {
+    /// Error variant when the graph contains a cycle
+    CycleError(Cycle<POANodeIndex<Ix>>),
+    
+    /// Error when a required alignment is not present
+    EmptyAlignment,
+}
+
+impl<Ix> From<Cycle<POANodeIndex<Ix>>> for GraphError<Ix> {
+    fn from(value: Cycle<POANodeIndex<Ix>>) -> Self {
+        Self::CycleError(value)
+    }
+}
+
+impl<Ix> Error for GraphError<Ix>
+where Ix: Debug 
+{ }
+
+impl<Ix> Display for GraphError<Ix> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CycleError(cycle) => write!(f, "The graph contains a cycle: {:?} visited twice.", cycle.node_id()),
+            Self::EmptyAlignment => write!(f, "Alignment required when adding a sequence to a non-empty graph."),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum PoastaError {
@@ -16,9 +46,6 @@ pub enum PoastaError {
 
     /// Error variant when something went wrong in the alignment
     AlignmentError,
-
-    /// Error indicating the graph is in an invalid state
-    GraphError,
 
     /// Error variant when we couldn't read from a file
     FileReadError { source: io::Error },
@@ -33,7 +60,7 @@ pub enum PoastaError {
     FormatError(std::fmt::Error),
 
     /// Debug output error
-    DebugError { source: SendError<DebugOutputMessage> },
+    // DebugError { source: SendError<DebugOutputMessage> },
 
     /// Other miscellaneous poasta errors
     Other,
@@ -45,18 +72,12 @@ impl Error for PoastaError {
             Self::FileReadError { ref source } => Some(source),
             Self::SerializationError { ref source } => Some(source),
             Self::IOError(ref source) => Some(source),
-            Self::DebugError { ref source} => Some(source),
+            // Self::DebugError { ref source} => Some(source),
             _ => None
         }
     }
 }
 
-
-impl<N> From<Cycle<N>> for PoastaError {
-    fn from(_: Cycle<N>) -> Self {
-        Self::GraphError
-    }
-}
 
 impl From<io::Error> for PoastaError {
     fn from(value: io::Error) -> Self {
@@ -72,11 +93,11 @@ impl From<bincode::Error> for PoastaError {
     }
 }
 
-impl From<SendError<DebugOutputMessage>> for PoastaError {
-    fn from(value: SendError<DebugOutputMessage>) -> Self {
-        Self::DebugError { source: value }
-    }
-}
+// impl From<SendError<DebugOutputMessage>> for PoastaError {
+//     fn from(value: SendError<DebugOutputMessage>) -> Self {
+//         Self::DebugError { source: value }
+//     }
+// }
 
 impl From<std::fmt::Error> for PoastaError {
     fn from(value: std::fmt::Error) -> Self {
@@ -91,8 +112,6 @@ impl Display for PoastaError {
                 write!(f, "The length of the weights vector ({weights_len}) does not match the length of the sequence ({seq_len})!"),
             Self::InvalidAlignment =>
                 write!(f, "The specified alignment did not include any valid sequence positions!"),
-            Self::GraphError =>
-                write!(f, "The graph is in an invalid state (possibly a cycle?)."),
             Self::AlignmentError =>
                 write!(f, "Something went wrong with the alignment!"),
             Self::FileReadError { source: _ } =>
@@ -103,8 +122,8 @@ impl Display for PoastaError {
                 std::fmt::Display::fmt(err, f),
             Self::FormatError(ref err) =>
                 std::fmt::Display::fmt(err, f),
-            Self::DebugError { source: _ } =>
-                write!(f, "Could not log debug data!"),
+            // Self::DebugError { source: _ } =>
+            //     write!(f, "Could not log debug data!"),
             Self::Other =>
                 write!(f, "Poasta error!")
         }

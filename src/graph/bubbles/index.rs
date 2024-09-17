@@ -1,8 +1,7 @@
 use std::cmp::max;
 use std::collections::VecDeque;
 use rustc_hash::FxHashSet;
-use crate::bubbles::finder::SuperbubbleFinder;
-use crate::graphs::{AlignableRefGraph, NodeIndexType};
+use super::finder::SuperbubbleFinder;
 
 #[derive(Copy, Clone)]
 enum BubbleNode<N> {
@@ -222,9 +221,7 @@ where
 #[cfg(test)]
 mod tests {
     use petgraph::graph::NodeIndex;
-    use crate::bubbles::index::NodeBubbleMap;
-    use crate::graphs::AlignableRefGraph;
-    use crate::graphs::mock::{create_test_graph1, create_test_graph2};
+    use super::NodeBubbleMap;
     use super::BubbleIndex;
 
     type NIx = NodeIndex<crate::graphs::mock::NIx>;
