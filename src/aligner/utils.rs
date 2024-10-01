@@ -1,5 +1,5 @@
 
-use super::astar::{AlignableGraphRef, AlignableGraphNodeId, AlignableGraphNodePos};
+use super::astar::{AlignableGraphRef, AlignableGraphNodePos};
 
 /// An aligned pair of residues. The first element represent
 /// the position with a node of the graph, and the second element

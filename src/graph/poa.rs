@@ -611,12 +611,13 @@ where
             // Block of matches starts in the middle of a node, split the node
             let (left_node, right_node) = self.split_node_at(first_node_pos.node(), first_node_pos.pos());
             nodes_split.add_split(first_node_pos.node(), first_node_pos.pos(), left_node, right_node);
-            
-            // Add edge from predecessor if given
-            if let Some(p) = pred {
-                self.graph.add_edge(p, right_node, POAEdgeData::new_with_seq_id(new_seq_id));
-            }
         } 
+        
+        // Add edge from predecessor if given
+        if let Some(p) = pred {
+            let new = nodes_split.to_new_node_pos(*first_node_pos);
+            self.graph.add_edge(p, new.node(), POAEdgeData::new_with_seq_id(new_seq_id));
+        }
         
         let (last_node_pos, ival_length) = node_ivals.last().unwrap();
         let last_poa_node_pos = nodes_split.to_new_node_pos(POANodePos(last_node_pos.node(), last_node_pos.pos() + *ival_length));
