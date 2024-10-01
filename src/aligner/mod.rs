@@ -1,14 +1,15 @@
-use std::ops::Bound;
+use std::{marker::PhantomData, ops::Bound};
 
-use astar::{AstarAlignableGraph, AstarState};
-use config::AlignerConfig;
+use astar::{heuristic::AstarHeuristic, Astar, AlignableGraphRef, AstarResult, AstarState};
 use cost_models::AlignmentCostModel;
+use fr_points::{DiagType, OffsetType};
 
-use crate::graph::alignment::GraphAlignment;
+use crate::errors::PoastaError;
 
-pub mod config;
 pub mod cost_models;
-pub(crate) mod astar;
+pub mod astar;
+pub mod utils;
+pub(crate) mod extension;
 pub(crate) mod fr_points;
 
 /// Enum representing the kind of alignment to perform
@@ -27,36 +28,129 @@ pub enum AlignmentMode {
     },
 }
 
-pub struct PoastaAligner<C> {
-    config: C,
+pub struct PoastaAligner<C, H, G, D=i32, O=u32> {
+    cost_model: C,
+    dummy: PhantomData<(H, G, D, O)>
 }
 
-impl<C> PoastaAligner<C>
-where C: AlignerConfig,
+impl<C, H, G, D, O> PoastaAligner<C, H, G, D, O>
+where
+    C: AlignmentCostModel,
+    H: AstarHeuristic<
+        G, 
+        <<C as AlignmentCostModel>::AstarStateType<G, D, O> as AstarState<G>>::AstarItem
+    >,
+    G: AlignableGraphRef,
+    D: DiagType,
+    O: OffsetType,
 {
-    pub fn new(config: C) -> Self {
+    pub fn new(cost_model: C) -> Self {
         Self {
-            config,
+            cost_model,
+            dummy: PhantomData,
         }
     }
     
-    pub fn align<D, G, CM, AS>(&self, graph: &G, seq: impl AsRef<[u8]>) -> GraphAlignment<G::NodeType>
-        where G: AstarAlignableGraph,
-            CM: AlignmentCostModel<AstarState<G::NodeType, D> = AS>,
-            C: AlignerConfig<CostModel=CM>,
-            AS: AstarState
-    {
-        self.align_u8::<D, G, CM, AS>(graph, seq.as_ref())
+    pub fn align(
+        &self, 
+        graph: G, 
+        seq: impl AsRef<[u8]>, 
+        alignment_mode: AlignmentMode
+    ) -> Result<AstarResult<G>, PoastaError> {
+        let heuristic = H::default();
+        self.align_u8(graph, seq.as_ref(), alignment_mode, heuristic)
     }
     
-    fn align_u8<D, G, CM, AS>(&self, graph: &G, seq: &[u8]) -> GraphAlignment<G::NodeType> 
-        where G: AstarAlignableGraph,
-              CM: AlignmentCostModel<AstarState<G::NodeType, D> = AS>,
-              C: AlignerConfig<CostModel=CM>,
-              AS: AstarState
-    {
-        let mut astar_state = AS::init();
+    pub fn align_with_precomputed_heuristic(
+        &self,
+        graph: G,
+        seq: impl AsRef<[u8]>,
+        alignment_mode: AlignmentMode,
+        heuristic: H,
+    ) -> Result<AstarResult<G>, PoastaError> {
+        self.align_u8(graph, seq.as_ref(), alignment_mode, heuristic)
+    }
+    
+    fn align_u8(
+        &self, 
+        graph: G, 
+        seq: &[u8], 
+        alignment_mode: AlignmentMode,
+        mut heuristic: H,
+    ) -> Result<AstarResult<G>, PoastaError> {
+        heuristic.init(graph, seq);
+        let mut astar_state = self.cost_model.initialize(graph, seq, alignment_mode);
         
-        GraphAlignment::new()
+        for item in self.cost_model.initial_states(graph, seq, alignment_mode) {
+            astar_state.update_if_further(&item, 0);
+            let h = heuristic.h(&item);
+            astar_state.queue_item(item,  h);
+        }
+        
+        let mut astar = Astar::new(
+            graph, 
+            seq, 
+            &heuristic,
+            alignment_mode,
+            astar_state
+        );
+        
+        astar.run()
+    }
+    
+}
+
+
+#[cfg(test)]
+mod tests {
+    use std::fs::File;
+    use std::io::BufReader;
+
+    use noodles::fasta;
+    
+    use crate::graph::io::graph_to_dot;
+    use crate::graph::poa::POASeqGraph;
+
+    use super::astar::heuristic::Dijkstra;
+    use super::cost_models::affine::Affine;
+    use super::{AlignmentMode, PoastaAligner};
+
+    #[test]
+    fn test_alignment() {
+        let cost_model = Affine::new(4, 6, 2);
+        let mut graph = POASeqGraph::<u32>::new();
+        
+        let aligner = PoastaAligner::<Affine, Dijkstra, _, i32, u32>::new(cost_model);
+        
+        let mut reader = File::open("tests/test2_from_abpoa.fa")
+            .map(BufReader::new)
+            .map(fasta::Reader::new)
+            .unwrap();
+        
+        let sequences: Vec<_> = reader.records()
+            .map(|v| v.unwrap())
+            .collect();
+        
+        for (i, record) in sequences.iter().enumerate() {
+            if graph.is_empty() {
+                graph.add_aligned_sequence(record.name(), record.sequence(), vec![1; record.sequence().len()], None)
+                    .unwrap();
+            } else {
+                let aln = aligner.align(&graph, record.sequence(), AlignmentMode::Global)
+                    .unwrap();
+                
+                graph.add_aligned_sequence(
+                    record.name(), 
+                    record.sequence(), 
+                    vec![1; record.sequence().len()], 
+                    Some(&aln.alignment)
+                ).unwrap();
+            }
+            
+            let mut writer = File::create(format!("tests/output/graph{i}.dot")).unwrap();
+            graph_to_dot(&mut writer, &graph).unwrap();
+        }
+        
+        assert!(false);
     }
 }

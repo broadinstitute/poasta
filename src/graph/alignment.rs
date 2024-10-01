@@ -1,81 +1,64 @@
 //! Contains types for representing sequence-to-graph alignments.
 use std::ops::Range;
 
+use petgraph::graph::IndexType;
+
+use crate::aligner::astar::AlignableGraphNodePos;
+use crate::aligner::utils::AlignedPair;
+
 use super::poa::{POANodeIndex, POASeqGraph, SplitTracker};
 
 /// Refers to a specific position with a POA graph node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct POANodePos<Ix>(pub POANodeIndex<Ix>, pub usize);
+pub struct POANodePos<Ix>(pub POANodeIndex<Ix>, pub usize)
+where
+    Ix: IndexType;
 
-impl<Ix> POANodePos<Ix> {
-    #[inline]
-    pub fn node(&self) -> POANodeIndex<Ix> {
-        self.0
-    }
-    
-    #[inline]
-    pub fn pos(&self) -> usize {
-        self.1
-    }
-    
+impl<Ix> POANodePos<Ix>
+where 
+    Ix: IndexType,
+{
     #[inline]
     pub fn node_equal(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
 
-
-/// An aligned pair of residues. The first element represent
-/// the position with a node of the graph, and the second element
-/// represents the query sequence position.
-///
-/// In case of on insertion or deletion, set one of the elements to `None`.
-#[derive(Debug, Clone, Copy)]
-pub struct AlignedPair<Ix>(Option<POANodePos<Ix>>, Option<usize>);
-
-impl<Ix> AlignedPair<Ix>
-    where Ix: Copy
+impl<Ix> AlignableGraphNodePos for POANodePos<Ix>
+where 
+    Ix: IndexType,
 {
-    pub fn new(node_pos: Option<POANodePos<Ix>>, query_pos: Option<usize>) -> Self {
-        AlignedPair(node_pos, query_pos)
+    type NodeType = POANodeIndex<Ix>;
+    
+    #[inline]
+    fn new(node: Self::NodeType, pos: usize) -> Self {
+        POANodePos(node, pos)
     }
     
-    #[inline(always)]
-    pub fn node_pos(&self) -> Option<POANodePos<Ix>> {
+    #[inline]
+    fn node(&self) -> Self::NodeType {
         self.0
     }
     
-    #[inline(always)]
-    pub fn node(&self) -> Option<POANodeIndex<Ix>> {
-        self.0.map(|pos| pos.node())
-    }
-    
-    #[inline(always)]
-    pub fn within_node_pos(&self) -> Option<usize> {
-        self.0.map(|pos| pos.pos())
-    }
-
-    #[inline(always)]
-    pub fn query_pos(&self) -> Option<usize> {
+    #[inline]
+    fn pos(&self) -> usize {
         self.1
     }
 }
 
+
 /// Represents the aligned state of a pair of positions in a sequence-to-graph alignment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AlignmentClassification<Ix> {
+pub enum AlignmentClassification<Ix>
+where 
+    Ix: IndexType
+{
     Start,
     Match,
     Mismatch(Option<POANodePos<Ix>>),
     Insertion,
     Deletion,
 }
-
-/// Represents a single sequence-to-POA-graph alignment
-///
-/// The alignment is broken up per graph node. For each node in the alignment
-/// path we store the aligned residue pairs.
-pub type GraphAlignment<Ix> = Vec<AlignedPair<Ix>>;
 
 
 /// Divide a sequence-to-graph alignment into multiple "blocks".
@@ -86,12 +69,15 @@ pub type GraphAlignment<Ix> = Vec<AlignedPair<Ix>>;
 /// - All mismatches, where the mismatching sequence is present in another aligned node, and this node is the same for a block
 /// - All deletions
 /// - All insertions
-pub(crate) struct AlignmentBlocks<'a, Ix> {
+pub(crate) struct AlignmentBlocks<'a, Ix>
+where
+    Ix: IndexType
+{
     /// The alignment to process
-    alignment: &'a [AlignedPair<Ix>],
+    alignment: &'a [AlignedPair<POANodePos<Ix>>],
     
     /// Iterator over the alignment
-    aln_iter: std::iter::Enumerate<std::slice::Iter<'a, AlignedPair<Ix>>>,
+    aln_iter: std::iter::Enumerate<std::slice::Iter<'a, AlignedPair<POANodePos<Ix>>>>,
     
     // Previous and current alignment block type
     prev_state: AlignmentClassification<Ix>,
@@ -120,9 +106,10 @@ pub(crate) struct AlignmentBlocks<'a, Ix> {
 
 
 impl<'a, Ix> AlignmentBlocks<'a, Ix>
-    where Ix: petgraph::graph::IndexType
+where 
+    Ix: IndexType
 {
-    pub fn new(alignment: &'a [AlignedPair<Ix>], start_node: POANodeIndex<Ix>) -> Self {
+    pub fn new(alignment: &'a [AlignedPair<POANodePos<Ix>>], start_node: POANodeIndex<Ix>) -> Self {
         AlignmentBlocks {
             alignment,
             aln_iter: alignment.iter().enumerate(),
@@ -144,9 +131,9 @@ impl<'a, Ix> AlignmentBlocks<'a, Ix>
         
         while let Some((aln_pos, pair)) = self.aln_iter.next() {
             // Update any node references in the alignment that refer to old, split, nodes
-            let pair = AlignedPair(
-                pair.0.map(|pos| node_splits.to_new_node_pos(pos)),
-                pair.1
+            let pair = AlignedPair::new(
+                pair.node_pos().map(|pos| node_splits.to_new_node_pos(pos)),
+                pair.query_pos(),
             );
             self.prev_node = node_splits.to_new_node_pos(self.prev_node);
             
@@ -301,7 +288,7 @@ impl<'a, Ix> AlignmentBlocks<'a, Ix>
     /// 
     /// The aligned pair can either be a match, mismatch, insertion or deletion. Mismatches are further
     /// classified as whether the mismatching residue is present in another aligned node.
-    fn classify_aln_pair(&self, pair: &AlignedPair<Ix>, graph: &POASeqGraph<Ix>, seq: &[u8]) -> AlignmentClassification<Ix> {
+    fn classify_aln_pair(&self, pair: &AlignedPair<POANodePos<Ix>>, graph: &POASeqGraph<Ix>, seq: &[u8]) -> AlignmentClassification<Ix> {
         let node = pair.node();
         let query_pos = pair.query_pos();
         
@@ -316,13 +303,12 @@ impl<'a, Ix> AlignmentBlocks<'a, Ix>
                 } else {
                     // Check if mismatching symbol is present in another aligned node
                     let mut match_in_other_node = None;
-                    for aligned_ival in graph.node_data(n).aligned_intervals() {
+                    for aligned_ival in &graph.node_data(n).aligned_intervals {
                         if let Some(other_pos) = aligned_ival.pos_to_other(node_pos) {
                             let other_node = aligned_ival.other();
                             let other_node_data = graph.node_data(other_node);
-                            let other_seq = other_node_data.sequence();
                             
-                            if other_seq[other_pos] == seq[q] {
+                            if other_node_data.sequence[other_pos] == seq[q] {
                                 match_in_other_node = Some(POANodePos(other_node, other_pos));
                                 break;
                             }
@@ -460,7 +446,10 @@ impl<'a, Ix> AlignmentBlocks<'a, Ix>
 
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AlignmentBlockType<Ix> {
+pub enum AlignmentBlockType<Ix>
+where 
+    Ix: IndexType
+{
     Match { 
         qry_range: Range<usize>,
         
@@ -501,7 +490,10 @@ pub enum AlignmentBlockType<Ix> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AlignmentBlock<Ix> {
+pub struct AlignmentBlock<Ix>
+where 
+    Ix: IndexType,
+{
     /// The range spanning this block in the alignment string
     pub aln_range: Range<usize>,
     
@@ -513,27 +505,27 @@ pub struct AlignmentBlock<Ix> {
 #[cfg(test)]
 mod tests {
     use crate::graph::poa::POASeqGraph;
-    use super::{AlignedPair, AlignmentBlocks, AlignmentBlock, AlignmentBlockType, GraphAlignment, POANodePos, SplitTracker};
+    use super::{AlignedPair, AlignmentBlocks, AlignmentBlock, AlignmentBlockType, POANodePos, SplitTracker};
 
     #[test]
     fn test_alignment_block_mismatches() {
-        let test_graph = POASeqGraph::<usize>::new();
+        let mut test_graph = POASeqGraph::<usize>::new();
         let node = test_graph.add_node(b"CCGCTTTTCGCG".to_vec());
         
         let qry_seq = b"CCGCAAAACGCG".to_vec();
-        let aln: GraphAlignment<usize> = vec![
-            AlignedPair(Some(POANodePos(node, 0)), Some(0)),
-            AlignedPair(Some(POANodePos(node, 1)), Some(1)),
-            AlignedPair(Some(POANodePos(node, 2)), Some(2)),
-            AlignedPair(Some(POANodePos(node, 3)), Some(3)),
-            AlignedPair(Some(POANodePos(node, 4)), Some(4)),
-            AlignedPair(Some(POANodePos(node, 5)), Some(5)),
-            AlignedPair(Some(POANodePos(node, 6)), Some(6)),
-            AlignedPair(Some(POANodePos(node, 7)), Some(7)),
-            AlignedPair(Some(POANodePos(node, 8)), Some(8)),
-            AlignedPair(Some(POANodePos(node, 9)), Some(9)),
-            AlignedPair(Some(POANodePos(node, 10)), Some(10)),
-            AlignedPair(Some(POANodePos(node, 11)), Some(11)),
+        let aln: Vec<AlignedPair<POANodePos<usize>>> = vec![
+            AlignedPair::new(Some(POANodePos(node, 0)), Some(0)),
+            AlignedPair::new(Some(POANodePos(node, 1)), Some(1)),
+            AlignedPair::new(Some(POANodePos(node, 2)), Some(2)),
+            AlignedPair::new(Some(POANodePos(node, 3)), Some(3)),
+            AlignedPair::new(Some(POANodePos(node, 4)), Some(4)),
+            AlignedPair::new(Some(POANodePos(node, 5)), Some(5)),
+            AlignedPair::new(Some(POANodePos(node, 6)), Some(6)),
+            AlignedPair::new(Some(POANodePos(node, 7)), Some(7)),
+            AlignedPair::new(Some(POANodePos(node, 8)), Some(8)),
+            AlignedPair::new(Some(POANodePos(node, 9)), Some(9)),
+            AlignedPair::new(Some(POANodePos(node, 10)), Some(10)),
+            AlignedPair::new(Some(POANodePos(node, 11)), Some(11)),
         ];
         
         let mut blocks = AlignmentBlocks::new(&aln, test_graph.get_start_node());
@@ -571,26 +563,26 @@ mod tests {
     
     #[test]
     fn test_alignment_block_insertion() {
-        let test_graph = POASeqGraph::<usize>::new();
+        let mut test_graph = POASeqGraph::<usize>::new();
         let node = test_graph.add_node(b"CCGCTTTTCGCG".to_vec());
         
         let qry_seq = b"CCGCAAAATTTCGCG".to_vec();
-        let aln: GraphAlignment<usize> = vec![
-            AlignedPair(Some(POANodePos(node, 0)), Some(0)),
-            AlignedPair(Some(POANodePos(node, 1)), Some(1)),
-            AlignedPair(Some(POANodePos(node, 2)), Some(2)),
-            AlignedPair(Some(POANodePos(node, 3)), Some(3)),
-            AlignedPair(Some(POANodePos(node, 4)), Some(4)),
-            AlignedPair(Some(POANodePos(node, 5)), Some(5)),
-            AlignedPair(Some(POANodePos(node, 6)), Some(6)),
-            AlignedPair(Some(POANodePos(node, 7)), Some(7)),
-            AlignedPair(None, Some(8)),
-            AlignedPair(None, Some(9)),
-            AlignedPair(None, Some(10)),
-            AlignedPair(Some(POANodePos(node, 8)), Some(11)),
-            AlignedPair(Some(POANodePos(node, 9)), Some(12)),
-            AlignedPair(Some(POANodePos(node, 10)), Some(13)),
-            AlignedPair(Some(POANodePos(node, 11)), Some(14)),
+        let aln: Vec<AlignedPair<POANodePos<usize>>> = vec![
+            AlignedPair::new(Some(POANodePos(node, 0)), Some(0)),
+            AlignedPair::new(Some(POANodePos(node, 1)), Some(1)),
+            AlignedPair::new(Some(POANodePos(node, 2)), Some(2)),
+            AlignedPair::new(Some(POANodePos(node, 3)), Some(3)),
+            AlignedPair::new(Some(POANodePos(node, 4)), Some(4)),
+            AlignedPair::new(Some(POANodePos(node, 5)), Some(5)),
+            AlignedPair::new(Some(POANodePos(node, 6)), Some(6)),
+            AlignedPair::new(Some(POANodePos(node, 7)), Some(7)),
+            AlignedPair::new(None, Some(8)),
+            AlignedPair::new(None, Some(9)),
+            AlignedPair::new(None, Some(10)),
+            AlignedPair::new(Some(POANodePos(node, 8)), Some(11)),
+            AlignedPair::new(Some(POANodePos(node, 9)), Some(12)),
+            AlignedPair::new(Some(POANodePos(node, 10)), Some(13)),
+            AlignedPair::new(Some(POANodePos(node, 11)), Some(14)),
         ];
         
         let mut blocks = AlignmentBlocks::new(&aln, test_graph.get_start_node());
@@ -634,23 +626,23 @@ mod tests {
     
     #[test]
     fn test_alignment_block_deletion() {
-        let test_graph = POASeqGraph::<usize>::new();
+        let mut test_graph = POASeqGraph::<usize>::new();
         let node = test_graph.add_node(b"CCGCTTTTCGCG".to_vec());
         
         let qry_seq = b"CCGCCGCG".to_vec();
-        let aln: GraphAlignment<usize> = vec![
-            AlignedPair(Some(POANodePos(node, 0)), Some(0)),
-            AlignedPair(Some(POANodePos(node, 1)), Some(1)),
-            AlignedPair(Some(POANodePos(node, 2)), Some(2)),
-            AlignedPair(Some(POANodePos(node, 3)), Some(3)),
-            AlignedPair(Some(POANodePos(node, 4)), None),
-            AlignedPair(Some(POANodePos(node, 5)), None),
-            AlignedPair(Some(POANodePos(node, 6)), None),
-            AlignedPair(Some(POANodePos(node, 7)), None),
-            AlignedPair(Some(POANodePos(node, 8)), Some(4)),
-            AlignedPair(Some(POANodePos(node, 9)), Some(5)),
-            AlignedPair(Some(POANodePos(node, 10)), Some(6)),
-            AlignedPair(Some(POANodePos(node, 11)), Some(7)),
+        let aln: Vec<AlignedPair<POANodePos<usize>>> = vec![
+            AlignedPair::new(Some(POANodePos(node, 0)), Some(0)),
+            AlignedPair::new(Some(POANodePos(node, 1)), Some(1)),
+            AlignedPair::new(Some(POANodePos(node, 2)), Some(2)),
+            AlignedPair::new(Some(POANodePos(node, 3)), Some(3)),
+            AlignedPair::new(Some(POANodePos(node, 4)), None),
+            AlignedPair::new(Some(POANodePos(node, 5)), None),
+            AlignedPair::new(Some(POANodePos(node, 6)), None),
+            AlignedPair::new(Some(POANodePos(node, 7)), None),
+            AlignedPair::new(Some(POANodePos(node, 8)), Some(4)),
+            AlignedPair::new(Some(POANodePos(node, 9)), Some(5)),
+            AlignedPair::new(Some(POANodePos(node, 10)), Some(6)),
+            AlignedPair::new(Some(POANodePos(node, 11)), Some(7)),
         ];
         
         let mut blocks = AlignmentBlocks::new(&aln, test_graph.get_start_node());

@@ -1,24 +1,32 @@
 use std::ops::{Range, RangeBounds, Bound};
-use std::cell::{Ref, RefMut, RefCell};
 
 use petgraph::algo::toposort;
+use petgraph::graph::IndexType;
+use petgraph::stable_graph::Neighbors;
 use petgraph::visit::EdgeRef;
-use petgraph::Direction::Outgoing;
-use petgraph::Incoming;
+use petgraph::{Incoming, Outgoing, visit::NodeIndexable};
+
 use rustc_hash::FxHashMap;
+
+use crate::aligner::astar::{AlignableGraphNodeId, AlignableGraphRef, AlignableGraphNodePos};
+use crate::aligner::utils::AlignedPair;
 use crate::errors::GraphError;
 use crate::graph::alignment::AlignmentBlockType;
 
-use super::alignment::{AlignmentBlocks, GraphAlignment, POANodePos};
+use super::alignment::{AlignmentBlocks, POANodePos};
 
 pub(crate) mod graph_impl {
+    use petgraph::graph::IndexType;
     use petgraph::{stable_graph::StableDiGraph, visit::GraphBase};
     
-    pub type POASeqGraph<Ix> = StableDiGraph<POANodeData<Ix>, POAEdgeData>;
+    pub type POASeqGraph<Ix> = StableDiGraph<POANodeData<Ix>, POAEdgeData, Ix>;
     pub type POANodeIndex<Ix> = <POASeqGraph<Ix> as GraphBase>::NodeId;
     
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct AlignedInterval<Ix> {
+    pub struct AlignedInterval<Ix>
+    where
+        Ix: IndexType,
+    {
         node_start: usize,
         length: usize,
         other: POANodeIndex<Ix>,
@@ -26,7 +34,8 @@ pub(crate) mod graph_impl {
     }
     
     impl<Ix> AlignedInterval<Ix>
-        where Ix: Copy + PartialEq + std::fmt::Debug
+    where 
+        Ix: IndexType,
     {
         pub fn new(node_start: usize, length: usize, other: POANodeIndex<Ix>, other_start: usize) -> Self {
             AlignedInterval {
@@ -227,19 +236,27 @@ pub(crate) mod graph_impl {
     }
 
     #[derive(Debug)]
-    pub struct POANodeData<Ix> {
+    pub struct POANodeData<Ix>
+    where 
+        Ix: IndexType,
+    {
         pub sequence: Vec<u8>,
         pub weights: Vec<usize>,
         pub aligned_intervals: Vec<AlignedInterval<Ix>>,
+        pub rank: Ix,
     }
 
-    impl<Ix> POANodeData<Ix> {
+    impl<Ix> POANodeData<Ix>
+    where
+        Ix: IndexType,
+    {
         pub fn new(sequence: Vec<u8>) -> Self {
             let seq_len = sequence.len();
             POANodeData {
                 sequence,
                 weights: vec![1; seq_len],
                 aligned_intervals: Vec::default(),
+                rank: Ix::new(0)
             }
         }
 
@@ -248,6 +265,7 @@ pub(crate) mod graph_impl {
                 sequence,
                 weights,
                 aligned_intervals: Vec::default(),
+                rank: Ix::new(0),
             }
         }
     }
@@ -383,9 +401,9 @@ pub use graph_impl::POANodeIndex;
 /// The downsize is increased complexity to track which nucleotides are aligned to each other.
 pub struct POASeqGraph<Ix>
 where
-    Ix: petgraph::graph::IndexType,
+    Ix: IndexType,
 {
-    graph: RefCell<graph_impl::POASeqGraph<Ix>>,
+    pub(crate) graph: graph_impl::POASeqGraph<Ix>,
     sequences: Vec<Sequence<Ix>>,
     start_node: POANodeIndex<Ix>,
     end_node: POANodeIndex<Ix>,
@@ -394,16 +412,16 @@ where
 
 impl<Ix> POASeqGraph<Ix>
 where
-    Ix: petgraph::graph::IndexType,
+    Ix: IndexType,
 {
     pub fn new() -> Self {
-        let mut graph = graph_impl::POASeqGraph::<Ix>::new();
+        let mut graph = graph_impl::POASeqGraph::<Ix>::default();
         let start_node = graph.add_node(graph_impl::POANodeData::new(b"#".to_vec()));
         let end_node = graph.add_node(graph_impl::POANodeData::new(b"$".to_vec()));
         graph.add_edge(start_node, end_node, POAEdgeData::default());
 
         POASeqGraph {
-            graph: RefCell::new(graph),
+            graph,
             sequences: Vec::new(),
             start_node,
             end_node,
@@ -413,33 +431,27 @@ where
 
     pub fn is_empty(&self) -> bool {
         // An empty graph still contains the special start and end node
-        self.graph.borrow().node_count() == 2
+        self.graph.node_count() == 2
     }
     
     pub fn num_nodes(&self) -> usize {
-        self.graph.borrow().node_count() - 2
+        self.graph.node_count() - 2
     }
     
     pub fn num_nodes_with_start_end(&self) -> usize {
-        self.graph.borrow().node_count()
+        self.graph.node_count()
     }
     
-    pub fn node_data(&self, node: POANodeIndex<Ix>) -> NodeDataRef<'_, Ix> {
-        NodeDataRef {
-            graph: self.graph.borrow(),
-            node,
-        }
+    pub fn node_data(&self, node: POANodeIndex<Ix>) -> &POANodeData<Ix> {
+        self.graph.node_weight(node).unwrap()
     }
     
-    pub fn node_data_mut(&self, node: POANodeIndex<Ix>) -> NodeDataRefMut<'_, Ix> {
-        NodeDataRefMut {
-            graph: self.graph.borrow_mut(),
-            node,
-        }
+    pub fn node_data_mut(&mut self, node: POANodeIndex<Ix>) -> &mut POANodeData<Ix> {
+        self.graph.node_weight_mut(node).unwrap()
     }
     
     pub fn get_node_symbol(&self, node: POANodeIndex<Ix>, pos: usize) -> u8 {
-        self.graph.borrow().node_weight(node).unwrap().sequence[pos]
+        self.graph.node_weight(node).unwrap().sequence[pos]
     }
     
     pub(crate) fn get_start_node(&self) -> POANodeIndex<Ix> {
@@ -450,27 +462,33 @@ where
         self.end_node
     }
     
-    pub fn add_node(&self, sequence: Vec<u8>) -> graph_impl::POANodeIndex<Ix> {
+    pub fn get_nodes(&self) -> impl Iterator<Item = POANodeIndex<Ix>> + '_ {
+        self.graph.node_indices()
+    }
+    
+    pub fn get_sequences(&self) -> &[Sequence<Ix>] {
+        &self.sequences
+    }
+    
+    pub fn add_node(&mut self, sequence: Vec<u8>) -> graph_impl::POANodeIndex<Ix> {
         let node = graph_impl::POANodeData::new(sequence);
-        self.graph.borrow_mut().add_node(node)
+        self.graph.add_node(node)
     }
 
     pub fn add_node_with_weights(
-        &self,
-        graph_ref: &mut RefMut<graph_impl::POASeqGraph<Ix>>,
+        &mut self,
         sequence: Vec<u8>,
         weights: Vec<usize>,
     ) -> POANodeIndex<Ix> {
         let node = POANodeData::new_with_weights(sequence, weights);
-        graph_ref.add_node(node)
+        self.graph.add_node(node)
     }
     
     fn add_node_with_data(
-        &self,
-        graph_ref: &mut RefMut<graph_impl::POASeqGraph<Ix>>,
+        &mut self,
         node_data: POANodeData<Ix>,
     ) -> POANodeIndex<Ix> {
-        graph_ref.add_node(node_data)
+        self.graph.add_node(node_data)
     }
     
     pub fn add_aligned_sequence(
@@ -478,7 +496,7 @@ where
         sequence_name: &str,
         sequence: impl AsRef<[u8]>,
         weights: impl AsRef<[usize]>,
-        alignment: Option<&GraphAlignment<Ix>>,
+        alignment: Option<&[AlignedPair<POANodePos<Ix>>]>,
     ) -> Result<(), GraphError<Ix>> {
         let seq = sequence.as_ref();
         let w = weights.as_ref();
@@ -489,9 +507,7 @@ where
         if self.is_empty() {
             // Make sure mutable borrow of the graph ends at the block, before calling post process.
             {
-                let mut graph_ref = self.graph.borrow_mut();
-                let new_node = self.add_node_with_weights(&mut graph_ref, sequence.as_ref().to_vec(), weights.as_ref().to_vec());
-                
+                let new_node = self.add_node_with_weights(sequence.as_ref().to_vec(), weights.as_ref().to_vec());
                 self.sequences.push(Sequence(sequence_name.to_string(), new_node))
             }
             
@@ -562,7 +578,6 @@ where
         nodes_split: &mut SplitTracker<Ix>,
     ) -> POANodeIndex<Ix> {
         let new_seq_id = self.sequences.len();
-        let mut graph_ref = self.graph.borrow_mut();
         
         let Bound::Included(qry_start) = qry_range.start_bound() else {
             panic!("Invalid query start position");
@@ -572,7 +587,7 @@ where
         let mut curr_qry_pos = *qry_start;
         for (node_pos, length) in node_ivals {
             eprintln!("Adding weights for {:?}, {}..{} (length: {})", node_pos.node(), node_pos.pos(), node_pos.pos() + *length, length);
-            let node_weights = &mut graph_ref.node_weight_mut(node_pos.node()).unwrap().weights;
+            let node_weights = &mut self.graph.node_weight_mut(node_pos.node()).unwrap().weights;
             
             let range = node_pos.pos()..node_pos.pos()+*length;
             node_weights[range].iter_mut()
@@ -587,29 +602,29 @@ where
             let (n1, _) = window[0];
             let (n2, _) = window[1];
             
-            let edge = graph_ref.find_edge(n1.node(), n2.node()).unwrap();
-            graph_ref.edge_weight_mut(edge).unwrap().sequence_ids.push(new_seq_id);
+            let edge = self.graph.find_edge(n1.node(), n2.node()).unwrap();
+            self.graph.edge_weight_mut(edge).unwrap().sequence_ids.push(new_seq_id);
         }
         
         let (first_node_pos, _) = node_ivals.first().unwrap();
         if first_node_pos.pos() > 0 {
             // Block of matches starts in the middle of a node, split the node
-            let (left_node, right_node) = self.split_node_at(&mut graph_ref, first_node_pos.node(), first_node_pos.pos());
+            let (left_node, right_node) = self.split_node_at(first_node_pos.node(), first_node_pos.pos());
             nodes_split.add_split(first_node_pos.node(), first_node_pos.pos(), left_node, right_node);
             
             // Add edge from predecessor if given
             if let Some(p) = pred {
-                graph_ref.add_edge(p, right_node, POAEdgeData::new_with_seq_id(new_seq_id));
+                self.graph.add_edge(p, right_node, POAEdgeData::new_with_seq_id(new_seq_id));
             }
         } 
         
         let (last_node_pos, ival_length) = node_ivals.last().unwrap();
         let last_poa_node_pos = nodes_split.to_new_node_pos(POANodePos(last_node_pos.node(), last_node_pos.pos() + *ival_length));
-        let last_node_seq_len = graph_ref.node_weight(last_poa_node_pos.node()).unwrap().sequence.len();
+        let last_node_seq_len = self.graph.node_weight(last_poa_node_pos.node()).unwrap().sequence.len();
         
         if last_poa_node_pos.pos() < last_node_seq_len {
             // Block of matches ends in the middle of a node, split the node
-            let (left_node, right_node) = self.split_node_at(&mut graph_ref, last_poa_node_pos.node(), last_poa_node_pos.pos());
+            let (left_node, right_node) = self.split_node_at(last_poa_node_pos.node(), last_poa_node_pos.pos());
             nodes_split.add_split(last_poa_node_pos.node(), last_poa_node_pos.pos(), left_node, right_node);
             
             left_node
@@ -646,15 +661,14 @@ where
             curr_node_pos += *length;
         }
         
-        let mut graph_ref = self.graph.borrow_mut();
-        let new_qry_node_ix = self.add_node_with_data(&mut graph_ref, new_qry_node_data);
+        let new_qry_node_ix = self.add_node_with_data(new_qry_node_data);
         eprintln!("Added node with sequence length {} (new node ix: {:?})", qry_range.len(), new_qry_node_ix);
         
         // Make sure to add aligned intervals pointing to the new node in other nodes
         curr_node_pos = 0;
         let mut additional_aln_ivals_for_qry = Vec::new();
         for (node_pos, length) in node_ivals {
-            let node_data = graph_ref.node_weight(node_pos.node()).unwrap();
+            let node_data = self.graph.node_weight(node_pos.node()).unwrap();
             let aln_ival_to_qry = AlignedInterval::new(node_pos.pos(), *length, new_qry_node_ix, curr_node_pos);
             
             eprintln!("Add aligned interval aligned node {:?}, {} to -> query {:?}, {}", node_pos.node(), node_pos.pos(), new_qry_node_ix, curr_node_pos);
@@ -681,16 +695,16 @@ where
             }
             
             for (other_node, new_aln_ival_for_other) in other_aln_ivals_to_new {
-                let other_node_data = graph_ref.node_weight_mut(other_node).unwrap();
+                let other_node_data = self.graph.node_weight_mut(other_node).unwrap();
                 other_node_data.aligned_intervals.push(new_aln_ival_for_other);
             }
             
-            let node_data = graph_ref.node_weight_mut(node_pos.node()).unwrap();
+            let node_data = self.graph.node_weight_mut(node_pos.node()).unwrap();
             node_data.aligned_intervals.push(aln_ival_to_qry);
             curr_node_pos += *length;
         }
         
-        let qry_node_data = graph_ref.node_weight_mut(new_qry_node_ix).unwrap();
+        let qry_node_data = self.graph.node_weight_mut(new_qry_node_ix).unwrap();
         for aln_ival in additional_aln_ivals_for_qry {
             eprintln!("Add additional aligned interval query {:?}, {} to -> other {:?}, {}", new_qry_node_ix, aln_ival.node_start(), aln_ival.other(), aln_ival.other_start());
             qry_node_data.aligned_intervals.push(aln_ival);
@@ -698,7 +712,7 @@ where
         
         // Create edge to new node from predecessor.
         if let Some(from_node) = pred {
-            graph_ref.add_edge(from_node, new_qry_node_ix, POAEdgeData::new_with_seq_id(new_seq_id));
+            self.graph.add_edge(from_node, new_qry_node_ix, POAEdgeData::new_with_seq_id(new_seq_id));
         }
         
         new_qry_node_ix
@@ -713,13 +727,12 @@ where
         nodes_split: &mut SplitTracker<Ix>,
     ) -> POANodeIndex<Ix> {
         let new_seq_id = self.sequences.len();
-        let mut graph_ref = self.graph.borrow_mut();
         
         // Update node weights
         let query_len = qry_range.len();
         let node_range = other_node.pos()..other_node.pos() + query_len;
         
-        let node_data = graph_ref.node_weight_mut(other_node.node()).unwrap();
+        let node_data = self.graph.node_weight_mut(other_node.node()).unwrap();
         node_data.weights[node_range].iter_mut()
             .zip(weights[qry_range.clone()].iter())
             .for_each(|(v, w)| *v += *w);
@@ -727,30 +740,30 @@ where
         if let Some(p) = pred {
             if other_node.pos() == 0 {
                 // Matching sequencing at the beginning of the node, no need to split
-                if let Some(e) = graph_ref.find_edge(p, other_node.node()) {
-                    let edge_data = graph_ref.edge_weight_mut(e).unwrap();
+                if let Some(e) = self.graph.find_edge(p, other_node.node()) {
+                    let edge_data = self.graph.edge_weight_mut(e).unwrap();
                     edge_data.sequence_ids.push(new_seq_id);
                 } else {
                     let edge_data = POAEdgeData::new_with_seq_id(new_seq_id);
-                    graph_ref.add_edge(p, other_node.node(), edge_data);
+                    self.graph.add_edge(p, other_node.node(), edge_data);
                 }
             } else {
                 // Split the node at the mismatch start position
-                let (left_node, right_node) = self.split_node_at(&mut graph_ref, other_node.node(), other_node.pos());
+                let (left_node, right_node) = self.split_node_at(other_node.node(), other_node.pos());
                 nodes_split.add_split(other_node.node(), other_node.pos(), left_node, right_node);
                 
                 // Add edge from predecessor to the new right node
                 let edge_data = POAEdgeData::new_with_seq_id(new_seq_id);
-                graph_ref.add_edge(p, right_node, edge_data);
+                self.graph.add_edge(p, right_node, edge_data);
             }
         }
         
         let end_node = nodes_split.to_new_node_pos(other_node);
-        let end_node_seq_len = graph_ref.node_weight_mut(end_node.node()).unwrap().sequence.len();
+        let end_node_seq_len = self.graph.node_weight_mut(end_node.node()).unwrap().sequence.len();
         let mut to_return = end_node.node();
         if end_node.pos() < end_node_seq_len - 1 {
             // End of the matching sequence is not at the end of the node, split it
-            let (left_node, right_node) = self.split_node_at(&mut graph_ref, end_node.node(), end_node.pos()+1);
+            let (left_node, right_node) = self.split_node_at(end_node.node(), end_node.pos()+1);
             nodes_split.add_split(end_node.node(), end_node.pos()+1, left_node, right_node);
             
             to_return = left_node;
@@ -767,17 +780,15 @@ where
         pred: Option<POANodeIndex<Ix>>,
     ) -> POANodeIndex<Ix> {
         let new_seq_id = self.sequences.len();
-        let mut graph_ref = self.graph.borrow_mut();
-        
         let new_node_data = POANodeData::new_with_weights(
             seq[qry_range.clone()].to_vec(),
             weights[qry_range.clone()].to_vec(),
         );
-        let new_node = self.add_node_with_data(&mut graph_ref, new_node_data);
+        let new_node = self.add_node_with_data(new_node_data);
         
         if let Some(p) = pred {
             let edge_data = POAEdgeData::new_with_seq_id(new_seq_id);
-            graph_ref.add_edge(p, new_node, edge_data);
+            self.graph.add_edge(p, new_node, edge_data);
         }
         
         new_node
@@ -789,17 +800,15 @@ where
         pred: Option<POANodeIndex<Ix>>,
         nodes_split: &mut SplitTracker<Ix>,
     ) -> Option<POANodeIndex<Ix>> {
-        let mut graph_ref = self.graph.borrow_mut();
-        
         let (del_end_pos, length) = node_ivals.last().copied().unwrap();
         let del_end_pos = POANodePos::<Ix>(del_end_pos.node(), del_end_pos.pos() + length);
         
-        let end_node_data = graph_ref.node_weight(del_end_pos.node()).unwrap();
+        let end_node_data = self.graph.node_weight(del_end_pos.node()).unwrap();
         let end_node_seq_len = end_node_data.sequence.len();
         
         if del_end_pos.pos() < end_node_seq_len {
             // End of the deletion is not at the end of the node, split it
-            let (left_node, right_node) = self.split_node_at(&mut graph_ref, del_end_pos.node(), del_end_pos.pos());
+            let (left_node, right_node) = self.split_node_at(del_end_pos.node(), del_end_pos.pos());
             nodes_split.add_split(del_end_pos.node(), del_end_pos.pos(), left_node, right_node);
         }
         
@@ -807,45 +816,45 @@ where
     }
     
     fn post_process(&mut self, nodes_split: &SplitTracker<Ix>) -> Result<(), GraphError<Ix>> {
-        let mut graph_ref = self.graph.borrow_mut();
-        
         let mut to_remove = Vec::new();
-        for e in graph_ref.edges(self.start_node)
-            .chain(graph_ref.edges_directed(self.end_node, Incoming))
+        for e in self.graph.edges(self.start_node)
+            .chain(self.graph.edges_directed(self.end_node, Incoming))
         {
             to_remove.push(e.id());
         }
         
         for e in to_remove {
-            graph_ref.remove_edge(e);
+            self.graph.remove_edge(e);
         }
         
         let mut to_add = Vec::new();
-        for n in graph_ref.node_indices() {
+        for n in self.graph.node_indices() {
             if n == self.start_node || n == self.end_node {
                 continue;
             }
             
             // Add new edges from start node to nodes with no incoming edges
-            if graph_ref.edges_directed(n, Incoming).count() == 0 {
+            if self.graph.edges_directed(n, Incoming).count() == 0 {
                 to_add.push((self.start_node, n));
             }
             
             // Add new edges from nodes with no outgoing edges to the end node
-            if graph_ref.edges_directed(n, Outgoing).count() == 0 {
+            if self.graph.edges_directed(n, Outgoing).count() == 0 {
                 to_add.push((n, self.end_node));
             }
         }
         
         for e in to_add {
-            graph_ref.add_edge(e.0, e.1, POAEdgeData::default());
+            eprintln!("Adding edge {:?}", e);
+            self.graph.add_edge(e.0, e.1, POAEdgeData::default());
         }
         
         self.toposorted.clear();
-        drop(graph_ref);
+        self.toposorted = toposort(&self.graph, None)?;
         
-        let graph_ref_mut = self.graph.get_mut();
-        self.toposorted = toposort(&*graph_ref_mut, None)?;
+        for (rank, n) in self.toposorted.iter().enumerate() {
+            self.graph.node_weight_mut(*n).unwrap().rank = Ix::new(rank);
+        }
         
         // Fix stored start node IDs to account for possible node splits
         for seq in self.sequences.iter_mut() {
@@ -856,12 +865,11 @@ where
     }
         
     fn split_node_at(
-        &self,
-        graph_ref: &mut RefMut<graph_impl::POASeqGraph<Ix>>,
+        &mut self,
         node: POANodeIndex<Ix>,
         pos: usize,
     ) -> (POANodeIndex<Ix>, POANodeIndex<Ix>) {
-        let node_data = graph_ref.node_weight(node).unwrap();
+        let node_data = self.graph.node_weight(node).unwrap();
         let (left_seq, right_seq) = node_data.sequence.split_at(pos);
         let (left_weights, right_weights) = node_data.weights.split_at(pos);
         
@@ -870,15 +878,15 @@ where
         let (left_seq, right_seq) = (left_seq.to_vec(), right_seq.to_vec());
         let (left_weights, right_weights) = (left_weights.to_vec(), right_weights.to_vec());
         
-        let left_node = self.add_node_with_weights(graph_ref, left_seq.to_vec(), left_weights.to_vec());
-        let right_node = self.add_node_with_weights(graph_ref, right_seq.to_vec(), right_weights.to_vec());
+        let left_node = self.add_node_with_weights(left_seq.to_vec(), left_weights.to_vec());
+        let right_node = self.add_node_with_weights(right_seq.to_vec(), right_weights.to_vec());
         
         eprintln!("Split node {:?} at position {}. New nodes: {:?} (len: {}), {:?} (len: {})", 
             node, pos, left_node, left_len, right_node, right_len);
         
         // Re-borrow node data such that the borrow checker is happy. Otherwise, the lifetime of the previous `node_data` borrow
         // would also span the above `add_node_with_weights` calls, which require mutable borrows to the graph.
-        let node_data = graph_ref.node_weight(node).unwrap();
+        let node_data = self.graph.node_weight(node).unwrap();
         
         // Find intervals that are completely left of the split position
         let mut intervals_left: Vec<_> = node_data.aligned_intervals
@@ -913,7 +921,7 @@ where
         // Fix intervals of other nodes, pointing to the split node
         let mut all_other_nodes_updates = Vec::default();
         for ival in &node_data.aligned_intervals {
-            let other_node_data = graph_ref.node_weight(ival.other()).unwrap();
+            let other_node_data = self.graph.node_weight(ival.other()).unwrap();
             
             let mut new_other_ivals = Vec::default();
             other_node_data.aligned_intervals
@@ -941,43 +949,43 @@ where
             all_other_nodes_updates.push((ival.other(), new_other_ivals));
         }
         
-        graph_ref.node_weight_mut(left_node).unwrap().aligned_intervals = intervals_left;
-        graph_ref.node_weight_mut(right_node).unwrap().aligned_intervals = intervals_right;
+        self.graph.node_weight_mut(left_node).unwrap().aligned_intervals = intervals_left;
+        self.graph.node_weight_mut(right_node).unwrap().aligned_intervals = intervals_right;
         
         for (other_node, new_aln_ivals) in all_other_nodes_updates {
-            let other_node_data = graph_ref.node_weight_mut(other_node).unwrap();
+            let other_node_data = self.graph.node_weight_mut(other_node).unwrap();
             other_node_data.aligned_intervals = new_aln_ivals;
         }
         
         // Add internal edge from left node -> right node retaining all sequence ids
         let mut seq_ids = Vec::default();
-        for in_edge in graph_ref.edges_directed(node, Incoming) {
+        for in_edge in self.graph.edges_directed(node, Incoming) {
             seq_ids.extend(&in_edge.weight().sequence_ids);
         }
         
-        graph_ref
+        self.graph
             .add_edge(left_node, right_node, POAEdgeData::new_with_seq_ids(seq_ids));
         
         // Add original incoming and outgoing edges to the left and right node, respectively
         let mut new_edges = Vec::default();
-        for in_edge in graph_ref.edges_directed(node, Incoming) {
+        for in_edge in self.graph.edges_directed(node, Incoming) {
             let edge_data = in_edge.weight();
             let new_edge_data = POAEdgeData::new_with_seq_ids(edge_data.sequence_ids.clone());
             new_edges.push((in_edge.source(), left_node, new_edge_data));
         }
         
-        for out_edge in graph_ref.edges_directed(node, Outgoing) {
+        for out_edge in self.graph.edges_directed(node, Outgoing) {
             let edge_data = out_edge.weight();
             let new_edge_data = POAEdgeData::new_with_seq_ids(edge_data.sequence_ids.clone());
             new_edges.push((right_node, out_edge.target(), new_edge_data));
         }
         
         for (source, target, edge_data) in new_edges {
-            graph_ref.add_edge(source, target, edge_data);
+            self.graph.add_edge(source, target, edge_data);
         }
         
         // Delete the original node
-        graph_ref.remove_node(node);
+        self.graph.remove_node(node);
 
         (left_node, right_node)
     }
@@ -997,10 +1005,10 @@ where
 /// Stores the sequence name and the start node in the graph.
 #[derive(Debug, Clone)]
 pub struct Sequence<Ix>(pub(crate) String, pub(crate) POANodeIndex<Ix>)
-    where Ix: Copy;
+    where Ix: IndexType;
 
 impl<Ix> Sequence<Ix>
-    where Ix: Copy
+    where Ix: IndexType
 {
     pub fn name(&self) -> &str {
         &self.0
@@ -1012,65 +1020,69 @@ impl<Ix> Sequence<Ix>
 }
 
 
-/// A reference to a node in the POA graph.
-///
-/// Stores the borrow from the graph to ensure it is kept alive and can be used
-/// outside of the scope of the function that created it.
-pub struct NodeDataRef<'a, Ix> {
-    graph: Ref<'a, graph_impl::POASeqGraph<Ix>>,
-    node: POANodeIndex<Ix>,
-}
-
-impl<'a, Ix> NodeDataRef<'a, Ix>
+impl<'a, Ix> AlignableGraphRef for &'a POASeqGraph<Ix> 
 where
-    Ix: petgraph::graph::IndexType,
+    Ix: IndexType,
 {
-    pub fn sequence(&self) -> &[u8] {
-        self.graph.node_weight(self.node).unwrap().sequence.as_slice()
+    type NodeType = POANodeIndex<Ix>;
+    type NodePosType = POANodePos<Ix>;
+    type Successors = Neighbors<'a, POAEdgeData, Ix>;
+    type Predecessors = Neighbors<'a, POAEdgeData, Ix>;
+    
+    fn start_node(&self) -> Self::NodeType {
+        self.start_node
     }
-
-    pub fn weights(&self) -> &[usize] {
-        self.graph.node_weight(self.node).unwrap().weights.as_slice()
+    
+    fn end_node(&self) -> Self::NodeType {
+        self.end_node
     }
-
-    pub fn aligned_intervals(&self) -> &[AlignedInterval<Ix>] {
-        self.graph.node_weight(self.node).unwrap().aligned_intervals.as_slice()
+    
+    fn node_count(&self) -> usize {
+        self.graph.node_count()
+    }
+    
+    fn node_bound(&self) -> usize {
+        self.graph.node_bound()
+    }
+    
+    fn node_seq(&self, node: Self::NodeType) -> &[u8] {
+        &self.graph.node_weight(node).unwrap().sequence
+    }
+    
+    fn successors(&self, node: Self::NodeType) -> Self::Successors {
+        self.graph.neighbors_directed(node, Outgoing)
+    }
+    
+    fn predecessors(&self, node: Self::NodeType) -> Self::Predecessors{
+        self.graph.neighbors_directed(node, Incoming)
     }
 }
 
-/// A mutable reference to a node in the POA graph.
-///
-/// Stores the borrow from the graph to ensure it is kept alive and can be used
-/// outside of the scope of the function that created it.
-pub struct NodeDataRefMut<'a, Ix> {
-    graph: RefMut<'a, graph_impl::POASeqGraph<Ix>>,
-    node: POANodeIndex<Ix>,
-}
-
-impl<'a, Ix> NodeDataRefMut<'a, Ix>
+impl<T> AlignableGraphNodeId for T
 where
-    Ix: petgraph::graph::IndexType,
+    T: IndexType,
 {
-    pub fn sequence(&mut self) -> &mut [u8] {
-        self.graph.node_weight_mut(self.node).unwrap().sequence.as_mut_slice()
-    }
-
-    pub fn weights(&mut self) -> &mut [usize] {
-        self.graph.node_weight_mut(self.node).unwrap().weights.as_mut_slice()
-    }
-
-    pub fn aligned_intervals(&mut self) -> &mut Vec<AlignedInterval<Ix>> {
-        &mut self.graph.node_weight_mut(self.node).unwrap().aligned_intervals
+    #[inline(always)]
+    fn index(&self) -> usize {
+        self.index()
     }
 }
 
-
+/// Keep track of split nodes while processing a new alignment.
+///
+/// This enables to convert node positions in the original graph to the new graph after a split.
 #[derive(Default)]
-pub(crate) struct SplitTracker<Ix> {
+pub(crate) struct SplitTracker<Ix>
+where 
+    Ix: IndexType
+{
     split_nodes: FxHashMap<POANodeIndex<Ix>, (usize, POANodeIndex<Ix>, POANodeIndex<Ix>)>
 }
 
-impl<Ix> SplitTracker<Ix> {
+impl<Ix> SplitTracker<Ix> 
+where 
+    Ix: IndexType,
+{
     pub(crate) fn add_split(&mut self, node: POANodeIndex<Ix>, split_pos: usize, left: POANodeIndex<Ix>, right: POANodeIndex<Ix>) {
         self.split_nodes.insert(node, (split_pos, left, right));
     }
@@ -1091,13 +1103,13 @@ impl<Ix> SplitTracker<Ix> {
 
 #[cfg(test)]
 mod tests {
-    use crate::graph::{alignment::{AlignedPair, POANodePos}, poa::{graph_impl::AlignedInterval, SplitTracker}};
+    use crate::{aligner::utils::AlignedPair, graph::{alignment::POANodePos, poa::{graph_impl::AlignedInterval, SplitTracker}}};
 
     use super::POASeqGraph;
     
     #[test]
     fn test_split_node() {
-        let graph = POASeqGraph::<usize>::new();
+        let mut graph = POASeqGraph::<usize>::new();
         let orig_node_seq = b"GTCTGCTATACTGCGTACGTCGT";
         let orig_node = graph.add_node(orig_node_seq.to_vec());
         let orig_node2 = graph.add_node(orig_node_seq.to_vec());
@@ -1114,20 +1126,18 @@ mod tests {
             .collect::<Vec<_>>();
         
         {
-            let mut node_data = graph.node_data_mut(orig_node);
-            node_data.aligned_intervals().extend(&aln_ivals);
+            let node_data = graph.node_data_mut(orig_node);
+            node_data.aligned_intervals.extend(&aln_ivals);
         }
         
         {
-            let mut node_data2 = graph.node_data_mut(orig_node2);
-            node_data2.aligned_intervals().extend(aln_ivals2);
+            let node_data2 = graph.node_data_mut(orig_node2);
+            node_data2.aligned_intervals.extend(aln_ivals2);
         }
         
         // Do the split
         let (lnode, rnode) = {
-            let mut graph_ref = graph.graph.borrow_mut();
-        
-            graph.split_node_at(&mut graph_ref, orig_node, 10)
+            graph.split_node_at(orig_node, 10)
         };
         
         assert_eq!(graph.num_nodes(), 3);
@@ -1136,16 +1146,16 @@ mod tests {
         let lnode_data = graph.node_data(lnode);
         let rnode_data = graph.node_data(rnode);
         
-        assert_eq!(lnode_data.sequence(), &orig_node_seq[..10]);
-        assert_eq!(rnode_data.sequence(), &orig_node_seq[10..]);
+        assert_eq!(&lnode_data.sequence, &orig_node_seq[..10]);
+        assert_eq!(&rnode_data.sequence, &orig_node_seq[10..]);
         
         // Test whether the aligned intervals are split correctly
-        assert_eq!(lnode_data.aligned_intervals(), &[
+        assert_eq!(&lnode_data.aligned_intervals, &[
             AlignedInterval::new(0, 5, orig_node2, 2),
             AlignedInterval::new(8, 2, orig_node2, 10),
         ]);
         
-        assert_eq!(rnode_data.aligned_intervals(), &[
+        assert_eq!(&rnode_data.aligned_intervals, &[
             AlignedInterval::new(0, 4, orig_node2, 12),
             AlignedInterval::new(9, 3, orig_node2, 20),
         ]);
@@ -1153,7 +1163,7 @@ mod tests {
         // Test updated aligned intervals in the other node, pointing to the new split nodes
         let orig_node2_data = graph.node_data(orig_node2);
         
-        assert_eq!(orig_node2_data.aligned_intervals(), &[
+        assert_eq!(&orig_node2_data.aligned_intervals, &[
             AlignedInterval::new(2, 5, lnode, 0),
             AlignedInterval::new(10, 2, lnode, 8),
             AlignedInterval::new(12, 4, rnode, 0),
@@ -1219,8 +1229,8 @@ mod tests {
         
         for (rank, n) in graph.toposorted.iter().enumerate() {
             let node_data = graph.node_data(*n);
-            assert_eq!(node_data.sequence(), seq_truth[rank]);
-            assert_eq!(node_data.weights(), w_truth[rank]);
+            assert_eq!(&node_data.sequence, seq_truth[rank]);
+            assert_eq!(&node_data.weights, w_truth[rank]);
         }
         
         let seq3 = b"GTCTGCTATGCGGCGTACGTCGT";
@@ -1294,9 +1304,9 @@ mod tests {
         
         for (rank, n) in graph.toposorted.iter().enumerate() {
             let node_data = graph.node_data(*n);
-            assert_eq!(node_data.sequence(), seq_truth[rank]);
-            assert_eq!(node_data.weights(), w_truth[rank]);
-            assert_eq!(node_data.aligned_intervals(), &aln_ival_truth[rank]);
+            assert_eq!(&node_data.sequence, seq_truth[rank]);
+            assert_eq!(&node_data.weights, w_truth[rank]);
+            assert_eq!(&node_data.aligned_intervals, &aln_ival_truth[rank]);
         }
     }
     
@@ -1419,9 +1429,9 @@ mod tests {
         for (rank, n) in graph.toposorted.iter().enumerate() {
             let node_data = graph.node_data(*n);
             
-            assert_eq!(node_data.sequence(), seq_truth[rank]);
-            assert_eq!(node_data.weights(), w_truth[rank]);
-            assert_eq!(node_data.aligned_intervals(), aln_ival_truth[rank]);
+            assert_eq!(&node_data.sequence, seq_truth[rank]);
+            assert_eq!(&node_data.weights, w_truth[rank]);
+            assert_eq!(&node_data.aligned_intervals, &aln_ival_truth[rank]);
             
         }
     }
@@ -1491,8 +1501,8 @@ mod tests {
             // println!("{} {:?}   w: {:?}", rank, n, node_data.weights());
             // println!("{} {:?} aln: {:?}", rank, n, node_data.aligned_intervals());
             
-            assert_eq!(node_data.sequence(), seq_truth[rank]);
-            assert_eq!(node_data.weights(), w_truth[rank]);
+            assert_eq!(&node_data.sequence, seq_truth[rank]);
+            assert_eq!(&node_data.weights, w_truth[rank]);
         }
     }
     
@@ -1552,12 +1562,12 @@ mod tests {
         
         for (rank, n) in graph.toposorted.iter().enumerate() {
             let node_data = graph.node_data(*n);
-            println!("{} {:?} seq: {:?}", rank, n, std::str::from_utf8(node_data.sequence()).unwrap());
-            println!("{} {:?}   w: {:?}", rank, n, node_data.weights());
-            println!("{} {:?} aln: {:?}", rank, n, node_data.aligned_intervals());
+            println!("{} {:?} seq: {:?}", rank, n, std::str::from_utf8(&node_data.sequence).unwrap());
+            println!("{} {:?}   w: {:?}", rank, n, node_data.weights);
+            println!("{} {:?} aln: {:?}", rank, n, node_data.aligned_intervals);
             
-            assert_eq!(node_data.sequence(), seq_truth[rank]);
-            assert_eq!(node_data.weights(), w_truth[rank]);
+            assert_eq!(&node_data.sequence, seq_truth[rank]);
+            assert_eq!(&node_data.weights, w_truth[rank]);
         }
     }
 }
