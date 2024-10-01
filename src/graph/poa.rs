@@ -507,8 +507,15 @@ where
         if self.is_empty() {
             // Make sure mutable borrow of the graph ends at the block, before calling post process.
             {
+                let new_seq_id = self.sequences.len();
                 let new_node = self.add_node_with_weights(sequence.as_ref().to_vec(), weights.as_ref().to_vec());
-                self.sequences.push(Sequence(sequence_name.to_string(), new_node))
+                self.sequences.push(Sequence(sequence_name.to_string(), new_node));
+                
+                let edge_to_temove = self.graph.find_edge(self.start_node, self.end_node).unwrap();
+                self.graph.remove_edge(edge_to_temove);
+                
+                self.graph.add_edge(self.start_node, new_node, POAEdgeData::new_with_seq_id(new_seq_id));
+                self.graph.add_edge(new_node, self.end_node, POAEdgeData::new_with_seq_id(new_seq_id));
             }
             
             self.post_process(&nodes_split)?;
@@ -818,10 +825,21 @@ where
     
     fn post_process(&mut self, nodes_split: &SplitTracker<Ix>) -> Result<(), GraphError<Ix>> {
         let mut to_remove = Vec::new();
-        for e in self.graph.edges(self.start_node)
-            .chain(self.graph.edges_directed(self.end_node, Incoming))
-        {
-            to_remove.push(e.id());
+        for e in self.graph.edges(self.start_node) {
+            let in_degree_target = self.graph.edges_directed(e.target(), Incoming).count();
+            
+            if in_degree_target > 1 {
+                // Remove edges with multiple incoming edges
+                to_remove.push(e.id());
+            }
+        }
+        
+        for e in self.graph.edges_directed(self.end_node, Incoming) {
+            let out_degree_src = self.graph.edges_directed(e.source(), Outgoing).count();
+            
+            if out_degree_src > 1 {
+                to_remove.push(e.id());
+            }
         }
         
         for e in to_remove {
@@ -836,18 +854,29 @@ where
             
             // Add new edges from start node to nodes with no incoming edges
             if self.graph.edges_directed(n, Incoming).count() == 0 {
-                to_add.push((self.start_node, n));
+                let mut all_outgoing_ids: Vec<_> = self.graph.edges_directed(n, Outgoing)
+                    .flat_map(|e| self.graph[e.id()].sequence_ids.iter().copied())
+                    .collect();
+                
+                all_outgoing_ids.sort();
+                
+                to_add.push((self.start_node, n, all_outgoing_ids));
             }
             
             // Add new edges from nodes with no outgoing edges to the end node
             if self.graph.edges_directed(n, Outgoing).count() == 0 {
-                to_add.push((n, self.end_node));
+                let mut all_incoming_ids: Vec<_> = self.graph.edges_directed(n, Incoming)
+                    .flat_map(|e| self.graph[e.id()].sequence_ids.iter().copied())
+                    .collect();
+                
+                all_incoming_ids.sort();
+                to_add.push((n, self.end_node, all_incoming_ids));
             }
         }
         
         for e in to_add {
             eprintln!("Adding edge {:?}", e);
-            self.graph.add_edge(e.0, e.1, POAEdgeData::default());
+            self.graph.add_edge(e.0, e.1, POAEdgeData::new_with_seq_ids(e.2));
         }
         
         self.toposorted.clear();
@@ -958,11 +987,15 @@ where
             other_node_data.aligned_intervals = new_aln_ivals;
         }
         
-        // Add internal edge from left node -> right node retaining all sequence ids
+        // Add internal edge from left node -> right node retaining all sequence ids except the newly added sequence
         let mut seq_ids = Vec::default();
         for in_edge in self.graph.edges_directed(node, Incoming) {
-            seq_ids.extend(&in_edge.weight().sequence_ids);
+            seq_ids.extend(in_edge.weight().sequence_ids
+                .iter()
+                .filter(|v| **v != self.sequences.len())
+            );
         }
+        eprintln!("SPLIT: seq ids in {:?}", seq_ids);
         
         self.graph
             .add_edge(left_node, right_node, POAEdgeData::new_with_seq_ids(seq_ids));
@@ -972,12 +1005,16 @@ where
         for in_edge in self.graph.edges_directed(node, Incoming) {
             let edge_data = in_edge.weight();
             let new_edge_data = POAEdgeData::new_with_seq_ids(edge_data.sequence_ids.clone());
+            eprintln!("OLD: {:?} -> {:?} NEW {:?} -> {:?} {:?}", in_edge.source(), node, in_edge.source(), left_node, new_edge_data);
+            
             new_edges.push((in_edge.source(), left_node, new_edge_data));
         }
         
         for out_edge in self.graph.edges_directed(node, Outgoing) {
             let edge_data = out_edge.weight();
             let new_edge_data = POAEdgeData::new_with_seq_ids(edge_data.sequence_ids.clone());
+            eprintln!("OLD: {:?} -> {:?} NEW {:?} -> {:?} {:?}", node, out_edge.target(), right_node, out_edge.target(), new_edge_data);
+            
             new_edges.push((right_node, out_edge.target(), new_edge_data));
         }
         
