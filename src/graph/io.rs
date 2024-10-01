@@ -70,12 +70,14 @@ where
                 aligned_ival.other_start()
             )?;
             
-            writeln!(writer, "{}:{} -> {}:{} [style=dotted, color=\"#939393\", constraint=false]",
-                n.index(),
-                aligned_ival.node_end(),
-                aligned_ival.other().index(),
-                aligned_ival.other_end()
-            )?;
+            if aligned_ival.length() > 1 {
+                writeln!(writer, "{}:{} -> {}:{} [style=dotted, color=\"#939393\", constraint=false]",
+                    n.index(),
+                    aligned_ival.node_end() - 1,
+                    aligned_ival.other().index(),
+                    aligned_ival.other_end() - 1
+                )?;
+            }
         }
     }
 
@@ -115,8 +117,9 @@ where
 
         writeln!(
             writer,
-            "{} -> {} [weight={}; penwidth={}; label={}; class=\"{}\"]",
+            "{}:{} -> {}:0 [weight={}; penwidth={}; label={}; class=\"{}\"]",
             e.source().index(),
+            graph.node_len(e.source()) - 1,
             e.target().index(),
             scaled_weight,
             scaled_penwidth,
