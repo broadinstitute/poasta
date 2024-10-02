@@ -1,9 +1,9 @@
 use std::fmt;
 use std::hash::Hash;
 
-use crate::aligner::utils::print_alignment;
 use crate::errors::PoastaError;
 use heuristic::AstarHeuristic;
+use tracing::{Level, span, debug};
 use super::utils::AlignedPair;
 use super::{fr_points::Score, AlignmentMode};
 
@@ -118,6 +118,9 @@ where
     }
 
     pub fn run(&mut self) -> Result<AstarResult<G>, PoastaError> {
+        let span = span!(Level::INFO, "astar_run");
+        let _enter = span.enter();
+        
         let mut result = AstarResult::default();
 
         let (end_score, end_point) = loop {
@@ -132,22 +135,18 @@ where
             if self.state.is_visited(&front) {
                 continue;
             }
-
-            eprintln!("--- [FRONT]: {:?}", front);
-            self.state.set_visited(&front);
-            self.state.relax(self.seq, &front, |item| self.heuristic.h(item));
             
+            debug!(?front, "VISIT");
+            self.state.set_visited(&front);
             result.num_visited += 1;
             
-            eprintln!();
+            self.state.relax(self.seq, &front, |item| self.heuristic.h(item));
         };
         
-        eprintln!("END: {end_score:?}, {end_point:?}");
+        debug!(score = end_score.as_usize(), ?end_point, "END");
+        
         result.score = end_score;
         result.alignment = self.state.backtrace(&end_point);
-        
-        let aln_str = print_alignment(self.graph, self.seq, &result.alignment);
-        eprintln!("{aln_str}");
 
         Ok(result)
     }

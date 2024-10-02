@@ -39,12 +39,12 @@ impl<G, T> AstarHeuristic<G, T> for MinGapCostAffine
 where
     G: AlignableGraphRef
 {
-    fn init(&mut self, graph: G, seq: &[u8]) {
+    fn init(&mut self, graph: G, _: &[u8]) {
         self.min_dist_to_end = vec![0; graph.node_count()];
         self.max_dist_to_end = vec![0; graph.node_count()];
     }
     
-    fn h(&self, item: &T) -> usize {
+    fn h(&self, _: &T) -> usize {
         0
     }
 }

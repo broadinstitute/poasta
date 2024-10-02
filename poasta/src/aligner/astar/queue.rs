@@ -106,7 +106,7 @@ impl<L> Default for LayeredQueue<L>
 
 #[cfg(test)]
 mod tests {
-    use super::{LayeredQueue, QueueLayer};
+    use super::LayeredQueue;
 
     #[test]
     fn test_layered_queue() {

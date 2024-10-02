@@ -20,6 +20,7 @@ fn graphviz_node_color(label: u8) -> &'static str {
 }
 
 
+/// Output a POA graph to a Graphviz DOT file.
 pub fn graph_to_dot<Ix>(writer: &mut impl Write, graph: &POASeqGraph<Ix>) -> Result<(), PoastaIOError>
 where
     Ix: IndexType

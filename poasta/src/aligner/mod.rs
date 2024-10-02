@@ -105,9 +105,10 @@ where
 mod tests {
     use std::fs::File;
     use std::io::BufReader;
-
+    
     use noodles::fasta;
     
+    use crate::aligner::utils::print_alignment;
     use crate::graph::io::graph_to_dot;
     use crate::graph::poa::POASeqGraph;
 
@@ -131,24 +132,31 @@ mod tests {
             .map(|v| v.unwrap())
             .collect();
         
-        for (i, record) in sequences.iter().enumerate() {
+        for record in &sequences {
+            let name = std::str::from_utf8(record.name()).unwrap();
             if graph.is_empty() {
-                graph.add_aligned_sequence(record.name(), record.sequence(), vec![1; record.sequence().len()], None)
+                graph.add_aligned_sequence(name, record.sequence(), vec![1; record.sequence().len()], None)
                     .unwrap();
             } else {
+                {
+                    let mut writer = File::create(format!("tests/output/graph_for_{}.dot", name)).unwrap();
+                    graph_to_dot(&mut writer, &graph).unwrap();
+                }
+                
                 let aln = aligner.align(&graph, record.sequence(), AlignmentMode::Global)
                     .unwrap();
                 
+                let aln_str = print_alignment(&graph, record.sequence().as_ref(), &aln.alignment);
+                eprintln!("{aln_str}");
+                
                 graph.add_aligned_sequence(
-                    record.name(), 
+                    name, 
                     record.sequence(), 
                     vec![1; record.sequence().len()], 
                     Some(&aln.alignment)
                 ).unwrap();
             }
             
-            let mut writer = File::create(format!("tests/output/graph{i}.dot")).unwrap();
-            graph_to_dot(&mut writer, &graph).unwrap();
         }
         
         assert!(false);

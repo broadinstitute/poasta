@@ -528,7 +528,7 @@ mod tests {
             AlignedPair::new(Some(POANodePos(node, 11)), Some(11)),
         ];
         
-        let mut blocks = AlignmentBlocks::new(&aln, test_graph.get_start_node());
+        let mut blocks = AlignmentBlocks::new(&aln, test_graph.start_node);
         
         let mut all_blocks = Vec::default();
         let nodes_split = SplitTracker::default();
@@ -585,7 +585,7 @@ mod tests {
             AlignedPair::new(Some(POANodePos(node, 11)), Some(14)),
         ];
         
-        let mut blocks = AlignmentBlocks::new(&aln, test_graph.get_start_node());
+        let mut blocks = AlignmentBlocks::new(&aln, test_graph.start_node);
         
         let mut all_blocks = Vec::default();
         let nodes_split = SplitTracker::default();
@@ -645,7 +645,7 @@ mod tests {
             AlignedPair::new(Some(POANodePos(node, 11)), Some(7)),
         ];
         
-        let mut blocks = AlignmentBlocks::new(&aln, test_graph.get_start_node());
+        let mut blocks = AlignmentBlocks::new(&aln, test_graph.start_node);
         
         let mut all_blocks = Vec::default();
         let nodes_split = SplitTracker::default();

@@ -1,0 +1,20 @@
+[package]
+name = "poasta"
+version = "0.1.0"
+edition = "2021"
+type = "lib"
+
+[profile.release]
+debug = true
+lto = "thin"
+
+[dependencies]
+fixedbitset = "0.5.7"
+flate2 = "1.0.34"
+num = { version = "~0.4" }
+petgraph = { version = "~0.6", features = ["serde-1"] }
+rustc-hash = "2.0.0"
+tracing = "0.1.40"
+
+[dev-dependencies]
+noodles = { version = "~0.83", features = ["fasta", "fastq"] }

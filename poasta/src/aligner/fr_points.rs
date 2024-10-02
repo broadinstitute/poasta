@@ -25,6 +25,8 @@ pub trait NumOperations:
     + Not<Output = Self>
     + BitAnd<Output = Self>
     + Shr<Output = Self>
+    + Send
+    + Sync
     + 'static
 {
 }
@@ -462,14 +464,7 @@ where
     D: DiagType,
     O: OffsetType,
 {
-    pub fn new() -> Self {
-        Self {
-            diagonals: VecDeque::new(),
-            visited: FixedBitSet::new(),
-            kmin: Diag::default(),
-        }
-    }
-
+    
     pub fn len(&self) -> usize {
         self.diagonals.len()
     }
@@ -576,13 +571,6 @@ where
     D: DiagType,
     O: OffsetType,
 {
-    pub fn new() -> Self {
-        Self {
-            fr_points: VecDeque::new(),
-            score_min: Score::default(),
-        }
-    }
-
     pub fn is_empty(&self) -> bool {
         self.fr_points.is_empty()
     }

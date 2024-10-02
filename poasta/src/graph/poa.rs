@@ -405,7 +405,7 @@ where
 {
     pub(crate) graph: graph_impl::POASeqGraph<Ix>,
     sequences: Vec<Sequence<Ix>>,
-    start_node: POANodeIndex<Ix>,
+    pub(crate) start_node: POANodeIndex<Ix>,
     end_node: POANodeIndex<Ix>,
     toposorted: Vec<POANodeIndex<Ix>>,
 }
@@ -452,14 +452,6 @@ where
     
     pub fn get_node_symbol(&self, node: POANodeIndex<Ix>, pos: usize) -> u8 {
         self.graph.node_weight(node).unwrap().sequence[pos]
-    }
-    
-    pub(crate) fn get_start_node(&self) -> POANodeIndex<Ix> {
-        self.start_node
-    }
-    
-    pub(crate) fn get_end_node(&self) -> POANodeIndex<Ix> {
-        self.end_node
     }
     
     pub fn get_nodes(&self) -> impl Iterator<Item = POANodeIndex<Ix>> + '_ {
