@@ -1,14 +1,14 @@
 use std::ops::{Range, RangeBounds, Bound};
 
 use petgraph::algo::toposort;
-use petgraph::graph::IndexType;
+pub use petgraph::graph::IndexType;
 use petgraph::stable_graph::Neighbors;
 use petgraph::visit::EdgeRef;
 use petgraph::{Incoming, Outgoing, visit::NodeIndexable};
 
 use rustc_hash::FxHashMap;
 
-use crate::aligner::astar::{AlignableGraphNodeId, AlignableGraphRef, AlignableGraphNodePos};
+use crate::aligner::astar::{AlignableGraphNodeId, AlignableGraph, AlignableGraphNodePos};
 use crate::aligner::utils::AlignedPair;
 use crate::errors::GraphError;
 use crate::graph::alignment::AlignmentBlockType;
@@ -1050,14 +1050,14 @@ impl<Ix> Sequence<Ix>
 }
 
 
-impl<'a, Ix> AlignableGraphRef for &'a POASeqGraph<Ix> 
+impl<Ix> AlignableGraph for POASeqGraph<Ix> 
 where
     Ix: IndexType,
 {
     type NodeType = POANodeIndex<Ix>;
     type NodePosType = POANodePos<Ix>;
-    type Successors = Neighbors<'a, POAEdgeData, Ix>;
-    type Predecessors = Neighbors<'a, POAEdgeData, Ix>;
+    type Successors<'a> = Neighbors<'a, POAEdgeData, Ix>;
+    type Predecessors<'a> = Neighbors<'a, POAEdgeData, Ix>;
     
     fn start_node(&self) -> Self::NodeType {
         self.start_node
@@ -1079,14 +1079,95 @@ where
         &self.graph.node_weight(node).unwrap().sequence
     }
     
-    fn successors(&self, node: Self::NodeType) -> Self::Successors {
+    fn successors(&self, node: Self::NodeType) -> Self::Successors<'_> {
         self.graph.neighbors_directed(node, Outgoing)
     }
     
-    fn predecessors(&self, node: Self::NodeType) -> Self::Predecessors{
+    fn predecessors(&self, node: Self::NodeType) -> Self::Predecessors<'_> {
         self.graph.neighbors_directed(node, Incoming)
     }
 }
+
+impl<'a, Ix> AlignableGraph for &'a POASeqGraph<Ix> 
+where
+    Ix: IndexType,
+{
+    type NodeType = POANodeIndex<Ix>;
+    type NodePosType = POANodePos<Ix>;
+    type Successors<'b> = Neighbors<'b, POAEdgeData, Ix>
+        where 'a: 'b;
+    type Predecessors<'b> = Neighbors<'b, POAEdgeData, Ix>
+        where 'a: 'b;
+    
+    fn start_node(&self) -> Self::NodeType {
+        self.start_node
+    }
+    
+    fn end_node(&self) -> Self::NodeType {
+        self.end_node
+    }
+    
+    fn node_count(&self) -> usize {
+        self.graph.node_count()
+    }
+    
+    fn node_bound(&self) -> usize {
+        self.graph.node_bound()
+    }
+    
+    fn node_seq(&self, node: Self::NodeType) -> &[u8] {
+        &self.graph.node_weight(node).unwrap().sequence
+    }
+    
+    fn successors(&self, node: Self::NodeType) -> Self::Successors<'_> {
+        self.graph.neighbors_directed(node, Outgoing)
+    }
+    
+    fn predecessors(&self, node: Self::NodeType) -> Self::Predecessors<'_> {
+        self.graph.neighbors_directed(node, Incoming)
+    }
+}
+
+impl<'a, Ix> AlignableGraph for &'a mut POASeqGraph<Ix> 
+where
+    Ix: IndexType,
+{
+    type NodeType = POANodeIndex<Ix>;
+    type NodePosType = POANodePos<Ix>;
+    type Successors<'b> = Neighbors<'b, POAEdgeData, Ix>
+        where 'a: 'b;
+    type Predecessors<'b> = Neighbors<'b, POAEdgeData, Ix>
+        where 'a: 'b;
+    
+    fn start_node(&self) -> Self::NodeType {
+        self.start_node
+    }
+    
+    fn end_node(&self) -> Self::NodeType {
+        self.end_node
+    }
+    
+    fn node_count(&self) -> usize {
+        self.graph.node_count()
+    }
+    
+    fn node_bound(&self) -> usize {
+        self.graph.node_bound()
+    }
+    
+    fn node_seq(&self, node: Self::NodeType) -> &[u8] {
+        &self.graph.node_weight(node).unwrap().sequence
+    }
+    
+    fn successors(&self, node: Self::NodeType) -> Self::Successors<'_> {
+        self.graph.neighbors_directed(node, Outgoing)
+    }
+    
+    fn predecessors(&self, node: Self::NodeType) -> Self::Predecessors<'_> {
+        self.graph.neighbors_directed(node, Incoming)
+    }
+}
+
 
 impl<T> AlignableGraphNodeId for T
 where

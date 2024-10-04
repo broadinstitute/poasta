@@ -1,5 +1,5 @@
 use super::{
-    astar::AlignableGraphRef,
+    astar::AlignableGraph,
     fr_points::{to_node_pos, Diag, DiagType, OffsetType},
 };
 
@@ -28,14 +28,14 @@ pub(crate) enum ExtendResult<O> {
 }
 
 pub fn extend<G, D, O>(
-    graph: G,
+    graph: &G,
     seq: &[u8],
     node: G::NodeType,
     diag: Diag<D>,
     offset: O,
 ) -> ExtendResult<O>
 where
-    G: AlignableGraphRef,
+    G: AlignableGraph,
     D: DiagType,
     O: OffsetType,
 {
@@ -51,10 +51,7 @@ where
         return ExtendResult::OtherEnd(offset);
     }
 
-    eprintln!("Starting LCP: {node_pos:?}+1.. and {offset:?}..");
     let lcp = common_prefix_len(&node_seq[node_pos+1..], &seq[offset.as_usize()..]);
-
-    eprintln!("Node len: {:?}, LCP: {:?}, new_node_pos: {:?}", node_len, lcp, node_pos+lcp);
     let new_offset = offset.as_usize() + lcp;
     let new_node_pos = node_pos + lcp;
 

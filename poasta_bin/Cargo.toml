@@ -1,0 +1,22 @@
+[package]
+name = "poasta_bin"
+edition = { workspace = true }
+version = { workspace = true }
+authors = { workspace = true }
+description = { workspace = true }
+
+[[bin]]
+name = "poasta"
+path = "src/main.rs"
+
+[dependencies]
+poasta = { path = "../poasta", version = "0.2.0", default-features = false }
+clap = { version = "4.5.19", features = ["derive"] }
+tracing = { version = "0.1.40" }
+tracing-subscriber = { version = "0.3.18" }
+flate2 = "1.0.34"
+noodles = { version = "0.83.0", features = ["fasta", "fastq"] }
+
+[features]
+default = ["poasta/optimize_logging"]
+debug_output = []

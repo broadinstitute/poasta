@@ -4,7 +4,7 @@ use tracing::{span, debug, trace, Level};
 use super::AlignmentCostModel;
 use crate::aligner::{
     astar::{
-        queue::{LayeredQueue, QueueLayer}, AlignState, AlignableGraphNodeId, AlignableGraphNodePos, AlignableGraphRef, AstarState
+        queue::{LayeredQueue, QueueLayer}, AlignState, AlignableGraphNodeId, AlignableGraphNodePos, AlignableGraph, AstarState
     }, extension::{extend, ExtendResult}, fr_points::{to_node_pos, Diag, DiagType, NodeFrPoints, OffsetType, Score}, utils::AlignedPair, AlignmentMode
 };
 
@@ -28,38 +28,30 @@ impl Affine {
 impl AlignmentCostModel for Affine {
     type AstarStateType<G, D, O> = AffineAstarState<G, D, O>
         where
-            G: AlignableGraphRef,
+            G: AlignableGraph,
             D: DiagType,
             O: OffsetType;
         
-    fn initialize<G, D, O>(&self, graph: G, seq: &[u8], alignment_mode: AlignmentMode) -> Self::AstarStateType<G, D, O>
+    fn initialize<G, D, O, F>(&self, graph: &G, seq: &[u8], alignment_mode: AlignmentMode, heuristic: F) -> Self::AstarStateType<G, D, O>
     where
-        G: AlignableGraphRef,
-        D: DiagType,
-        O: OffsetType 
-    {
-        AffineAstarState::new(*self, graph, seq, alignment_mode)
-    }
-
-    fn initial_states<G, D, O>(
-        &self,
-        graph: G,
-        _: &[u8],
-        _: AlignmentMode,
-    ) -> impl Iterator<Item = <Self::AstarStateType<G, D, O> as AstarState<G>>::AstarItem>
-    where
-        G: AlignableGraphRef,
+        G: AlignableGraph,
         D: DiagType,
         O: OffsetType,
+        F: Fn(&<Self::AstarStateType<G, D, O> as AstarState<G>>::AstarItem) -> usize
     {
+        let mut state = AffineAstarState::new(*self, graph, seq, alignment_mode);
         let start = AffineAstarItem::new(
             Score::default(),
             graph.start_node(),
             Diag::default(),
             AlignState::Match,
         );
-
-        vec![start].into_iter()
+        
+        state.update_if_further(&start, 0);
+        let h = heuristic(&start);
+        state.queue_item(start, h);
+        
+        state
     }
 
     #[inline(always)]
@@ -197,14 +189,11 @@ where
 /// the gap-affine alignment model
 pub struct AffineAstarState<G, D, O>
 where
-    G: AlignableGraphRef,
+    G: AlignableGraph,
 {
     /// Alignment costs
     costs: Affine, 
     
-    /// Graph we are aligning to
-    graph: G,
-
     /// The length of the sequence we are aligning
     seq_length: usize,
 
@@ -220,22 +209,22 @@ where
 
 impl<G, D, O> AffineAstarState<G, D, O>
 where
-    G: AlignableGraphRef,
+    G: AlignableGraph,
     D: DiagType,
     O: OffsetType,
 {
-    fn new(costs: Affine, graph: G, seq: &[u8], alignment_mode: AlignmentMode) -> Self {
+    fn new(costs: Affine, graph: &G, seq: &[u8], alignment_mode: AlignmentMode) -> Self {
+        let node_count = graph.node_bound();
         Self {
             costs,
-            graph,
             seq_length: seq.len(),
             alignment_mode,
-            fr_points: vec![AffineNodeDiagonals::default(); graph.node_bound()],
+            fr_points: vec![AffineNodeDiagonals::default(); node_count],
             queue: LayeredQueue::new(),
         }
     }
     
-    fn extend_and_relax_match<F>(&mut self, seq: &[u8], item: &AffineAstarItem<G::NodeType, D>, heuristic: F)
+    fn extend_and_relax_match<F>(&mut self, graph: &G, seq: &[u8], item: &AffineAstarItem<G::NodeType, D>, heuristic: F)
     where
         F: Fn(&AffineAstarItem<G::NodeType, D>) -> usize,
     {
@@ -243,24 +232,24 @@ where
             .get_furthest(item)
             .unwrap_or(O::zero());
 
-        trace!("Offset before extend: {fr_point:?}, diagonal: {:?}", item.diag);
-        let extend_result = extend(self.graph, seq, item.node, item.diag, fr_point);
+        debug!("Offset before extend: {fr_point:?}, diagonal: {:?}", item.diag);
+        let extend_result = extend(graph, seq, item.node, item.diag, fr_point);
         
         match extend_result {
             ExtendResult::NodeEnd(extended_offset) => {
-                trace!("(NodeEnd) Extended offset: {extended_offset:?} {:?}", item.node);
+                debug!("(NodeEnd) Extended offset: {extended_offset:?} {:?}", item.node);
                 self.update_if_further(item, extended_offset.as_usize());
                 
-                let parent_node_len = self.graph.node_len(item.node);
+                let parent_node_len = graph.node_len(item.node);
                 let mut any_mismatch = false;
-                for succ in self.graph.successors(item.node) {
+                for succ in graph.successors(item.node) {
                     let succ_diag = item.diag + parent_node_len;
-                    let succ_seq = self.graph.node_seq(succ);
+                    let succ_seq = graph.node_seq(succ);
                     let succ_len = succ_seq.len();
-                    trace!("Succ: {:?} (diag: {succ_diag:?})", succ);
+                    debug!("Succ: {:?} (diag: {succ_diag:?})", succ);
                     
-                    if succ == self.graph.end_node() {
-                        trace!("Reached end node");
+                    if succ == graph.end_node() {
+                        debug!("Reached end node");
                         
                         // We reached the end node, immediately queue with zero cost
                         let new_item = AffineAstarItem::new(
@@ -283,10 +272,10 @@ where
                         // Check if we have a match or mismatch
                         let succ_qry_offset = extended_offset.increase_one();
                         let succ_pos = to_node_pos(succ_diag, succ_qry_offset.as_usize());
-                        trace!("Succ pos: {succ_pos} (len: {succ_len}), succ offset: {succ_qry_offset:?} (seq len: {})", self.seq_length);
+                        debug!("Succ pos: {succ_pos} (len: {succ_len}), succ offset: {succ_qry_offset:?} (seq len: {})", self.seq_length);
                         let succ_item = if succ_seq[succ_pos] == seq[succ_qry_offset.as_usize() - 1] {
                             // We have a successor with a match
-                            trace!("match {:?} == {:?}", char::from(succ_seq[succ_pos]), char::from(seq[succ_qry_offset.as_usize()-1]));
+                            debug!("match {:?} == {:?}", char::from(succ_seq[succ_pos]), char::from(seq[succ_qry_offset.as_usize()-1]));
                             AffineAstarItem::new(
                                 item.score,
                                 succ,
@@ -295,7 +284,7 @@ where
                             )
                         } else {
                             // We have a successor with a mismatch
-                            trace!("mismatch {:?} != {:?}", char::from(succ_seq[succ_pos]), char::from(seq[succ_qry_offset.as_usize()-1]));
+                            debug!("mismatch {:?} != {:?}", char::from(succ_seq[succ_pos]), char::from(seq[succ_qry_offset.as_usize()-1]));
                             mismatch = true;
                             AffineAstarItem::new(
                                 item.score + self.costs.mismatch(),
@@ -345,7 +334,7 @@ where
                 }
             }
             ExtendResult::OtherEnd(extended_offset) => {
-                trace!("Extended offset: {extended_offset:?}");
+                debug!("Extended offset: {extended_offset:?}");
                 
                 self.update_if_further(item, extended_offset.as_usize());
                 
@@ -391,7 +380,7 @@ where
         }
     }
     
-    fn relax_deletion<F>(&mut self, _: &[u8], item: &AffineAstarItem<G::NodeType, D>, heuristic: F)
+    fn relax_deletion<F>(&mut self, graph: &G, _: &[u8], item: &AffineAstarItem<G::NodeType, D>, heuristic: F)
     where
         F: Fn(&AffineAstarItem<G::NodeType, D>) -> usize,
     {
@@ -399,12 +388,12 @@ where
             .get_furthest(item)
             .unwrap_or(O::zero());
         
-        let node_len = self.graph.node_len(item.node);
+        let node_len = graph.node_len(item.node);
         let node_pos = to_node_pos(item.diag, fr_point.as_usize());
         
         if node_pos == node_len - 1 {
             // At the end of a node, we need to check successors to extend the deletion
-            for succ in self.graph.successors(item.node) {
+            for succ in graph.successors(item.node) {
                 let new_item_del = AffineAstarItem::new(
                     item.score + self.costs.gap_extend(),
                     succ,
@@ -445,7 +434,7 @@ where
         }
     }
     
-    fn relax_insertion<F>(&mut self, _: &[u8], item: &AffineAstarItem<G::NodeType, D>, heuristic: F)
+    fn relax_insertion<F>(&mut self, _: &G, _: &[u8], item: &AffineAstarItem<G::NodeType, D>, heuristic: F)
     where
         F: Fn(&AffineAstarItem<G::NodeType, D>) -> usize,
     {
@@ -481,10 +470,7 @@ where
         }
     }
     
-    fn get_prev(&self, item: &AffineAstarItem<G::NodeType, D>, curr_offset: O) -> Option<(AffineAstarItem<G::NodeType, D>, O)> 
-    where
-        <G as AlignableGraphRef>::Predecessors: IntoIterator<Item = G::NodeType>,
-    {
+    fn get_prev(&self, graph: &G, item: &AffineAstarItem<G::NodeType, D>, curr_offset: O) -> Option<(AffineAstarItem<G::NodeType, D>, O)> {
         let mut sources = Vec::new();
         
         match item.state {
@@ -500,11 +486,11 @@ where
                     pred_ins_diag,
                     AlignState::Insertion,
                 );
-                trace!("- Checkin for insertion {:?}", pred_ins_item);
+                debug!("- Checkin for insertion {:?}", pred_ins_item);
                 if let Some(pred_offset) = self.fr_points[item.node.index()]
                     .get_furthest(&pred_ins_item)
                 {
-                    trace!("- Curr offset: {curr_offset:?}, pred offset: {pred_offset:?}, isvisited: {}", self.is_visited(&pred_ins_item));
+                    debug!("- Curr offset: {curr_offset:?}, pred offset: {pred_offset:?}, isvisited: {}", self.is_visited(&pred_ins_item));
                     if self.is_visited(&pred_ins_item) && pred_offset < curr_offset {
                         sources.push((pred_ins_item, pred_offset));
                     }
@@ -518,11 +504,11 @@ where
                     pred_del_diag,
                     AlignState::Deletion,
                 );
-                trace!("- Checkin for deletion {:?}", pred_del_item);
+                debug!("- Checkin for deletion {:?}", pred_del_item);
                 if let Some(pred_offset) = self.fr_points[item.node.index()]
                     .get_furthest(&pred_del_item)
                 {
-                    trace!("- Curr offset: {curr_offset:?}, pred offset: {pred_offset:?}, isvisited: {}", self.is_visited(&pred_del_item));
+                    debug!("- Curr offset: {curr_offset:?}, pred offset: {pred_offset:?}, isvisited: {}", self.is_visited(&pred_del_item));
                     if self.is_visited(&pred_del_item) && pred_offset <= curr_offset {
                         sources.push((pred_del_item, pred_offset));
                     }
@@ -532,10 +518,10 @@ where
                 // Predecessor should have a score of current score - mismatch cost
                 if item.score >= Score::new(self.costs.mismatch() as u32) {
                     let mut possible_pred = vec![item.node];
-                    possible_pred.extend(self.graph.predecessors(item.node));
+                    possible_pred.extend(graph.predecessors(item.node));
                     
                     for pred in possible_pred {
-                        let pred_len = if pred != item.node { self.graph.node_len(pred) } else { 0 };
+                        let pred_len = if pred != item.node { graph.node_len(pred) } else { 0 };
                         let pred_mismatch_diag = item.diag - pred_len;
                         let pred_item = AffineAstarItem::new(
                             item.score - self.costs.mismatch(), 
@@ -544,11 +530,11 @@ where
                             AlignState::Match
                         );
                         
-                        trace!("- Checkin for mismatch {:?}", pred_item);
+                        debug!("- Checkin for mismatch {:?}", pred_item);
                         if let Some(pred_offset) = self.fr_points[pred.index()]
                             .get_furthest(&pred_item)
                         {
-                            trace!("- Curr offset: {curr_offset:?}, pred offset: {pred_offset:?}, isvisited: {}", self.is_visited(&pred_item));
+                            debug!("- Curr offset: {curr_offset:?}, pred offset: {pred_offset:?}, isvisited: {}", self.is_visited(&pred_item));
                             if self.is_visited(&pred_item) && pred_offset < curr_offset {
                                 sources.push((pred_item, pred_offset));
                             }
@@ -557,8 +543,8 @@ where
                 }
                 
                 // check for match at a predecessor, which should have been reached with the same score as the current item.
-                for pred in self.graph.predecessors(item.node) {
-                    let pred_len = self.graph.node_len(pred);
+                for pred in graph.predecessors(item.node) {
+                    let pred_len = graph.node_len(pred);
                     let pred_match_diag = item.diag - pred_len;
                     
                     let pred_item = AffineAstarItem::new(
@@ -567,11 +553,11 @@ where
                         pred_match_diag, 
                         AlignState::Match
                     );
-                    trace!("- Checkin for match {:?}", pred_item);
+                    debug!("- Checkin for match {:?}", pred_item);
                     if let Some(pred_offset) = self.fr_points[pred.index()]
                         .get_furthest(&pred_item) 
                     {
-                        trace!("- Curr offset: {curr_offset:?}, pred offset: {pred_offset:?}, isvisited: {}", self.is_visited(&pred_item));
+                        debug!("- Curr offset: {curr_offset:?}, pred offset: {pred_offset:?}, isvisited: {}", self.is_visited(&pred_item));
                         if self.is_visited(&pred_item) && pred_offset < curr_offset {
                             sources.push((pred_item, pred_offset));
                         }
@@ -580,12 +566,12 @@ where
             },
             AlignState::Deletion => {
                 let mut possible_pred = vec![item.node];
-                possible_pred.extend(self.graph.predecessors(item.node));
+                possible_pred.extend(graph.predecessors(item.node));
                 
                 // Check for extended deletions
                 if item.score >= Score::new(self.costs.gap_extend() as u32) {
                     for pred in possible_pred.iter().copied() {
-                        let pred_len = self.graph.node_len(pred);
+                        let pred_len = graph.node_len(pred);
                         let pred_diag = if item.node != pred { item.diag - pred_len + 1isize } else { item.diag + 1isize };
                         let pred_ext = AffineAstarItem::new(
                             item.score - self.costs.gap_extend(),
@@ -608,7 +594,7 @@ where
                 let gap_open_cost = self.costs.gap_open() as u32 + self.costs.gap_extend() as u32;
                 if item.score >= Score::new(gap_open_cost) {
                     for pred in possible_pred.iter().copied() {
-                        let pred_len = self.graph.node_len(pred);
+                        let pred_len = graph.node_len(pred);
                         let pred_diag = if item.node != pred { item.diag - pred_len + 1isize } else { item.diag + 1isize };
                         let pred_open = AffineAstarItem::new(
                             item.score - self.costs.gap_open() - self.costs.gap_extend(),
@@ -638,11 +624,11 @@ where
                             AlignState::Insertion,
                         );
                         
-                        trace!("- Checkin for ins ext {:?}", pred_ext);
+                        debug!("- Checkin for ins ext {:?}", pred_ext);
                         if let Some(pred_offset) = self.fr_points[item.node.index()]
                             .get_furthest(&pred_ext)
                         {
-                            trace!("- Curr offset: {curr_offset:?}, pred offset: {pred_offset:?}, isvisited: {}", self.is_visited(&pred_ext));
+                            debug!("- Curr offset: {curr_offset:?}, pred offset: {pred_offset:?}, isvisited: {}", self.is_visited(&pred_ext));
                             if self.is_visited(&pred_ext) && pred_offset.increase_one() == curr_offset {
                                 sources.push((pred_ext, pred_offset));
                             }
@@ -658,11 +644,11 @@ where
                             AlignState::Match,
                         );
                         
-                        trace!("- Checkin for ins open {:?}", pred_open);
+                        debug!("- Checkin for ins open {:?}", pred_open);
                         if let Some(pred_offset) = self.fr_points[item.node.index()]
                             .get_furthest(&pred_open)
                         {
-                            trace!("- Curr offset: {curr_offset:?}, pred offset: {pred_offset:?}, isvisited: {}", self.is_visited(&pred_open));
+                            debug!("- Curr offset: {curr_offset:?}, pred offset: {pred_offset:?}, isvisited: {}", self.is_visited(&pred_open));
                             if self.is_visited(&pred_open) && pred_offset.increase_one() == curr_offset {
                                 sources.push((pred_open, pred_offset));
                             }
@@ -673,7 +659,7 @@ where
             AlignState::Deletion2 | AlignState::Insertion2 => panic!("Invalid gap-affine state {:?}", item.state)
         }
         
-        trace!("- Sources: {:?}", sources);
+        debug!("- Sources: {:?}", sources);
         
         // Iterator::max_by_key will return the last maximum element if multiple have the same offset,
         // so we ordered the above code to prioritize matches > mismatches > deletions > insertions.
@@ -684,7 +670,7 @@ where
 
 impl<G, D, O> AstarState<G> for AffineAstarState<G, D, O>
 where
-    G: AlignableGraphRef,
+    G: AlignableGraph,
     D: DiagType,
     O: OffsetType,
 {
@@ -698,18 +684,18 @@ where
         self.fr_points[item.node.index()].is_further(item, O::new(offset))
     }
     
-    fn is_end(&self, item: &Self::AstarItem) -> bool {
-        if item.node != self.graph.end_node() {
+    fn is_end(&self, graph: &G, item: &Self::AstarItem) -> bool {
+        if item.node != graph.end_node() {
             return false;
         }
         
         let end_diag = Diag::new(self.seq_length as isize + 1);
-        trace!("End diag: {end_diag:?}, item.diag: {:?}", item.diag);
+        debug!("End diag: {end_diag:?}, item.diag: {:?}", item.diag);
         if item.diag != end_diag {
             return false;
         }
         
-        trace!("Offset {:?}, required seq length: {:?}", self.get_offset(item), self.seq_length + 1);
+        debug!("Offset {:?}, required seq length: {:?}", self.get_offset(item), self.seq_length + 1);
         self.get_offset(item) == self.seq_length + 1
     }
 
@@ -729,6 +715,15 @@ where
     }
     
     fn set_visited(&mut self, item: &Self::AstarItem) {
+        let offset = self.get_offset(item);
+        trace!(
+            target: "poasta::aligner::cost_models::affine::set_visited",
+            score=item.score.as_usize(), 
+            node=item.node.index(), 
+            diag=item.diag.as_isize(), 
+            offset=offset,
+            state=tracing::field::debug(&item.state)
+        );
         self.fr_points[item.node.index()].set_visited(item)
     }
 
@@ -738,28 +733,37 @@ where
 
     fn queue_item(&mut self, item: Self::AstarItem, heuristic: usize) {
         let priority = item.score.as_usize() + heuristic;
-        
         let offset = self.get_offset(&item);
-        trace!("Queuing: {item:?}, offset: {offset}, priority: {priority}");
-
+        
+        trace!(
+            target: "poasta::aligner::cost_models::affine::queue_item",
+            score=item.score.as_usize(), 
+            node=item.node.index(), 
+            diag=item.diag.as_isize(), 
+            offset=offset,
+            priority=priority, 
+            state=tracing::field::debug(&item.state),
+            "queue item",
+        );
+        
         self.queue.queue(item, priority);
     }
 
-    fn relax<F>(&mut self, seq: &[u8], item: &Self::AstarItem, heuristic: F)
+    fn relax<F>(&mut self, graph: &G, seq: &[u8], item: &Self::AstarItem, heuristic: F)
     where
         F: Fn(&Self::AstarItem) -> usize,
     {
         match item.state {
-            AlignState::Match => self.extend_and_relax_match(seq, item, heuristic),
-            AlignState::Deletion => self.relax_deletion(seq, item, heuristic),
-            AlignState::Insertion => self.relax_insertion(seq, item, heuristic),
+            AlignState::Match => self.extend_and_relax_match(graph, seq, item, heuristic),
+            AlignState::Deletion => self.relax_deletion(graph, seq, item, heuristic),
+            AlignState::Insertion => self.relax_insertion(graph, seq, item, heuristic),
             AlignState::Deletion2 | AlignState::Insertion2 => {
                 panic!("Unexpected state: {:?}", item.state)
             }
         }
     }
     
-    fn backtrace(&self, end: &Self::AstarItem) -> Vec<AlignedPair<G::NodePosType>> {
+    fn backtrace(&self, graph: &G, end: &Self::AstarItem) -> Vec<AlignedPair<G::NodePosType>> {
         let span = span!(Level::INFO, "backtrace");
         let _enter = span.enter();
         
@@ -767,10 +771,10 @@ where
         let mut curr_offset = O::new(self.seq_length + 1);
         let mut alignment = Vec::new();
         
-        while let Some((prev, prev_offset)) = self.get_prev(&curr, curr_offset) {
+        while let Some((prev, prev_offset)) = self.get_prev(graph, &curr, curr_offset) {
             debug!(curr = ?curr, prev = ?prev, curr_offset = ?curr_offset, prev_offset = ?prev_offset);
             
-            if curr.node == self.graph.end_node() {
+            if curr.node == graph.end_node() {
                 curr = prev;
                 curr_offset = prev_offset;
                 continue;
@@ -816,7 +820,7 @@ where
 
 impl<'a, G, T> AstarState<G> for &'a mut T
 where
-    G: AlignableGraphRef,
+    G: AlignableGraph,
     T: AstarState<G>,
 {
     type AstarItem = T::AstarItem;
@@ -829,8 +833,8 @@ where
         (**self).is_further(item, offset)
     }
     
-    fn is_end(&self, item: &Self::AstarItem) -> bool {
-        (**self).is_end(item)
+    fn is_end(&self, graph: &G, item: &Self::AstarItem) -> bool {
+        (**self).is_end(graph, item)
     }
 
     fn get_score(&self, item: &Self::AstarItem) -> Score {
@@ -857,15 +861,15 @@ where
         (**self).queue_item(item, heuristic);
     }
 
-    fn relax<F>(&mut self, seq: &[u8], item: &Self::AstarItem, heuristic: F)
+    fn relax<F>(&mut self, graph: &G, seq: &[u8], item: &Self::AstarItem, heuristic: F)
     where
         F: Fn(&Self::AstarItem) -> usize,
     {
-        (**self).relax(seq, item, heuristic);
+        (**self).relax(graph, seq, item, heuristic);
     }
     
-    fn backtrace(&self, end: &Self::AstarItem) -> Vec<AlignedPair<G::NodePosType>> {
-        (**self).backtrace(end)
+    fn backtrace(&self, graph: &G, end: &Self::AstarItem) -> Vec<AlignedPair<G::NodePosType>> {
+        (**self).backtrace(graph, end)
     }
 }
 

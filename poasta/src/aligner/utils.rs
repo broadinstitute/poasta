@@ -1,5 +1,5 @@
 
-use super::astar::{AlignableGraphRef, AlignableGraphNodePos};
+use super::astar::{AlignableGraph, AlignableGraphNodePos};
 
 /// An aligned pair of residues. The first element represent
 /// the position with a node of the graph, and the second element
@@ -43,9 +43,9 @@ where
 }
 
 
-pub fn print_alignment<G>(graph: G, seq: &[u8], aln: &[AlignedPair<G::NodePosType>]) -> String
+pub fn print_alignment<G>(graph: &G, seq: &[u8], aln: &[AlignedPair<G::NodePosType>]) -> String
 where
-    G: AlignableGraphRef,
+    G: AlignableGraph,
 {
     let mut graph_chars = Vec::with_capacity(aln.len());
     let mut aln_chars = Vec::with_capacity(aln.len());

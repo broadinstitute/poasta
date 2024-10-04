@@ -1,2 +1,14 @@
 [workspace]
-members = ["poasta"]
+members = ["poasta", "poasta_bin", "poasta_vis"]
+resolver = "2"
+
+[workspace.package]
+version = "0.2.0"
+authors = ["Lucas van Dijk"]
+description = "Fast genome-scale partial order aligner"
+documentation = "https://github.com/broadinstitute/poasta"
+edition = "2021"
+
+[profile.release]
+debug = true
+lto = "thin"

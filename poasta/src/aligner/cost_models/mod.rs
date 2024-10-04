@@ -1,27 +1,20 @@
-use super::{astar::{AlignableGraphRef, AstarState}, fr_points::{DiagType, OffsetType}, AlignmentMode};
+use super::{astar::{AlignableGraph, AstarState}, fr_points::{DiagType, OffsetType}, AlignmentMode};
 
 pub mod affine;
 
 pub trait AlignmentCostModel {
     type AstarStateType<G, D, O>: AstarState<G>
     where
-        G: AlignableGraphRef,
+        G: AlignableGraph,
         D: DiagType,
         O: OffsetType;
     
-    fn initialize<G, D, O>(&self, graph: G, seq: &[u8], alignment_mode: AlignmentMode) -> Self::AstarStateType<G, D, O>
+    fn initialize<G, D, O, F>(&self, graph: &G, seq: &[u8], alignment_mode: AlignmentMode, heuristic: F) -> Self::AstarStateType<G, D, O>
     where
-        G: AlignableGraphRef,
+        G: AlignableGraph,
         D: DiagType,
-        O: OffsetType;
-    
-    fn initial_states<G, D, O>(&self, graph: G, seq: &[u8], alignment_mode: AlignmentMode) -> impl Iterator<
-        Item=<Self::AstarStateType<G, D, O> as AstarState<G>>::AstarItem
-    >
-    where
-        G: AlignableGraphRef,
-        D: DiagType,
-        O: OffsetType;
+        O: OffsetType,
+        F: Fn(&<Self::AstarStateType<G, D, O> as AstarState<G>>::AstarItem) -> usize;
     
     fn mismatch(&self) -> u8;
     

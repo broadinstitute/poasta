@@ -1,9 +1,10 @@
 use std::fmt;
 use std::hash::Hash;
+use std::marker::PhantomData;
 
 use crate::errors::PoastaError;
 use heuristic::AstarHeuristic;
-use tracing::{Level, span, debug};
+use tracing::{debug, debug_span, span, Level};
 use super::utils::AlignedPair;
 use super::{fr_points::Score, AlignmentMode};
 
@@ -34,11 +35,14 @@ pub trait AlignableGraphNodePos: fmt::Debug + Clone + Copy + PartialEq + Eq {
 }
 
 
-pub trait AlignableGraphRef: Copy {
+pub trait AlignableGraph {
     type NodeType: AlignableGraphNodeId;
     type NodePosType: AlignableGraphNodePos<NodeType = Self::NodeType>;
-    type Successors: Iterator<Item=Self::NodeType>;
-    type Predecessors: Iterator<Item=Self::NodeType>;
+    
+    type Successors<'a>: Iterator<Item=Self::NodeType> + 'a
+        where Self: 'a;
+    type Predecessors<'a>: Iterator<Item=Self::NodeType> + 'a
+        where Self: 'a;
 
     fn start_node(&self) -> Self::NodeType;
     fn end_node(&self) -> Self::NodeType;
@@ -56,21 +60,21 @@ pub trait AlignableGraphRef: Copy {
         self.node_seq(p.node())[p.pos()]
     }
 
-    fn successors(&self, node: Self::NodeType) -> Self::Successors;
-    fn predecessors(&self, node: Self::NodeType) -> Self::Predecessors;
+    fn successors(&self, node: Self::NodeType) -> Self::Successors<'_>;
+    fn predecessors(&self, node: Self::NodeType) -> Self::Predecessors<'_>;
 }
 
 
 pub trait AstarState<G> 
 where
-    G: AlignableGraphRef,
+    G: AlignableGraph,
 {
     type AstarItem: fmt::Debug;
 
     fn pop_front(&mut self) -> Option<Self::AstarItem>;
 
     fn is_further(&self, item: &Self::AstarItem, offset: usize) -> bool;
-    fn is_end(&self, item: &Self::AstarItem) -> bool;
+    fn is_end(&self, graph: &G, item: &Self::AstarItem) -> bool;
     
     fn get_score(&self, item: &Self::AstarItem) -> Score;
     fn get_offset(&self, item: &Self::AstarItem) -> usize;
@@ -82,38 +86,40 @@ where
 
     fn queue_item(&mut self, item: Self::AstarItem, heuristic: usize);
 
-    fn relax<F>(&mut self, seq: &[u8], item: &Self::AstarItem, heuristic: F)
+    fn relax<F>(&mut self, graph: &G, seq: &[u8], item: &Self::AstarItem, heuristic: F)
     where
         F: Fn(&Self::AstarItem) -> usize;
     
-    fn backtrace(&self, end: &Self::AstarItem) -> Vec<AlignedPair<G::NodePosType>>;
+    fn backtrace(&self, graph: &G, end: &Self::AstarItem) -> Vec<AlignedPair<G::NodePosType>>;
 }
 
 
-pub(crate) struct Astar<'a, 'b, G, H, AS> {
-    graph: G,
-    seq: &'a [u8],
-    heuristic: &'b H,
+pub(crate) struct Astar<'a, 'b, 'c, G, H, AS> {
+    graph: &'a G,
+    seq: &'b [u8],
+    heuristic: &'c H,
     alignment_mode: AlignmentMode,
     state: AS,
+    dummy: PhantomData<G>,
 }
 
-impl<'a, 'b, G, H, AS> Astar<'a, 'b, G, H, AS>
+impl<'a, 'b, 'c, G, H, AS> Astar<'a, 'b, 'c, G, H, AS>
 where
-    G: AlignableGraphRef,
+    G: AlignableGraph,
     H: AstarHeuristic<
         G,
         <AS as AstarState<G>>::AstarItem
     >,
     AS: AstarState<G>,
 {
-    pub fn new(graph: G, seq: &'a [u8], heuristic: &'b H, alignment_mode: AlignmentMode, state: AS) -> Self {
+    pub fn new(graph: &'a G, seq: &'b [u8], heuristic: &'c H, alignment_mode: AlignmentMode, state: AS) -> Self {
         Self {
             graph,
             seq,
             heuristic,
             alignment_mode,
             state,
+            dummy: PhantomData,
         }
     }
 
@@ -128,7 +134,7 @@ where
                 panic!("Empty queue before reaching end!")
             };
             
-            if self.state.is_end(&front) {
+            if self.state.is_end(self.graph, &front) {
                 break (self.state.get_score(&front), front);
             }
             
@@ -136,17 +142,18 @@ where
                 continue;
             }
             
-            debug!(?front, "VISIT");
+            debug!("--- FRONT {:?}", front);
+            
             self.state.set_visited(&front);
             result.num_visited += 1;
             
-            self.state.relax(self.seq, &front, |item| self.heuristic.h(item));
+            self.state.relax(self.graph, self.seq, &front, |item| self.heuristic.h(item));
         };
         
         debug!(score = end_score.as_usize(), ?end_point, "END");
         
         result.score = end_score;
-        result.alignment = self.state.backtrace(&end_point);
+        result.alignment = self.state.backtrace(self.graph, &end_point);
 
         Ok(result)
     }
@@ -154,7 +161,7 @@ where
 
 pub struct AstarResult<G>
 where
-    G: AlignableGraphRef,
+    G: AlignableGraph,
 {
     pub score: Score,
     pub alignment: Vec<AlignedPair<G::NodePosType>>,
@@ -165,7 +172,7 @@ where
 
 impl<G> Default for AstarResult<G>
 where
-    G: AlignableGraphRef,
+    G: AlignableGraph,
 {
     fn default() -> Self {
         Self {

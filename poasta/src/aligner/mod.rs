@@ -1,6 +1,6 @@
 use std::{marker::PhantomData, ops::Bound};
 
-use astar::{heuristic::AstarHeuristic, Astar, AlignableGraphRef, AstarResult, AstarState};
+use astar::{heuristic::AstarHeuristic, Astar, AlignableGraph, AstarResult, AstarState};
 use cost_models::AlignmentCostModel;
 use fr_points::{DiagType, OffsetType};
 
@@ -28,6 +28,16 @@ pub enum AlignmentMode {
     },
 }
 
+pub trait GraphAligner<G>
+where
+    G: AlignableGraph
+{
+    fn align<S>(&self, graph: &G, seq: S, mode: AlignmentMode) -> Result<AstarResult<G>, PoastaError>
+    where
+        S: AsRef<[u8]>;
+}
+
+
 pub struct PoastaAligner<C, H, G, D=i32, O=u32> {
     cost_model: C,
     dummy: PhantomData<(H, G, D, O)>
@@ -40,7 +50,7 @@ where
         G, 
         <<C as AlignmentCostModel>::AstarStateType<G, D, O> as AstarState<G>>::AstarItem
     >,
-    G: AlignableGraphRef,
+    G: AlignableGraph,
     D: DiagType,
     O: OffsetType,
 {
@@ -51,19 +61,9 @@ where
         }
     }
     
-    pub fn align(
-        &self, 
-        graph: G, 
-        seq: impl AsRef<[u8]>, 
-        alignment_mode: AlignmentMode
-    ) -> Result<AstarResult<G>, PoastaError> {
-        let heuristic = H::default();
-        self.align_u8(graph, seq.as_ref(), alignment_mode, heuristic)
-    }
-    
     pub fn align_with_precomputed_heuristic(
         &self,
-        graph: G,
+        graph: &G,
         seq: impl AsRef<[u8]>,
         alignment_mode: AlignmentMode,
         heuristic: H,
@@ -73,22 +73,19 @@ where
     
     fn align_u8(
         &self, 
-        graph: G, 
+        graph: &G, 
         seq: &[u8], 
         alignment_mode: AlignmentMode,
         mut heuristic: H,
     ) -> Result<AstarResult<G>, PoastaError> {
         heuristic.init(graph, seq);
-        let mut astar_state = self.cost_model.initialize(graph, seq, alignment_mode);
-        
-        for item in self.cost_model.initial_states(graph, seq, alignment_mode) {
-            astar_state.update_if_further(&item, 0);
-            let h = heuristic.h(&item);
-            astar_state.queue_item(item,  h);
-        }
+        let astar_state = self.cost_model.initialize(
+            graph, seq, alignment_mode, 
+            |item| heuristic.h(item)
+        );
         
         let mut astar = Astar::new(
-            graph, 
+            graph,
             seq, 
             &heuristic,
             alignment_mode,
@@ -96,6 +93,33 @@ where
         );
         
         astar.run()
+    }
+    
+}
+
+impl<G, C, H, D, O> GraphAligner<G> for PoastaAligner<C, H, G, D, O> 
+where
+    C: AlignmentCostModel,
+    H: AstarHeuristic<
+        G, 
+        <<C as AlignmentCostModel>::AstarStateType<G, D, O> as AstarState<G>>::AstarItem
+    >,
+    G: AlignableGraph,
+    D: DiagType,
+    O: OffsetType,
+{
+    
+    fn align<S>(
+        &self, 
+        graph: &G, 
+        seq: S, 
+        alignment_mode: AlignmentMode
+    ) -> Result<AstarResult<G>, PoastaError>
+    where
+        S: AsRef<[u8]>,
+    {
+        let heuristic = H::default();
+        self.align_u8(graph, seq.as_ref(), alignment_mode, heuristic)
     }
     
 }
@@ -114,7 +138,7 @@ mod tests {
 
     use super::astar::heuristic::Dijkstra;
     use super::cost_models::affine::Affine;
-    use super::{AlignmentMode, PoastaAligner};
+    use super::{AlignmentMode, GraphAligner, PoastaAligner};
 
     #[test]
     fn test_alignment() {
