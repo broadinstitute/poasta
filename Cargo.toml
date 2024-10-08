@@ -1,5 +1,5 @@
 [workspace]
-members = ["poasta", "poasta_bin", "poasta_vis"]
+members = ["poasta", "poasta_bin"]
 resolver = "2"
 
 [workspace.package]

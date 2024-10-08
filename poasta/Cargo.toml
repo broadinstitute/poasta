@@ -18,4 +18,4 @@ noodles = { version = "~0.83", features = ["fasta", "fastq"] }
 
 [features]
 default = ["optimize_logging"]
-optimize_logging = ["tracing/release_max_level_warn"]
+optimize_logging = ["tracing/release_max_level_info"]
