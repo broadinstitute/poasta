@@ -13,7 +13,7 @@ path = "src/main.rs"
 poasta = { path = "../poasta", version = "0.2.0", default-features = false }
 clap = { version = "4.5.19", features = ["derive"] }
 tracing = { version = "0.1.40" }
-tracing-subscriber = { version = "0.3.18" }
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 flate2 = "1.0.34"
 noodles = { version = "0.83.0", features = ["fasta", "fastq"] }
 

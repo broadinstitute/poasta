@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fs::File;
-use std::io::{self, BufWriter, IsTerminal};
+use std::io::{self, Write, BufWriter, IsTerminal};
 use std::io::BufReader;
 use std::path::Path;
 
@@ -8,21 +8,22 @@ use clap::Parser;
 use flate2::read::MultiGzDecoder;
 use noodles::fasta;
 
-use poasta::aligner::utils::print_alignment;
-use poasta::aligner::{AlignmentMode, GraphAligner};
-use poasta::graph::io::graph_to_dot;
-use poasta::graph::poa::IndexType;
+
 use tracing::{span, info};
 use tracing::{trace_span, Level};
 use tracing::Subscriber;
 use tracing_subscriber::registry::LookupSpan;
-use tracing_subscriber::Registry;
+use tracing_subscriber::{EnvFilter, Registry};
 use tracing_subscriber::prelude::*;
 
+use poasta::aligner::{AlignmentMode, GraphAligner};
 use poasta::aligner::astar::heuristic::Dijkstra;
 use poasta::aligner::cost_models::affine::Affine;
-use poasta::graph::poa::POASeqGraph;
+use poasta::aligner::utils::print_alignment;
+use poasta::graph::poa::{POASeqGraph, IndexType};
 use poasta::errors::PoastaError;
+#[cfg(feature = "debug_output")]
+use poasta::graph::io::graph_to_dot;
 
 mod cli;
 mod debug_tracing;
@@ -36,12 +37,17 @@ impl<T> PoastaWrite for T where T: io::Write + io::IsTerminal {}
 
 /// Build our base tracing subscriber with stderr logging.
 fn build_base_subscriber() -> impl Subscriber + for<'span> LookupSpan<'span> {
+    let filter_layer = EnvFilter::try_from_default_env()
+        .or_else(|_| EnvFilter::try_new("info"))
+        .unwrap();
+    
     let stderr_log = tracing_subscriber::fmt::layer()
         .with_target(false)
         .with_file(false)
         .with_writer(io::stderr)
         .with_ansi(!io::stderr().is_terminal())
-        .with_filter(align_state_filter());
+        .with_filter(align_state_filter())
+        .with_filter(filter_layer);
     
     Registry::default()
         .with(stderr_log)
@@ -90,8 +96,8 @@ fn align_subcommand(align_args: &cli::AlignArgs) -> Result<(), Box<dyn Error + '
     // TODO: separate implementations for edit distance/linear gap penalties
     let scoring = Affine::new(
         align_args.cost_mismatch.unwrap_or(4),
-        align_args.cost_gap_extend.unwrap_or(2),
         align_args.cost_gap_open.unwrap_or(6),
+        align_args.cost_gap_extend.unwrap_or(2),
     );
     
     let mut graph = poasta::graph::poa::POASeqGraph::<u32>::new();
@@ -136,9 +142,16 @@ where
         let weights: Vec<usize> = vec![1; record.sequence().len()];
         let seq_name = std::str::from_utf8(record.name()).unwrap();
         
+        // When debugging, we want to output the sequence to the visited states output file
+        #[cfg(feature = "debug_output")]
+        let seq = if align_args.debug_output.is_some() {
+            std::str::from_utf8(record.sequence().as_ref()).unwrap()
+        } else {
+            ""
+        };
+        
         let span = trace_span!(target: "poasta::aligner", "align_seq", seq_id=seq_name);
         let _enter = span.enter();
-        
         
         if graph.is_empty() {
             info!("Creating initial graph from {}...", seq_name);
@@ -151,6 +164,7 @@ where
                 let fname = debug_dir.join(format!("graph_for_{}.dot", seq_name));
                 let mut file = File::create(&fname)
                     .map(BufWriter::new)?;
+                writeln!(&mut file, "# seq_to_align: {}", seq);
                 graph_to_dot(&mut file, graph)?;
             }
             
@@ -158,7 +172,7 @@ where
             
             info!("Done. Alignment Score: {:?}", result.score);
             info!(
-                "{}",
+                "\n{}",
                 print_alignment(graph, record.sequence().as_ref(), &result.alignment)
             );
 
