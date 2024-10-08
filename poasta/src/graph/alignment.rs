@@ -3,6 +3,8 @@ use std::ops::Range;
 
 use petgraph::graph::IndexType;
 
+use tracing::debug;
+
 use crate::aligner::astar::AlignableGraphNodePos;
 use crate::aligner::utils::AlignedPair;
 
@@ -146,7 +148,7 @@ where
             
             self.curr_state = self.classify_aln_pair(&pair, graph, seq);
             
-            eprintln!("State: {:?} -> {:?}", self.prev_state, self.curr_state);
+            debug!("State: {:?} -> {:?}", self.prev_state, self.curr_state);
             
             match (self.prev_state, self.curr_state) {
                 (AlignmentClassification::Start, _) => {

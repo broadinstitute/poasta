@@ -6,6 +6,7 @@ use petgraph::stable_graph::Neighbors;
 use petgraph::visit::EdgeRef;
 use petgraph::{Incoming, Outgoing, visit::NodeIndexable};
 
+use tracing::{debug_span, debug};
 use rustc_hash::FxHashMap;
 
 use crate::aligner::astar::{AlignableGraphNodeId, AlignableGraph, AlignableGraphNodePos};
@@ -18,6 +19,8 @@ use super::alignment::{AlignmentBlocks, POANodePos};
 pub(crate) mod graph_impl {
     use petgraph::graph::IndexType;
     use petgraph::{stable_graph::StableDiGraph, visit::GraphBase};
+    
+    use tracing::debug;
     
     pub type POASeqGraph<Ix> = StableDiGraph<POANodeData<Ix>, POAEdgeData, Ix>;
     pub type POANodeIndex<Ix> = <POASeqGraph<Ix> as GraphBase>::NodeId;
@@ -144,7 +147,7 @@ pub(crate) mod graph_impl {
         
         #[inline]
         pub fn other_split_at_left(&self, new_node: POANodeIndex<Ix>, split_pos: usize) -> Self {
-            eprintln!("{:?}, splitpos: {:?}", self, split_pos);
+            debug!("{:?}, splitpos: {:?}", self, split_pos);
             assert!(split_pos > self.other_start);
             
             if split_pos >= self.other_end() {
@@ -490,6 +493,9 @@ where
         weights: impl AsRef<[usize]>,
         alignment: Option<&[AlignedPair<POANodePos<Ix>>]>,
     ) -> Result<(), GraphError<Ix>> {
+        let span = debug_span!("add_aligned_sequence");
+        let _enter = span.enter();
+        
         let seq = sequence.as_ref();
         let w = weights.as_ref();
         let mut nodes_split = SplitTracker::default();
@@ -585,7 +591,7 @@ where
         // Update node weights with new alignment
         let mut curr_qry_pos = *qry_start;
         for (node_pos, length) in node_ivals {
-            eprintln!("Adding weights for {:?}, {}..{} (length: {})", node_pos.node(), node_pos.pos(), node_pos.pos() + *length, length);
+            debug!("Adding weights for {:?}, {}..{} (length: {})", node_pos.node(), node_pos.pos(), node_pos.pos() + *length, length);
             let node_weights = &mut self.graph.node_weight_mut(node_pos.node()).unwrap().weights;
             
             let range = node_pos.pos()..node_pos.pos()+*length;
@@ -642,7 +648,7 @@ where
         node_ivals: &[(POANodePos<Ix>, usize)], 
         pred: Option<POANodeIndex<Ix>>,
     ) -> POANodeIndex<Ix> {
-        eprintln!("Process mismatches, node_ivals: {:?}", node_ivals);
+        debug!("Process mismatches, node_ivals: {:?}", node_ivals);
         
         let new_seq_id = self.sequences.len();
         let mut new_qry_node_data = POANodeData::new_with_weights(
@@ -654,15 +660,15 @@ where
         let mut curr_node_pos = 0;
         for (node_pos, length) in node_ivals {
             let aligned_interval = AlignedInterval::new(curr_node_pos, *length, node_pos.node(), node_pos.pos());
-            eprintln!("Add aligned interval new node to -> {:?}, {}", node_pos.node(), node_pos.pos());
-            eprintln!("{:?}", aligned_interval);
+            debug!("Add aligned interval new node to -> {:?}, {}", node_pos.node(), node_pos.pos());
+            debug!("{:?}", aligned_interval);
             new_qry_node_data.aligned_intervals.push(aligned_interval);
             
             curr_node_pos += *length;
         }
         
         let new_qry_node_ix = self.add_node_with_data(new_qry_node_data);
-        eprintln!("Added node with sequence length {} (new node ix: {:?})", qry_range.len(), new_qry_node_ix);
+        debug!("Added node with sequence length {} (new node ix: {:?})", qry_range.len(), new_qry_node_ix);
         
         // Make sure to add aligned intervals pointing to the new node in other nodes
         curr_node_pos = 0;
@@ -671,24 +677,24 @@ where
             let node_data = self.graph.node_weight(node_pos.node()).unwrap();
             let aln_ival_to_qry = AlignedInterval::new(node_pos.pos(), *length, new_qry_node_ix, curr_node_pos);
             
-            eprintln!("Add aligned interval aligned node {:?}, {} to -> query {:?}, {}", node_pos.node(), node_pos.pos(), new_qry_node_ix, curr_node_pos);
-            eprintln!("{:?}", aln_ival_to_qry);
+            debug!("Add aligned interval aligned node {:?}, {} to -> query {:?}, {}", node_pos.node(), node_pos.pos(), new_qry_node_ix, curr_node_pos);
+            debug!("{:?}", aln_ival_to_qry);
             
             // Our query is aligned to `node`, but `node` is potentially already aligned to other nodes.
             // Make sure we update their `aligned_intervals` too.
             let mut other_aln_ivals_to_new = Vec::new();
             for aln_ival_to_other in &node_data.aligned_intervals {
-                eprintln!("Checking for intersection of: {:?}", aln_ival_to_other);
+                debug!("Checking for intersection of: {:?}", aln_ival_to_other);
                 
                 if let Some((ival_other_to_query, ival_query_to_other)) = aln_ival_to_other.transitive_intersect(&aln_ival_to_qry) {
                     // Node was already aligned to 'other', and the aligned interval intersects with the 
                     // aligned interval to the new query.
-                    eprintln!("Transitive alignment other {:?} -> qry {:?}", aln_ival_to_other.other(), new_qry_node_ix);
-                    eprintln!("{:?}", ival_other_to_query);
+                    debug!("Transitive alignment other {:?} -> qry {:?}", aln_ival_to_other.other(), new_qry_node_ix);
+                    debug!("{:?}", ival_other_to_query);
                     other_aln_ivals_to_new.push((aln_ival_to_other.other(), ival_other_to_query));
                     
-                    eprintln!("Transitive alignment qry {:?} -> other {:?}", new_qry_node_ix, aln_ival_to_other.other());
-                    eprintln!("{:?}", ival_query_to_other);
+                    debug!("Transitive alignment qry {:?} -> other {:?}", new_qry_node_ix, aln_ival_to_other.other());
+                    debug!("{:?}", ival_query_to_other);
                     additional_aln_ivals_for_qry.push(ival_query_to_other);
                     
                 }
@@ -706,7 +712,7 @@ where
         
         let qry_node_data = self.graph.node_weight_mut(new_qry_node_ix).unwrap();
         for aln_ival in additional_aln_ivals_for_qry {
-            eprintln!("Add additional aligned interval query {:?}, {} to -> other {:?}, {}", new_qry_node_ix, aln_ival.node_start(), aln_ival.other(), aln_ival.other_start());
+            debug!("Add additional aligned interval query {:?}, {} to -> other {:?}, {}", new_qry_node_ix, aln_ival.node_start(), aln_ival.other(), aln_ival.other_start());
             qry_node_data.aligned_intervals.push(aln_ival);
         }
         
@@ -867,7 +873,7 @@ where
         }
         
         for e in to_add {
-            eprintln!("Adding edge {:?}", e);
+            debug!("Adding edge {:?}", e);
             self.graph.add_edge(e.0, e.1, POAEdgeData::new_with_seq_ids(e.2));
         }
         
@@ -903,7 +909,7 @@ where
         let left_node = self.add_node_with_weights(left_seq.to_vec(), left_weights.to_vec());
         let right_node = self.add_node_with_weights(right_seq.to_vec(), right_weights.to_vec());
         
-        eprintln!("Split node {:?} at position {}. New nodes: {:?} (len: {}), {:?} (len: {})", 
+        debug!("Split node {:?} at position {}. New nodes: {:?} (len: {}), {:?} (len: {})", 
             node, pos, left_node, left_len, right_node, right_len);
         
         // Re-borrow node data such that the borrow checker is happy. Otherwise, the lifetime of the previous `node_data` borrow
@@ -987,7 +993,7 @@ where
                 .filter(|v| **v != self.sequences.len())
             );
         }
-        eprintln!("SPLIT: seq ids in {:?}", seq_ids);
+        debug!("SPLIT: seq ids in {:?}", seq_ids);
         
         self.graph
             .add_edge(left_node, right_node, POAEdgeData::new_with_seq_ids(seq_ids));
@@ -997,7 +1003,7 @@ where
         for in_edge in self.graph.edges_directed(node, Incoming) {
             let edge_data = in_edge.weight();
             let new_edge_data = POAEdgeData::new_with_seq_ids(edge_data.sequence_ids.clone());
-            eprintln!("OLD: {:?} -> {:?} NEW {:?} -> {:?} {:?}", in_edge.source(), node, in_edge.source(), left_node, new_edge_data);
+            debug!("OLD: {:?} -> {:?} NEW {:?} -> {:?} {:?}", in_edge.source(), node, in_edge.source(), left_node, new_edge_data);
             
             new_edges.push((in_edge.source(), left_node, new_edge_data));
         }
@@ -1005,7 +1011,7 @@ where
         for out_edge in self.graph.edges_directed(node, Outgoing) {
             let edge_data = out_edge.weight();
             let new_edge_data = POAEdgeData::new_with_seq_ids(edge_data.sequence_ids.clone());
-            eprintln!("OLD: {:?} -> {:?} NEW {:?} -> {:?} {:?}", node, out_edge.target(), right_node, out_edge.target(), new_edge_data);
+            debug!("OLD: {:?} -> {:?} NEW {:?} -> {:?} {:?}", node, out_edge.target(), right_node, out_edge.target(), new_edge_data);
             
             new_edges.push((right_node, out_edge.target(), new_edge_data));
         }
