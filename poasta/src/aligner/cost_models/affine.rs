@@ -1,5 +1,5 @@
 use std::fmt;
-use tracing::{span, debug, trace, Level};
+use tracing::{debug, debug_span, span, trace, Level};
 
 use super::AlignmentCostModel;
 use crate::aligner::{
@@ -144,6 +144,17 @@ where
             }
         }
     }
+    
+    fn set_furthest<N>(&mut self, item: &AffineAstarItem<N, D>, offset: O) {
+        match item.state {
+            AlignState::Match => self.fr_points_m.set_furthest(item.score, item.diag, offset),
+            AlignState::Deletion => self.fr_points_d.set_furthest(item.score, item.diag, offset),
+            AlignState::Insertion => self.fr_points_i.set_furthest(item.score, item.diag, offset),
+            AlignState::Deletion2 | AlignState::Insertion2 => {
+                panic!("Invalid gap-affine state {:?}", item.state)
+            }
+        }
+    }
 
     fn update_if_further<N>(&mut self, item: &AffineAstarItem<N, D>, offset: O) -> bool {
         match item.state {
@@ -224,6 +235,10 @@ where
         }
     }
     
+    fn set_furthest(&mut self, item: &AffineAstarItem<G::NodeType, D>, offset: O) {
+        self.fr_points[item.node.index()].set_furthest(item, offset);
+    }
+    
     fn extend_and_relax_match<F>(&mut self, graph: &G, seq: &[u8], item: &AffineAstarItem<G::NodeType, D>, heuristic: F)
     where
         F: Fn(&AffineAstarItem<G::NodeType, D>) -> usize,
@@ -238,7 +253,17 @@ where
         match extend_result {
             ExtendResult::NodeEnd(extended_offset) => {
                 debug!("(NodeEnd) Extended offset: {extended_offset:?} {:?}", item.node);
-                self.update_if_further(item, extended_offset.as_usize());
+                self.set_furthest(item, extended_offset);
+                
+                trace!(
+                    target: "poasta::aligner::cost_models::affine::extend",
+                    score=item.score.as_usize(), 
+                    node=item.node.index(), 
+                    diag=item.diag.as_isize(), 
+                    offset=fr_point.as_usize(),
+                    extended_offset=extended_offset.as_usize(),
+                    state=tracing::field::debug(&item.state)
+                );
                 
                 let parent_node_len = graph.node_len(item.node);
                 let mut any_mismatch = false;
@@ -335,8 +360,17 @@ where
             }
             ExtendResult::OtherEnd(extended_offset) => {
                 debug!("Extended offset: {extended_offset:?}");
+                self.set_furthest(item, extended_offset);
                 
-                self.update_if_further(item, extended_offset.as_usize());
+                trace!(
+                    target: "poasta::aligner::cost_models::affine::extend",
+                    score=item.score.as_usize(), 
+                    node=item.node.index(), 
+                    diag=item.diag.as_isize(), 
+                    offset=fr_point.as_usize(),
+                    extended_offset=extended_offset.as_usize(),
+                    state=tracing::field::debug(&item.state)
+                );
                 
                 // Extension ended within a node, queue the mismatch and open indels, expanding to other diagonals 
                 if extended_offset.as_usize() < self.seq_length {
@@ -471,97 +505,49 @@ where
     }
     
     fn get_prev(&self, graph: &G, item: &AffineAstarItem<G::NodeType, D>, curr_offset: O) -> Option<(AffineAstarItem<G::NodeType, D>, O)> {
+        let span = debug_span!("get_prev");
+        let _enter = span.enter();
         let mut sources = Vec::new();
+        let s_gap_open = Score::new(self.costs.gap_open() as u32 + self.costs.gap_extend() as u32);
+        let s_gap_extend = Score::new(self.costs.gap_extend() as u32);
+        let s_mism = Score::new(self.costs.mismatch() as u32);
         
         match item.state {
             AlignState::Match => {
-                // We could have entered this diagonal from a match at a node predecessor, mismatch on the same node or a predecessor,
-                // a deletion on the same node or a predecessor, or an insertion on the same node.
-                
-                // Check if we closed an insertion, will be the same diagonal, score and offset
-                let pred_ins_diag = item.diag;
-                let pred_ins_item = AffineAstarItem::new(
-                    item.score,
-                    item.node,
-                    pred_ins_diag,
-                    AlignState::Insertion,
+                // Check for closed insertions
+                sources.push(
+                    AffineAstarItem::new(item.score, item.node, item.diag, AlignState::Insertion)
                 );
-                debug!("- Checkin for insertion {:?}", pred_ins_item);
-                if let Some(pred_offset) = self.fr_points[item.node.index()]
-                    .get_furthest(&pred_ins_item)
-                {
-                    debug!("- Curr offset: {curr_offset:?}, pred offset: {pred_offset:?}, isvisited: {}", self.is_visited(&pred_ins_item));
-                    if self.is_visited(&pred_ins_item) && pred_offset < curr_offset {
-                        sources.push((pred_ins_item, pred_offset));
-                    }
-                }
                 
-                // Check if we closed a deletion, will be the same diagonal, score and offset
-                let pred_del_diag = item.diag;
-                let pred_del_item = AffineAstarItem::new(
-                    item.score,
-                    item.node,
-                    pred_del_diag,
-                    AlignState::Deletion,
+                // Check for closed insertions
+                sources.push(
+                    AffineAstarItem::new(item.score, item.node, item.diag, AlignState::Deletion)
                 );
-                debug!("- Checkin for deletion {:?}", pred_del_item);
-                if let Some(pred_offset) = self.fr_points[item.node.index()]
-                    .get_furthest(&pred_del_item)
-                {
-                    debug!("- Curr offset: {curr_offset:?}, pred offset: {pred_offset:?}, isvisited: {}", self.is_visited(&pred_del_item));
-                    if self.is_visited(&pred_del_item) && pred_offset <= curr_offset {
-                        sources.push((pred_del_item, pred_offset));
-                    }
-                }
                 
-                // Check for a mismatch, first on the same node, then on a predecessor
-                // Predecessor should have a score of current score - mismatch cost
-                if item.score >= Score::new(self.costs.mismatch() as u32) {
-                    let mut possible_pred = vec![item.node];
-                    possible_pred.extend(graph.predecessors(item.node));
-                    
-                    for pred in possible_pred {
-                        let pred_len = if pred != item.node { graph.node_len(pred) } else { 0 };
-                        let pred_mismatch_diag = item.diag - pred_len;
-                        let pred_item = AffineAstarItem::new(
-                            item.score - self.costs.mismatch(), 
-                            pred, 
-                            pred_mismatch_diag, 
-                            AlignState::Match
-                        );
+                // Check for deletions that could have been the source, both on the current node as well as predecessors
+                let mut possible_pred = vec![item.node];
+                possible_pred.extend(graph.predecessors(item.node));
+                
+                // Check for mismatches, same diagonal, but potentially on a predecessor node
+                if item.score >= s_mism {
+                    for pred in &possible_pred {
+                        let pred_len = if *pred == item.node { 0 } else { graph.node_len(*pred) };
+                        let pred_diag = item.diag - pred_len as isize;
                         
-                        debug!("- Checkin for mismatch {:?}", pred_item);
-                        if let Some(pred_offset) = self.fr_points[pred.index()]
-                            .get_furthest(&pred_item)
-                        {
-                            debug!("- Curr offset: {curr_offset:?}, pred offset: {pred_offset:?}, isvisited: {}", self.is_visited(&pred_item));
-                            if self.is_visited(&pred_item) && pred_offset < curr_offset {
-                                sources.push((pred_item, pred_offset));
-                            }
-                        }
+                        sources.push(
+                            AffineAstarItem::new(item.score - s_mism, *pred, pred_diag, AlignState::Match)
+                        );
                     }
                 }
                 
-                // check for match at a predecessor, which should have been reached with the same score as the current item.
+                // Check for match on a predecessor node, same score
                 for pred in graph.predecessors(item.node) {
                     let pred_len = graph.node_len(pred);
-                    let pred_match_diag = item.diag - pred_len;
+                    let pred_diag = item.diag - pred_len as isize;
                     
-                    let pred_item = AffineAstarItem::new(
-                        item.score, 
-                        pred, 
-                        pred_match_diag, 
-                        AlignState::Match
+                    sources.push(
+                        AffineAstarItem::new(item.score, pred, pred_diag, AlignState::Match)
                     );
-                    debug!("- Checkin for match {:?}", pred_item);
-                    if let Some(pred_offset) = self.fr_points[pred.index()]
-                        .get_furthest(&pred_item) 
-                    {
-                        debug!("- Curr offset: {curr_offset:?}, pred offset: {pred_offset:?}, isvisited: {}", self.is_visited(&pred_item));
-                        if self.is_visited(&pred_item) && pred_offset < curr_offset {
-                            sources.push((pred_item, pred_offset));
-                        }
-                    }
                 }
             },
             AlignState::Deletion => {
@@ -569,102 +555,68 @@ where
                 possible_pred.extend(graph.predecessors(item.node));
                 
                 // Check for extended deletions
-                if item.score >= Score::new(self.costs.gap_extend() as u32) {
-                    for pred in possible_pred.iter().copied() {
-                        let pred_len = graph.node_len(pred);
-                        let pred_diag = if item.node != pred { item.diag - pred_len + 1isize } else { item.diag + 1isize };
-                        let pred_ext = AffineAstarItem::new(
-                            item.score - self.costs.gap_extend(),
-                            pred,
-                            pred_diag,
-                            AlignState::Deletion,
-                        );
+                if item.score >= s_gap_extend {
+                    for pred in &possible_pred {
+                        let pred_len = if *pred == item.node { 0 } else { graph.node_len(*pred) };
+                        let pred_diag = item.diag - pred_len as isize + 1isize;
                         
-                        if let Some(pred_offset) = self.fr_points[pred.index()]
-                            .get_furthest(&pred_ext)
-                        {
-                            if self.is_visited(&pred_ext) && pred_offset == curr_offset {
-                                sources.push((pred_ext, pred_offset));
-                            }
-                        }
+                        sources.push(
+                            AffineAstarItem::new(item.score - s_gap_extend, *pred, pred_diag, AlignState::Deletion)
+                        );
                     }
                 }
                 
-                // Check first for opened deletions
-                let gap_open_cost = self.costs.gap_open() as u32 + self.costs.gap_extend() as u32;
-                if item.score >= Score::new(gap_open_cost) {
-                    for pred in possible_pred.iter().copied() {
-                        let pred_len = graph.node_len(pred);
-                        let pred_diag = if item.node != pred { item.diag - pred_len + 1isize } else { item.diag + 1isize };
-                        let pred_open = AffineAstarItem::new(
-                            item.score - self.costs.gap_open() - self.costs.gap_extend(),
-                            pred,
-                            pred_diag,
-                            AlignState::Match,
-                        );
+                // Check for opened deletions
+                if item.score >= s_gap_open {
+                    for pred in &possible_pred {
+                        let pred_len = if *pred == item.node { 0 } else { graph.node_len(*pred) };
+                        let pred_diag = item.diag - pred_len as isize + 1isize;
                         
-                        if let Some(pred_offset) = self.fr_points[pred.index()]
-                            .get_furthest(&pred_open)
-                        {
-                            if self.is_visited(&pred_open) && pred_offset == curr_offset {
-                                sources.push((pred_open, pred_offset));
-                            }
-                        }
+                        sources.push(
+                            AffineAstarItem::new(item.score - s_gap_open, *pred, pred_diag, AlignState::Match)
+                        );
                     }
                 }
             },
             AlignState::Insertion => {
                 if curr_offset > O::zero() {
                     let pred_diag = item.diag - 1isize;
-                    if item.score >= Score::new(self.costs.gap_extend() as u32) {
-                        let pred_ext = AffineAstarItem::new(
-                            item.score - self.costs.gap_extend(),
-                            item.node,
-                            pred_diag,
-                            AlignState::Insertion,
+                    if item.score >= s_gap_extend {
+                        sources.push(
+                            AffineAstarItem::new(item.score - s_gap_extend, item.node, pred_diag, AlignState::Insertion)
                         );
-                        
-                        debug!("- Checkin for ins ext {:?}", pred_ext);
-                        if let Some(pred_offset) = self.fr_points[item.node.index()]
-                            .get_furthest(&pred_ext)
-                        {
-                            debug!("- Curr offset: {curr_offset:?}, pred offset: {pred_offset:?}, isvisited: {}", self.is_visited(&pred_ext));
-                            if self.is_visited(&pred_ext) && pred_offset.increase_one() == curr_offset {
-                                sources.push((pred_ext, pred_offset));
-                            }
-                        }
                     }
                     
-                    let gap_open_cost = self.costs.gap_open() as u32 + self.costs.gap_extend() as u32;
-                    if item.score >= Score::new(gap_open_cost) {
-                        let pred_open = AffineAstarItem::new(
-                            item.score - self.costs.gap_open() - self.costs.gap_extend(),
-                            item.node,
-                            pred_diag,
-                            AlignState::Match,
+                    if item.score >= s_gap_open {
+                        sources.push(
+                            AffineAstarItem::new(item.score - s_gap_open, item.node, pred_diag, AlignState::Match)
                         );
-                        
-                        debug!("- Checkin for ins open {:?}", pred_open);
-                        if let Some(pred_offset) = self.fr_points[item.node.index()]
-                            .get_furthest(&pred_open)
-                        {
-                            debug!("- Curr offset: {curr_offset:?}, pred offset: {pred_offset:?}, isvisited: {}", self.is_visited(&pred_open));
-                            if self.is_visited(&pred_open) && pred_offset.increase_one() == curr_offset {
-                                sources.push((pred_open, pred_offset));
-                            }
-                        }
                     }
                 }
             },
             AlignState::Deletion2 | AlignState::Insertion2 => panic!("Invalid gap-affine state {:?}", item.state)
         }
         
-        debug!("- Sources: {:?}", sources);
-        
         // Iterator::max_by_key will return the last maximum element if multiple have the same offset,
         // so we ordered the above code to prioritize matches > mismatches > deletions > insertions.
         sources.into_iter()
-            .max_by_key(|(_, offset)| *offset)
+            .filter(|s| self.fr_points[s.node.index()].is_visited(s))
+            .filter_map(|s| {
+                self.fr_points[s.node.index()].get_furthest(&s)
+                    .and_then(|v| {
+                        if v <= curr_offset {
+                            Some((s, v))
+                        } else {
+                            None
+                        }
+                    })
+            })
+            .inspect(|(item, offset)| {
+                debug!("Checking source: {:?} [{:?}], offset: {:?}, diag: {:?}, node: {:?}", item.state, item.score, offset, item.diag, item.node)
+            })
+            .max_by_key(|(_, offset)| {
+                offset.as_usize()
+            })
     }
 }
 
@@ -772,7 +724,8 @@ where
         let mut alignment = Vec::new();
         
         while let Some((prev, prev_offset)) = self.get_prev(graph, &curr, curr_offset) {
-            debug!(curr = ?curr, prev = ?prev, curr_offset = ?curr_offset, prev_offset = ?prev_offset);
+            debug!(curr = ?curr, curr_offset = ?curr_offset);
+            debug!(prev = ?prev, prev_offset = ?prev_offset);
             
             if curr.node == graph.end_node() {
                 curr = prev;
@@ -810,9 +763,8 @@ where
             }
             
             curr = prev;
-            curr_offset = prev_offset;
+            curr_offset = prev_offset;            
         }
-        
         alignment.reverse();
         alignment
     }

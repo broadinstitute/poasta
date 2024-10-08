@@ -447,6 +447,12 @@ impl Sub<Score> for Score {
     }
 }
 
+impl From<u8> for Score {
+    fn from(value: u8) -> Self {
+        Score(value as u32)
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Diagonals<D, O> {
     /// The furthest reached query position for each diagonal.
@@ -511,6 +517,13 @@ where
 
         self.diagonals.get(ix).copied()
     }
+    
+    pub fn set_furthest(&mut self, diag: Diag<D>, offset: O) {
+        self.ensure_space(diag);
+
+        let ix = (diag - self.kmin).as_usize();
+        self.diagonals[ix] = offset;
+    }
 
     pub fn is_further(&self, diag: Diag<D>, offset: O) -> bool {
         if self.is_empty() {
@@ -518,7 +531,6 @@ where
         }
 
         let ix = (diag - self.kmin).as_usize();
-
         self.diagonals.get(ix).map(|&o| o < offset).unwrap_or(true)
     }
 
@@ -527,7 +539,7 @@ where
 
         let ix = (diag - self.kmin).as_usize();
 
-        if self.diagonals[ix] < offset {
+        if !self.is_visited(diag) && self.diagonals[ix] < offset {
             self.diagonals[ix] = offset;
             true
         } else {
@@ -583,6 +595,13 @@ where
         let ix = (score - self.score_min).as_usize();
 
         self.fr_points.get(ix).and_then(|v| v.get_furthest(diag))
+    }
+    
+    pub fn set_furthest(&mut self, score: Score, diag: Diag<D>, offset: O) {
+        self.ensure_space(score);
+        
+        let ix = (score - self.score_min).as_usize();
+        self.fr_points[ix].set_furthest(diag, offset)
     }
 
     fn ensure_space(&mut self, score: Score) {

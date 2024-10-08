@@ -135,6 +135,7 @@ where
             };
             
             if self.state.is_end(self.graph, &front) {
+                self.state.set_visited(&front);
                 break (self.state.get_score(&front), front);
             }
             
