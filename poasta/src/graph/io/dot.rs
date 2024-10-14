@@ -6,7 +6,7 @@ use petgraph::visit::{IntoEdgeReferences, EdgeRef};
 
 use crate::aligner::astar::AlignableGraph;
 use crate::errors::PoastaIOError;
-use super::poa::POASeqGraph;
+use crate::graph::poa::POASeqGraph;
 
 
 fn graphviz_node_color(label: u8) -> &'static str {

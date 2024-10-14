@@ -1,3 +1,5 @@
+use std::fs::File;
+use std::io::BufRead;
 use std::ops::{Range, RangeBounds, Bound};
 
 use petgraph::algo::toposort;
@@ -7,14 +9,17 @@ use petgraph::visit::EdgeRef;
 use petgraph::{Incoming, Outgoing, visit::NodeIndexable};
 
 use tracing::{debug_span, debug};
-use rustc_hash::FxHashMap;
+use foldhash::HashMap;
+use noodles::fasta;
 
 use crate::aligner::astar::{AlignableGraphNodeId, AlignableGraph, AlignableGraphNodePos};
 use crate::aligner::utils::AlignedPair;
-use crate::errors::GraphError;
+use crate::errors::{GraphError, PoastaIOError};
 use crate::graph::alignment::AlignmentBlockType;
+use crate::graph::io::dot::graph_to_dot;
 
-use super::alignment::{AlignmentBlocks, POANodePos};
+use super::alignment::{AlignmentBlocks, AlignmentClassification, POANodePos};
+use super::io::fasta::MSANodeCover;
 
 pub(crate) mod graph_impl {
     use petgraph::graph::IndexType;
@@ -52,6 +57,11 @@ pub(crate) mod graph_impl {
         #[inline(always)]
         pub fn length(&self) -> usize {
             self.length
+        }
+        
+        #[inline]
+        pub fn increase_length(&mut self, v: usize) {
+            self.length += v;
         }
         
         #[inline(always)]
@@ -406,10 +416,19 @@ pub struct POASeqGraph<Ix>
 where
     Ix: IndexType,
 {
+    /// Petgraph graph object holding nodes and edges
     pub(crate) graph: graph_impl::POASeqGraph<Ix>,
+    
+    /// List of sequences added to the graph
     sequences: Vec<Sequence<Ix>>,
+    
+    /// POA graph special start node
     pub(crate) start_node: POANodeIndex<Ix>,
-    end_node: POANodeIndex<Ix>,
+    
+    /// POA graph special end node
+    pub(crate) end_node: POANodeIndex<Ix>,
+    
+    /// Toplogical ordering of nodes
     toposorted: Vec<POANodeIndex<Ix>>,
 }
 
@@ -430,6 +449,36 @@ where
             end_node,
             toposorted: vec![start_node, end_node],
         }
+    }
+    
+    pub fn try_from_fasta_msa(ifile: &mut impl BufRead) -> Result<Self, PoastaIOError> {
+        let mut graph = Self::new();
+        
+        let mut msa_nodes_cover = MSANodeCover::new();
+        let mut reader = fasta::Reader::new(ifile);
+        
+        let mut last_len = None;
+        for record in reader.records() {
+            let record = record?;
+            let seq = record.sequence().as_ref();
+            
+            if let Some(len) = last_len {
+                if len != seq.len() {
+                    return Err(PoastaIOError::InvalidFormat);
+                }
+            }            
+            
+            if seq.len() > msa_nodes_cover.msa_length() {
+                msa_nodes_cover.resize(seq.len());
+            }
+            
+            let seq_name = std::str::from_utf8(record.name())?;
+            graph.add_msa_sequence(seq_name, seq, &mut msa_nodes_cover)?;
+            
+            last_len = Some(seq.len());
+        }
+        
+        Ok(graph)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -453,10 +502,6 @@ where
         self.graph.node_weight_mut(node).unwrap()
     }
     
-    pub fn get_node_symbol(&self, node: POANodeIndex<Ix>, pos: usize) -> u8 {
-        self.graph.node_weight(node).unwrap().sequence[pos]
-    }
-    
     pub fn get_nodes(&self) -> impl Iterator<Item = POANodeIndex<Ix>> + '_ {
         self.graph.node_indices()
     }
@@ -465,9 +510,62 @@ where
         &self.sequences
     }
     
+    /// Get the path through the graph for a particular sequence
+    pub fn path_for_sequence(&self, seq_id: usize) -> Vec<POANodeIndex<Ix>> {
+        // TODO: make this into an iterator
+        let start_node = self.sequences[seq_id].start_node();
+        let mut path = vec![start_node];
+        
+        loop {
+            let last_node = path.last().unwrap();
+            let next_node = self.graph.neighbors(*last_node)
+                .find(|v| {
+                    let edge = self.graph.find_edge(*last_node, *v).unwrap();
+                    
+                    self.graph.edge_weight(edge).unwrap()
+                        .sequence_ids
+                        .binary_search(&seq_id)
+                        .is_ok()
+                });
+            
+            let Some(next_node) = next_node else {
+                break;
+            };
+            
+            if next_node == self.end_node {
+                break;
+            }
+            
+            path.push(next_node);
+        }
+        
+        path
+    }
+    
+    /// Concatenate the sequence of a path through the graph
+    pub fn path_sequence(&self, path: impl IntoIterator<Item=POANodeIndex<Ix>>) -> Result<Vec<u8>, GraphError<Ix>> {
+        let mut seq = Vec::new();
+        
+        let mut last = None;
+        for node in path.into_iter() {
+            if let Some(p) = last {
+                if self.graph.find_edge(p, node).is_none() {
+                    return Err(GraphError::InvalidEdge(p, node));
+                }
+            }
+            
+            let node_data = self.node_data(node);
+            seq.extend(node_data.sequence.iter());
+            
+            last = Some(node);
+        }
+        
+        Ok(seq)
+    }
+    
     pub fn add_node(&mut self, sequence: Vec<u8>) -> graph_impl::POANodeIndex<Ix> {
-        let node = graph_impl::POANodeData::new(sequence);
-        self.graph.add_node(node)
+        let node_data = graph_impl::POANodeData::new(sequence);
+        self.add_node_with_data(node_data)
     }
 
     pub fn add_node_with_weights(
@@ -475,15 +573,23 @@ where
         sequence: Vec<u8>,
         weights: Vec<usize>,
     ) -> POANodeIndex<Ix> {
-        let node = POANodeData::new_with_weights(sequence, weights);
-        self.graph.add_node(node)
+        let node_data = POANodeData::new_with_weights(sequence, weights);
+        self.add_node_with_data(node_data)
     }
     
     fn add_node_with_data(
         &mut self,
         node_data: POANodeData<Ix>,
     ) -> POANodeIndex<Ix> {
-        self.graph.add_node(node_data)
+        let new_ix = self.graph.add_node(node_data);
+        
+        if self.is_empty() {
+            self.graph.remove_edge(self.graph.find_edge(self.start_node, self.end_node).unwrap());
+            self.graph.add_edge(self.start_node, new_ix, POAEdgeData::new_with_seq_id(self.sequences.len()));
+            self.graph.add_edge(new_ix, self.end_node, POAEdgeData::new_with_seq_id(self.sequences.len()));
+        }
+        
+        new_ix
     }
     
     pub fn add_aligned_sequence(
@@ -505,15 +611,8 @@ where
         if self.is_empty() {
             // Make sure mutable borrow of the graph ends at the block, before calling post process.
             {
-                let new_seq_id = self.sequences.len();
                 let new_node = self.add_node_with_weights(sequence.as_ref().to_vec(), weights.as_ref().to_vec());
                 self.sequences.push(Sequence(sequence_name.to_string(), new_node));
-                
-                let edge_to_temove = self.graph.find_edge(self.start_node, self.end_node).unwrap();
-                self.graph.remove_edge(edge_to_temove);
-                
-                self.graph.add_edge(self.start_node, new_node, POAEdgeData::new_with_seq_id(new_seq_id));
-                self.graph.add_edge(new_node, self.end_node, POAEdgeData::new_with_seq_id(new_seq_id));
             }
             
             self.post_process(&nodes_split)?;
@@ -821,6 +920,308 @@ where
         pred
     }
     
+    /// Add a new sequence to graph originating from a FASTA MSA
+    fn add_msa_sequence(
+        &mut self, 
+        seq_name: &str, 
+        seq: &[u8], 
+        msa_nodes_cover: &mut MSANodeCover<Ix>,
+    ) -> Result<(), GraphError<Ix>> {
+        // First transform aligned sequence to blocks
+        let aln: Vec<_> = seq.iter().enumerate()
+            .map(|(col, &nuc)| {
+                if nuc == b'-' {
+                    (col, None, AlignmentClassification::Deletion)
+                } else if !msa_nodes_cover.has_nodes_covering_col(col) {
+                    (col, None, AlignmentClassification::Insertion)
+                } else {
+                    msa_nodes_cover.has_match(self, col, nuc)
+                        .map(|node_pos| (col, Some(node_pos), AlignmentClassification::Match))
+                        .unwrap_or((col, None, AlignmentClassification::Mismatch(None)))
+                }
+            })
+            .collect();
+        
+        let mut curr_block_start = 0;
+        let mut prev_state = AlignmentClassification::Start;
+        let mut pred = None;
+        let mut prev_match_node: Option<POANodeIndex<Ix>> = None;
+        let mut start_node = None;
+        let mut nodes_added = Vec::new();
+        let mut nodes_split = SplitTracker::default();
+        for (qpos, npos, curr_state) in &aln {
+            match (prev_state, *curr_state) {
+                (AlignmentClassification::Start, _) => {
+                    // Start of the sequence, do nothing
+                },
+                
+                (AlignmentClassification::Match, AlignmentClassification::Match) => {
+                    // Check if the match is on the same node
+                    if prev_match_node.is_some() && prev_match_node != npos
+                        .map(|p| nodes_split.to_new_node_pos(p).node())
+                    {
+                        // Matches on a different node, start a new block
+                        pred = Some(self.process_msa_matches(
+                            &aln[curr_block_start..*qpos],
+                            pred, 
+                            &mut nodes_split,
+                            msa_nodes_cover,
+                        ));
+                        
+                        curr_block_start = *qpos;
+                        
+                        if start_node.is_none() {
+                            start_node = pred;
+                        }
+                    }
+                },
+                
+                (AlignmentClassification::Mismatch(_), AlignmentClassification::Mismatch(_)) 
+                | (AlignmentClassification::Deletion, AlignmentClassification::Deletion)
+                | (AlignmentClassification::Insertion, AlignmentClassification::Insertion)
+                => {
+                    // Simply continue
+                }
+                
+                // Processed a block of matches
+                (AlignmentClassification::Match, AlignmentClassification::Mismatch(_))
+                | (AlignmentClassification::Match, AlignmentClassification::Deletion)
+                | (AlignmentClassification::Match, AlignmentClassification::Insertion)
+                => {
+                    pred = Some(self.process_msa_matches(&aln[curr_block_start..*qpos], pred, &mut nodes_split, msa_nodes_cover));
+                    curr_block_start = *qpos;
+                    
+                    if start_node.is_none() {
+                        start_node = pred;
+                    }
+                },
+                
+                // Processed a block of mismatches
+                (AlignmentClassification::Mismatch(_), AlignmentClassification::Match)
+                | (AlignmentClassification::Mismatch(_), AlignmentClassification::Deletion)
+                | (AlignmentClassification::Mismatch(_), AlignmentClassification::Insertion)
+                => {
+                    pred = Some(self.process_msa_mismatches(
+                        &seq[curr_block_start..*qpos], 
+                        &aln[curr_block_start..*qpos],
+                        pred, 
+                        &mut nodes_added,
+                        msa_nodes_cover
+                    ));
+                    curr_block_start = *qpos;
+                    
+                    if start_node.is_none() {
+                        start_node = pred;
+                    }
+                },
+                
+                (AlignmentClassification::Insertion, AlignmentClassification::Match)
+                | (AlignmentClassification::Insertion, AlignmentClassification::Mismatch(_))
+                | (AlignmentClassification::Insertion, AlignmentClassification::Deletion)
+                => {
+                    pred = Some(self.process_msa_insertion(
+                        &seq[curr_block_start..*qpos], 
+                        &aln[curr_block_start..*qpos], 
+                        pred,
+                        &mut nodes_added
+                    ));
+                    curr_block_start = *qpos;
+                    
+                    if start_node.is_none() {
+                        start_node = pred;
+                    }
+                },
+                
+                (AlignmentClassification::Deletion, AlignmentClassification::Match)
+                | (AlignmentClassification::Deletion, AlignmentClassification::Mismatch(_))
+                | (AlignmentClassification::Deletion, AlignmentClassification::Insertion)
+                => {
+                    // Ignore deletions
+                    curr_block_start = *qpos;
+                },
+                    
+                (_, AlignmentClassification::Start) => 
+                    panic!("Invalid state transition to AlignmentClassification::Start.")
+            }
+            
+            if *curr_state == AlignmentClassification::Match {
+                prev_match_node = Some(nodes_split.to_new_node_pos(npos.unwrap()).node());
+            } else {
+                prev_match_node = None;
+            }
+            
+            prev_state = *curr_state;
+        }
+        
+        // Process the last block
+        if curr_block_start < aln.len() {
+            match aln[curr_block_start].2 {
+                AlignmentClassification::Match => {
+                    pred = Some(self.process_msa_matches(
+                        &aln[curr_block_start..], 
+                        pred, 
+                        &mut nodes_split,
+                        msa_nodes_cover
+                    ));
+                    
+                    if start_node.is_none() {
+                        start_node = pred;
+                    }
+                },
+                
+                AlignmentClassification::Mismatch(_) => {
+                    pred = Some(self.process_msa_mismatches(
+                        &seq[curr_block_start..], 
+                        &aln[curr_block_start..], 
+                        pred, 
+                        &mut nodes_added,
+                        msa_nodes_cover
+                    ));
+                    
+                    if start_node.is_none() {
+                        start_node = pred;
+                    }
+                },
+                
+                AlignmentClassification::Insertion => {
+                    pred = Some(self.process_msa_insertion(
+                        &seq[curr_block_start..], 
+                        &aln[curr_block_start..], 
+                        pred, 
+                        &mut nodes_added
+                    ));
+                    
+                    if start_node.is_none() {
+                        start_node = pred;
+                    }
+                },
+                
+                AlignmentClassification::Deletion => {
+                    // Ignore deletions
+                },
+                
+                AlignmentClassification::Start => 
+                    panic!("Invalid state at the end of the alignment.")
+            }
+        }
+        
+        self.sequences.push(Sequence(seq_name.to_string(), start_node.unwrap()));
+        
+        // Update the nodes per MSA col with newly added nodes
+        for (astart, aend, node) in nodes_added {
+            msa_nodes_cover.add_node(node, astart..aend);
+        }
+        
+        self.post_process(&nodes_split)?;
+        
+        Ok(())
+    }
+    
+    fn process_msa_matches(
+        &mut self, 
+        aln: &[(usize, Option<POANodePos<Ix>>, AlignmentClassification<Ix>)], 
+        pred: Option<POANodeIndex<Ix>>,
+        nodes_split: &mut SplitTracker<Ix>,
+        msa_nodes_cover: &mut MSANodeCover<Ix>
+    ) -> POANodeIndex<Ix> {
+        let new_seq_id = self.sequences.len();
+        
+        let node_pos_start = nodes_split.to_new_node_pos(aln[0].1.unwrap());
+        if node_pos_start.pos() > 0 {
+            let (left_node, right_node) = self.split_node_at(node_pos_start.node(), node_pos_start.pos());
+            nodes_split.add_split(node_pos_start.node(), node_pos_start.pos(), left_node, right_node);
+            msa_nodes_cover.split_node(node_pos_start.node(), node_pos_start.pos(), left_node, right_node);
+        }
+        
+        if let Some(p) = pred {
+            let new = nodes_split.to_new_node_pos(node_pos_start);
+            if let Some(e) = self.graph.find_edge(p, new.node()) {
+                self.graph.edge_weight_mut(e).unwrap().sequence_ids.push(new_seq_id);
+            } else {
+                self.graph.add_edge(p, new.node(), POAEdgeData::new_with_seq_id(new_seq_id));
+            }
+        }
+        
+        let last_node_pos = nodes_split.to_new_node_pos(aln.last().unwrap().1.unwrap());
+        let last_node_seq_len = self.graph.node_weight(last_node_pos.node()).unwrap().sequence.len();
+        if last_node_pos.pos() < last_node_seq_len - 1 {
+            let (left_node, right_node) = self.split_node_at(last_node_pos.node(), last_node_pos.pos()+1);
+            nodes_split.add_split(last_node_pos.node(), last_node_pos.pos() + 1, left_node, right_node);
+            msa_nodes_cover.split_node(last_node_pos.node(), last_node_pos.pos() + 1, left_node, right_node);
+            
+            left_node
+        } else {
+            last_node_pos.node()
+        }
+    }
+    
+    fn process_msa_mismatches(
+        &mut self, 
+        seq: &[u8],
+        aln: &[(usize, Option<POANodePos<Ix>>, AlignmentClassification<Ix>)], 
+        pred: Option<POANodeIndex<Ix>>,
+        nodes_added: &mut Vec<(usize, usize, POANodeIndex<Ix>)>,
+        msa_nodes_cover: &mut MSANodeCover<Ix>,
+    ) -> POANodeIndex<Ix> {
+        let new_seq_id = self.sequences.len();
+        let mut new_node_data = POANodeData::new(seq.to_vec());
+        
+        // Construct aligned intervals pointing to other nodes
+        let mut aln_ivals: HashMap<POANodeIndex<Ix>, AlignedInterval<Ix>> = HashMap::default();
+        for (i, (qpos, _, _)) in aln.iter().enumerate() {
+            for node_pos in msa_nodes_cover.get_nodes_for_col(*qpos) {
+                aln_ivals.entry(node_pos.node())
+                    .and_modify(|v| v.increase_length(1))
+                    .or_insert_with(|| {
+                        AlignedInterval::new(i, 1, node_pos.node(), node_pos.pos())
+                    });
+            }
+        }
+        
+        for ival in aln_ivals.values() {
+            new_node_data.aligned_intervals.push(*ival);
+        }
+        
+        let new_node_ix = self.add_node_with_data(new_node_data);
+        
+        // Add aligned intervals in other nodes pointing to the new node
+        for (other, ival) in aln_ivals.iter() {
+            let other_node_data = self.graph.node_weight_mut(*other).unwrap();
+            
+            let flipped = ival.flip_nodes(new_node_ix);
+            other_node_data.aligned_intervals.push(flipped);
+        }
+
+        // Update which nodes cover which portions of the MSA
+        nodes_added.push((aln[0].0, aln.last().unwrap().0 + 1, new_node_ix));
+        
+        if let Some(p) = pred {
+            self.graph.add_edge(p, new_node_ix, POAEdgeData::new_with_seq_id(new_seq_id));
+        }
+        
+        new_node_ix
+    }
+    
+    fn process_msa_insertion(
+        &mut self,
+        seq: &[u8],
+        aln: &[(usize, Option<POANodePos<Ix>>, AlignmentClassification<Ix>)],
+        pred: Option<POANodeIndex<Ix>>,
+        nodes_added: &mut Vec<(usize, usize, POANodeIndex<Ix>)>
+    ) -> POANodeIndex<Ix> {
+        let new_seq_id = self.sequences.len();
+        let new_node_data = POANodeData::new(seq.to_vec());
+        let new_node = self.add_node_with_data(new_node_data);
+        
+        if let Some(p) = pred {
+            self.graph.add_edge(p, new_node, POAEdgeData::new_with_seq_id(new_seq_id));
+        }
+        
+        nodes_added.push((aln[0].0, aln.last().unwrap().0 + 1, new_node));
+        
+        new_node
+    }
+    
     fn post_process(&mut self, nodes_split: &SplitTracker<Ix>) -> Result<(), GraphError<Ix>> {
         let mut to_remove = Vec::new();
         for e in self.graph.edges(self.start_node) {
@@ -985,14 +1386,16 @@ where
             other_node_data.aligned_intervals = new_aln_ivals;
         }
         
-        // Add internal edge from left node -> right node retaining all sequence ids except the newly added sequence
-        let mut seq_ids = Vec::default();
-        for in_edge in self.graph.edges_directed(node, Incoming) {
-            seq_ids.extend(in_edge.weight().sequence_ids
-                .iter()
-                .filter(|v| **v != self.sequences.len())
-            );
-        }
+        // Add internal edge from left node -> right node retaining all incoming sequence ids except the newly added sequence
+        // Use itertools::kmerge to ensure edge sequence IDs remain sorted
+        let seq_ids: Vec<_> = itertools::kmerge(
+            self.graph.edges_directed(node, Incoming)
+                .map(|e| {
+                    e.weight().sequence_ids.iter()
+                        .copied()
+                        .filter(|v| *v != self.sequences.len())
+                })
+        ).collect();
         debug!("SPLIT: seq ids in {:?}", seq_ids);
         
         self.graph
@@ -1193,7 +1596,7 @@ pub(crate) struct SplitTracker<Ix>
 where 
     Ix: IndexType
 {
-    split_nodes: FxHashMap<POANodeIndex<Ix>, (usize, POANodeIndex<Ix>, POANodeIndex<Ix>)>
+    split_nodes: HashMap<POANodeIndex<Ix>, (usize, POANodeIndex<Ix>, POANodeIndex<Ix>)>
 }
 
 impl<Ix> SplitTracker<Ix> 
@@ -1220,6 +1623,11 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::{fs::File, io::{self, BufReader}};
+
+    use tracing::{span, Level};
+    use noodles::fasta;
+
     use crate::{aligner::utils::AlignedPair, graph::{alignment::POANodePos, poa::{graph_impl::AlignedInterval, SplitTracker}}};
 
     use super::POASeqGraph;
@@ -1686,6 +2094,42 @@ mod tests {
             assert_eq!(&node_data.sequence, seq_truth[rank]);
             assert_eq!(&node_data.weights, w_truth[rank]);
         }
+    }
+    
+    #[test]
+    fn test_from_msa() {
+        tracing_subscriber::FmtSubscriber::builder()
+            .with_writer(io::stderr)
+            .with_file(false)
+            .init();
+        
+        span!(Level::DEBUG, "test_from_msa");
+        
+        let mut file = File::open("../tests/test2_from_abpoa.truth.fa")
+            .map(BufReader::new).unwrap();
+        
+        let graph = POASeqGraph::<u32>::try_from_fasta_msa(&mut file).unwrap();
+        drop(file);
+        
+        let mut reader = File::open("../tests/test2_from_abpoa.fa")
+            .map(BufReader::new)
+            .map(fasta::Reader::new)
+            .unwrap();
+        
+        for (seq_id, record) in reader.records().enumerate() {
+            let r = record.unwrap();
+            
+            let seq_path = graph.path_for_sequence(seq_id);
+            let seq = graph.path_sequence(seq_path).unwrap();
+            
+            assert_eq!(&seq, r.sequence().as_ref());
+        }
+        
+        let path_seq1 = graph.path_for_sequence(0);
+        let node_data = graph.node_data(path_seq1[4]);
+        assert_eq!(node_data.aligned_intervals.len(), 1);
+        assert_eq!(node_data.aligned_intervals[0].other_start(), 0);
+        assert_eq!(graph.node_data(node_data.aligned_intervals[0].other()).sequence, b"C");
     }
 }
 

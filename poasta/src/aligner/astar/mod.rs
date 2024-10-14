@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 
 use crate::errors::PoastaError;
 use heuristic::AstarHeuristic;
-use tracing::{debug, debug_span, span, Level};
+use tracing::{debug, span, Level};
 use super::utils::AlignedPair;
 use super::{fr_points::Score, AlignmentMode};
 

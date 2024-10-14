@@ -17,6 +17,9 @@ where
     /// Error variant when the graph contains a cycle
     CycleError(Cycle<POANodeIndex<Ix>>),
     
+    /// Path contains an invalid edge
+    InvalidEdge(POANodeIndex<Ix>, POANodeIndex<Ix>),
+    
     /// Error when a required alignment is not present
     EmptyAlignment,
 }
@@ -42,6 +45,7 @@ where
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::CycleError(cycle) => write!(f, "The graph contains a cycle: {:?} visited twice.", cycle.node_id()),
+            Self::InvalidEdge(u, v) => write!(f, "Invalid edge between nodes {:?} and {:?}.", u, v),
             Self::EmptyAlignment => write!(f, "Alignment required when adding a sequence to a non-empty graph."),
         }
     }
@@ -51,7 +55,9 @@ where
 pub enum PoastaIOError {
     FileReadError { source: io::Error },
     FileWriteError { source: io::Error },
-    OtherError { source: io::Error }
+    OtherError { source: io::Error },
+    InvalidFormat,
+    InvalidUtf8 { source: std::str::Utf8Error },
 }
 
 impl Error for PoastaIOError {
@@ -60,6 +66,8 @@ impl Error for PoastaIOError {
             Self::FileReadError { ref source } => Some(source),
             Self::FileWriteError { ref source } => Some(source),
             Self::OtherError { ref source } => Some(source),
+            Self::InvalidFormat => None,
+            Self::InvalidUtf8 { ref source } => Some(source)
         }
     }
 }
@@ -70,6 +78,8 @@ impl Display for PoastaIOError {
             Self::FileReadError { source } => write!(f, "Error reading file: {}", source),
             Self::FileWriteError { source } => write!(f, "Error writing file: {}", source),
             Self::OtherError { source } => write!(f, "Other IO error: {}", source),
+            Self::InvalidFormat => write!(f, "Invalid file format or invalid alignment."),
+            Self::InvalidUtf8 { source } => write!(f, "Could not read utf-8 string: {}", source),
         }
     }
 }
@@ -80,14 +90,27 @@ impl From<io::Error> for PoastaIOError {
     }
 }
 
+impl<Ix> From<GraphError<Ix>> for PoastaIOError 
+where
+    Ix: IndexType,
+{
+    fn from(_: GraphError<Ix>) -> Self {
+        Self::InvalidFormat
+    }
+}
 
+impl From<std::str::Utf8Error> for PoastaIOError {
+    fn from(v: std::str::Utf8Error) -> Self {
+        Self::InvalidUtf8 { source: v }
+    }
+}
 
 #[derive(Debug)]
 pub enum PoastaError {
     /// The size of the weights vector is not equal to the length of the sequence
     WeightsUnequalSize(usize, usize),
 
-    /// The alignment did not include any valid positions
+    /// The alignment is invalid
     InvalidAlignment,
 
     /// Error variant when something went wrong in the alignment

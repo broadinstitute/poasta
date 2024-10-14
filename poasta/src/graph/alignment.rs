@@ -5,7 +5,7 @@ use petgraph::graph::IndexType;
 
 use tracing::debug;
 
-use crate::aligner::astar::AlignableGraphNodePos;
+use crate::aligner::astar::{AlignableGraph, AlignableGraphNodePos};
 use crate::aligner::utils::AlignedPair;
 
 use super::poa::{POANodeIndex, POASeqGraph, SplitTracker};
@@ -297,7 +297,7 @@ where
         match (node, query_pos) {
             (Some(n), Some(q)) => {
                 let node_pos = pair.within_node_pos().unwrap();
-                let node_symbol = graph.get_node_symbol(n, node_pos);
+                let node_symbol = graph.get_node_symbol(pair.node_pos().unwrap());
                 let query_symbol = seq[q];
                 
                 if node_symbol == query_symbol {
