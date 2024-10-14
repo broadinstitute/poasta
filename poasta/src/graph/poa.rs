@@ -1,4 +1,3 @@
-use std::fs::File;
 use std::io::BufRead;
 use std::ops::{Range, RangeBounds, Bound};
 
@@ -16,7 +15,6 @@ use crate::aligner::astar::{AlignableGraphNodeId, AlignableGraph, AlignableGraph
 use crate::aligner::utils::AlignedPair;
 use crate::errors::{GraphError, PoastaIOError};
 use crate::graph::alignment::AlignmentBlockType;
-use crate::graph::io::dot::graph_to_dot;
 
 use super::alignment::{AlignmentBlocks, AlignmentClassification, POANodePos};
 use super::io::fasta::MSANodeCover;

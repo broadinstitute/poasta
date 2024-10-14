@@ -42,12 +42,12 @@ where
         S: AsRef<[u8]>;
 }
 
-pub struct PoastaAligner<C, H, G, D = i32, O = u32> {
+pub struct PoastaAligner<H, D, O, C, G> {
     cost_model: C,
-    dummy: PhantomData<(H, G, D, O)>,
+    dummy: PhantomData<(H, D, O, G)>,
 }
 
-impl<C, H, G, D, O> PoastaAligner<C, H, G, D, O>
+impl<H, D, O, C, G> PoastaAligner<H, D, O, C, G>
 where
     C: AlignmentCostModel,
     H: AstarHeuristic<
@@ -93,7 +93,7 @@ where
     }
 }
 
-impl<G, C, H, D, O> GraphAligner<G> for PoastaAligner<C, H, G, D, O>
+impl<H, D, O, C, G> GraphAligner<G> for PoastaAligner<H, D, O, C, G>
 where
     C: AlignmentCostModel,
     H: AstarHeuristic<
@@ -138,7 +138,7 @@ mod tests {
         let cost_model = Affine::new(4, 6, 2);
         let mut graph = POASeqGraph::<u32>::new();
 
-        let aligner = PoastaAligner::<Affine, Dijkstra, _, i32, u32>::new(cost_model);
+        let aligner = PoastaAligner::<Dijkstra, i32, u32, _, _>::new(cost_model);
 
         let mut reader = File::open("tests/test2_from_abpoa.fa")
             .map(BufReader::new)
@@ -182,7 +182,5 @@ mod tests {
                     .unwrap();
             }
         }
-
-        assert!(false);
     }
 }
