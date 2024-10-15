@@ -1,8 +1,9 @@
 use std::error::Error;
 use std::fs::File;
-use std::io::BufReader;
-use std::io::{self, BufWriter, IsTerminal, Write};
 use std::path::Path;
+use std::io::{self, IsTerminal, BufReader};
+#[cfg(feature = "debug_output")]
+use std::io::{BufWriter, Write};
 
 use clap::Parser;
 use flate2::read::MultiGzDecoder;
@@ -21,7 +22,7 @@ use poasta::aligner::utils::print_alignment;
 use poasta::aligner::{AlignmentMode, GraphAligner};
 use poasta::errors::PoastaError;
 #[cfg(feature = "debug_output")]
-use poasta::graph::dot::graph_to_dot;
+use poasta::graph::io::dot::graph_to_dot;
 use poasta::graph::poa::{IndexType, POASeqGraph};
 
 mod cli;
@@ -44,7 +45,7 @@ fn build_base_subscriber() -> impl Subscriber + for<'span> LookupSpan<'span> {
         .with_target(false)
         .with_file(false)
         .with_writer(io::stderr)
-        .with_ansi(!io::stderr().is_terminal())
+        .with_ansi(io::stderr().is_terminal())
         .with_filter(align_state_filter())
         .with_filter(filter_layer);
 
