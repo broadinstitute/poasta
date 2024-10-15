@@ -625,7 +625,7 @@ where
 
     fn ensure_space(&mut self, diag: Diag<D>) {
         if self.is_empty() {
-            self.diagonals.push_back(O::default());
+            self.diagonals.resize(8, O::default());
             self.kmin = diag;
             return;
         }
@@ -674,7 +674,7 @@ where
 
         let ix = (diag - self.kmin).as_usize();
 
-        if !self.is_visited(diag) && self.diagonals[ix] < offset {
+        if self.diagonals[ix] < offset {
             self.diagonals[ix] = offset;
             true
         } else {
@@ -737,7 +737,7 @@ where
 
     fn ensure_space(&mut self, score: Score) {
         if self.is_empty() {
-            self.fr_points.push_back(Diagonals::default());
+            self.fr_points.resize(8, Diagonals::default());
             self.score_min = score;
             return;
         }
