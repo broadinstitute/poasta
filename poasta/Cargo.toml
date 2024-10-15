@@ -6,7 +6,6 @@ authors = { workspace = true }
 description = { workspace = true }
 
 [dependencies]
-fixedbitset = "0.5.7"
 flate2 = "1.0.34"
 num = { version = "~0.4" }
 petgraph = { version = "~0.6", features = ["serde-1"] }

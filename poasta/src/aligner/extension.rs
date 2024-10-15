@@ -1,6 +1,6 @@
 use super::{
     astar::AlignableGraph,
-    fr_points::{to_node_pos, Diag, DiagType, OffsetType},
+    fr_points::{to_node_pos, Diag, DiagType, PosType},
 };
 
 /// SIMD-accelerated longest common prefix length calculator
@@ -37,7 +37,7 @@ pub fn extend<G, D, O>(
 where
     G: AlignableGraph,
     D: DiagType,
-    O: OffsetType,
+    O: PosType,
 {
     let node_seq = graph.node_seq(node);
     let node_len = graph.node_len(node);

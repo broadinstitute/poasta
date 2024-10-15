@@ -2,7 +2,7 @@ use std::{marker::PhantomData, ops::Bound};
 
 use astar::{heuristic::AstarHeuristic, AlignableGraph, Astar, AstarResult, AstarState};
 use cost_models::AlignmentCostModel;
-use fr_points::{DiagType, OffsetType};
+use fr_points::{DiagType, PosType};
 
 use crate::errors::PoastaError;
 
@@ -56,7 +56,7 @@ where
     >,
     G: AlignableGraph,
     D: DiagType,
-    O: OffsetType,
+    O: PosType,
 {
     pub fn new(cost_model: C) -> Self {
         Self {
@@ -102,7 +102,7 @@ where
     >,
     G: AlignableGraph,
     D: DiagType,
-    O: OffsetType,
+    O: PosType,
 {
     fn align<S>(
         &self,
@@ -140,7 +140,7 @@ mod tests {
 
         let aligner = PoastaAligner::<Dijkstra, i32, u32, _, _>::new(cost_model);
 
-        let mut reader = File::open("tests/test2_from_abpoa.fa")
+        let mut reader = File::open("../tests/test2_from_abpoa.fa")
             .map(BufReader::new)
             .map(fasta::Reader::new)
             .unwrap();
@@ -161,7 +161,7 @@ mod tests {
             } else {
                 {
                     let mut writer =
-                        File::create(format!("tests/output/graph_for_{}.dot", name)).unwrap();
+                        File::create(format!("../tests/output/graph_for_{}.dot", name)).unwrap();
                     graph_to_dot(&mut writer, &graph).unwrap();
                 }
 
