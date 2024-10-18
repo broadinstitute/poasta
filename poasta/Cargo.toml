@@ -1,0 +1,22 @@
+[package]
+name = "poasta"
+edition = { workspace = true }
+version = { workspace = true }
+authors = { workspace = true }
+description = { workspace = true }
+
+[dependencies]
+flate2 = "1.0.34"
+num = { version = "~0.4" }
+petgraph = { version = "~0.6", features = ["serde-1"] }
+tracing = { version = "0.1.40" }
+noodles = { version = "~0.83", features = ["fasta", "fastq"] }
+itertools = "0.13.0"
+foldhash = "0.1.3"
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3.18" }
+
+[features]
+default = ["optimize_logging"]
+optimize_logging = ["tracing/release_max_level_info"]

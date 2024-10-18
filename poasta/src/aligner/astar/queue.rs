@@ -13,6 +13,28 @@ pub trait QueueLayer : Default + Clone {
     fn capacity(&self) -> usize;
 }
 
+impl<T> QueueLayer for Vec<T>
+    where T: Clone + Debug
+{
+    type QueueItem = T;
+    
+    fn queue(&mut self, item: Self::QueueItem) {
+        self.push(item);
+    }
+    
+    fn pop(&mut self) -> Option<Self::QueueItem> {
+        self.pop()
+    }
+    
+    fn is_empty(&self) -> bool {
+        self.is_empty()
+    }
+    
+    fn capacity(&self) -> usize {
+        self.capacity()
+    }
+}
+
 /// Layered (bucket) queue of items
 ///
 /// The layer number represents the priority of the queued item.
@@ -84,27 +106,7 @@ impl<L> Default for LayeredQueue<L>
 
 #[cfg(test)]
 mod tests {
-    use crate::aligner::queue::{LayeredQueue, QueueLayer};
-
-    impl QueueLayer for Vec<usize> {
-        type QueueItem = usize;
-
-        fn queue(&mut self, item: Self::QueueItem) {
-            self.push(item);
-        }
-
-        fn pop(&mut self) -> Option<Self::QueueItem> {
-            self.pop()
-        }
-
-        fn is_empty(&self) -> bool {
-            self.is_empty()
-        }
-
-        fn capacity(&self) -> usize {
-            self.capacity()
-        }
-    }
+    use super::LayeredQueue;
 
     #[test]
     fn test_layered_queue() {
