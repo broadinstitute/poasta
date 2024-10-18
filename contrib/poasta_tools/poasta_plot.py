@@ -9,13 +9,12 @@ import re
 import sys
 import argparse
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas
 import matplotlib.pyplot as plt
-from matplotlib.collections import PatchCollection
 from matplotlib.patches import Rectangle
-from matplotlib.transforms import IdentityTransform
 import seaborn
 import networkx as nx
 
@@ -24,10 +23,18 @@ def load_visited_states(fname):
     visited_df = pandas.read_csv(fname, sep='\t')
     visited_df['node_pos'] = visited_df['offset'] - visited_df['diag']
 
-    for col in ['node_pos', 'offset', 'diag', 'score', 'node']:
-        visited_df[col] = pandas.to_numeric(visited_df[col], downcast='signed')
+    cols_to_convert = [
+        ('node_pos', np.uint32),
+        ('offset', np.uint32),
+        ('diag', np.int32),
+        ('score', np.uint32),
+        ('node', np.uint32)
+    ]
 
-    visited_df = visited_df.set_index(['state', 'node']).sort_index()
+    for col, dtype in cols_to_convert:
+        visited_df[col] = pandas.to_numeric(visited_df[col]).astype(dtype)
+
+    visited_df = visited_df.sort_values(['state', 'node', 'node_pos', 'offset', 'score'])
 
     return visited_df
 
@@ -35,7 +42,7 @@ def load_visited_states(fname):
 label_regexp = re.compile(r"<font.*>([\w\#\$]+)</font>")
 
 
-def load_graph(fname):
+def load_graph(fname: str | Path):
     g = nx.nx_agraph.read_dot(fname)
 
     # Parse any key-value pairs in the comments
@@ -53,6 +60,14 @@ def load_graph(fname):
                 k, v = parts
                 g.graph[k.strip()] = v.strip()
 
+    # Remove any aligned interval edges
+    edges_to_delete = []
+    for u, v, data in g.edges(data=True):
+        if data.get('style') == "dotted":
+            edges_to_delete.append((u, v))
+
+    g.remove_edges_from(edges_to_delete)
+
     tsorted = list(nx.dfs_postorder_nodes(g))
     tsorted.reverse()
 
@@ -66,15 +81,47 @@ def load_graph(fname):
         g.nodes[n]['rank'] = rank
         print(g.nodes[n])
 
-    # Remove any aligned interval edges
-    edges_to_delete = []
-    for u, v, data in g.edges(data=True):
-        if data.get('style') == "dotted":
-            edges_to_delete.append((u, v))
-
-    g.remove_edges_from(edges_to_delete)
-
     return g, tsorted
+
+
+def compute_node_y(g, tsorted) -> dict[int, int]:
+    node_y = {int(tsorted[0]): 0}
+    for n in tsorted[1:]:
+        max_y_pred = max((pred for pred in map(int, g.predecessors(n))), key=node_y.get)
+        node_y[int(n)] = node_y[max_y_pred] + len(g.nodes[str(max_y_pred)]['label'])
+
+    return node_y
+
+
+def filter_visited(node_y: dict[str, int], offset_max: int, visited_df: pandas.DataFrame,
+                   x_range: str | None, y_range: str | None) -> pandas.DataFrame:
+    max_y = max(node_y.values()) + 1
+
+    to_return = visited_df
+    x_start = 0
+    x_end = offset_max
+    print("orig shape:", to_return.shape)
+    if x_range:
+        x_start, x_end = map(int, x_range.split(':', maxsplit=1))
+        if x_start < 0:
+            x_start = offset_max + x_start
+        if x_end < 0:
+            x_end = offset_max + x_end
+
+        to_return = to_return[(to_return['offset'] >= x_start) & (to_return['offset'] < x_end)]
+
+    if y_range:
+        y_start, y_end = map(int, y_range.split(':', maxsplit=1))
+        if y_start < 0:
+            y_start = max_y + y_start
+        if y_end < 0:
+            y_end = max_y + y_end
+
+        to_return = to_return[(to_return['y'] >= y_start) & (to_return['y'] < y_end)]
+
+    print("filtered shape:", to_return.shape)
+
+    return to_return, x_start, x_end
 
 
 def load_spoa_matrix(fname):
@@ -120,6 +167,11 @@ def main():
                         help="Output directory")
     parser.add_argument('-w', '--fig-width', default=None, required=False, type=int)
 
+    parser.add_argument('-x', '--x-range', default="", required=False, type=str,
+                        help="Range of x values to plot. Accepts python slicing notation.")
+    parser.add_argument('-y', '--y-range', default="", required=False, type=str,
+                        help="Range of y values to plot. Accepts python slicing notation.")
+
     args = parser.parse_args()
 
     if args.output is None:
@@ -135,27 +187,52 @@ def main():
         print("No sequence to align metadata in graph file...")
         return 1
 
+    node_y = compute_node_y(g, tsorted)
+
     seq = g.graph['seq_to_align']
     matrix_seq = f"-{seq} "
     seq_len = len(seq)
-    matrix_width = seq_len + 2
-    total_node_seq_len = sum(len(g.nodes[n]['label']) for n in tsorted)
-    xlabels = [f"{matrix_seq[i]}\n{i}" for i in range(matrix_width)]
-
-    fig_width = args.fig_width if args.fig_width is not None else int(round(matrix_width / 4))
-    fig_height = int(round((fig_width * total_node_seq_len) / matrix_width))
-    node_height_ratios = [len(g.nodes[n]['label']) for n in tsorted]
+    offset_max = seq_len + 2
+    xlabels = [f"{matrix_seq[i]}\n{i}" for i in range(offset_max)]
 
     print("Loading visited states...")
     visited = load_visited_states(args.visited)
+    visited['node_y'] = visited['node'].map(node_y)
+    visited['y'] = visited['node_y'] + visited['node_pos']
+    visited = visited.set_index(['state', 'node'])
+
+    invalid_visited = visited[visited['offset'] > offset_max]
+    if invalid_visited.shape[0] > 0:
+        print("WARNING: some visited states are out of range!")
+        print(invalid_visited)
+
     max_score = visited['score'].max()
     prefix = args.visited.stem.replace("_visited", "")
 
+    visited, x_start, x_end = filter_visited(node_y, offset_max, visited, args.x_range, args.y_range)
+    visited_nodes = set(visited.index.unique(level=1))
+    min_node_rank = min(g.nodes[str(n)]['rank'] for n in visited_nodes)
+    max_node_rank = max(g.nodes[str(n)]['rank'] for n in visited_nodes)
+    valid_nodes = tsorted[min_node_rank:max_node_rank+1]
+    print("Valid nodes", valid_nodes)
+
+    node_height_ratios = [len(g.nodes[n]['label']) for n in valid_nodes]
+    valid_nodes_len = sum(node_height_ratios)
+
+    matrix_width = x_end - x_start
+    xlabels = xlabels[x_start:x_end]
+    fig_width = args.fig_width if args.fig_width is not None else int(round(matrix_width / 4))
+    fig_height = int(round((fig_width * valid_nodes_len * 1.25) / matrix_width))
+
     align_states = ["Match", "Deletion", "Insertion"]
     for state in align_states:
+        if state not in visited.index.unique(level=0):
+            continue
+
         subdf = visited.loc[[state]]
 
         fig = plt.figure(figsize=(fig_width, fig_height), constrained_layout=True)
+        fig.get_layout_engine().set(hspace=0.00)
         gs = fig.add_gridspec(ncols=3, nrows=len(node_height_ratios),
                               height_ratios=node_height_ratios,
                               width_ratios=[1, 8, 0.25])
@@ -173,28 +250,31 @@ def main():
             node_axes[i].sharex(node_axes[-1])
 
         for node_ix in subdf.index.unique(level=1):
-            node_df = subdf.loc[(state, [node_ix]), :].sort_values('score')
+            node_df = subdf.loc[(state, [node_ix]), :]
+
             node_seq = g.nodes[str(node_ix)]['label']
             node_seq_len = len(node_seq)
-            node_rank = g.nodes[str(node_ix)]['rank']
             yticks = list(range(node_seq_len))
             yticklabels = [f"{node_seq[i]} - {i}" for i in yticks]
 
             indexed = node_df.reset_index().set_index(['node_pos', 'offset'])
             duplicated = indexed.index.duplicated(False)
             print("duplicated:")
-            print(indexed[duplicated].sort_index())
+            print(indexed[duplicated])
             deduplicated = indexed[~indexed.index.duplicated()]
+            print("num to plot:", len(deduplicated))
 
             # pivot = node_df.pivot(index="node_pos", columns="offset", values="score")
             pivot = deduplicated.reset_index().pivot(index='node_pos', columns='offset', values='score')
 
             # Ensure rows/cols exists even when no data exists for those
             rows = pivot.index.union(list(range(node_seq_len)), sort=True)
-            cols = pivot.columns.union(list(range(matrix_width)), sort=True)
+            cols = pivot.columns.union(list(range(x_start, x_end)), sort=True)
             pivot = pivot.reindex(index=rows, columns=cols).sort_index()
             pivot.sort_index(axis=1, inplace=True)
 
+            node_rank = g.nodes[str(node_ix)]['rank'] - min_node_rank
+            print("min_node_rank", min_node_rank, node_rank)
             node_axes[node_rank].grid('both')
             seaborn.heatmap(pivot,
                             cmap="turbo", vmin=0, vmax=max_score,
@@ -211,11 +291,11 @@ def main():
                 ax.xaxis.set_tick_params(labelbottom=False)
                 ax.set_xlabel('')
 
-        draw_graph(fig, graph_axes, node_axes, g)
+        draw_graph(fig, graph_axes, node_axes, g, min_node_rank, max_node_rank)
         fig.savefig(args.output / f'{prefix}.{state}.pdf', bbox_inches='tight')
 
 
-def draw_graph(fig, graph_axes, node_axes, g):
+def draw_graph(fig, graph_axes, node_axes, g, min_node_rank, max_node_rank):
     # First compute layout with `dot` to determine node x positions
     pos = nx.nx_agraph.graphviz_layout(g, prog='dot')
     min_x = min(p[0] for p in pos.values())
@@ -226,6 +306,10 @@ def draw_graph(fig, graph_axes, node_axes, g):
     fig_pos = {}
     for n, (x, y) in pos.items():
         rank = g.nodes[n]['rank']
+        if rank < min_node_rank or rank > max_node_rank:
+            continue
+
+        rank = rank - min_node_rank
         graph_axes[rank].set_xlim(min_x - node_width_half, max_x + node_width_half)
         graph_axes[rank].set_xticks([])
         graph_axes[rank].set_yticks([])
@@ -245,9 +329,16 @@ def draw_graph(fig, graph_axes, node_axes, g):
         ]
 
     for (u, v) in g.edges():
-        print((u, v))
         ranku = g.nodes[u]['rank']
         rankv = g.nodes[v]['rank']
+
+        if ranku < min_node_rank or ranku > max_node_rank:
+            continue
+        if rankv < min_node_rank or rankv > max_node_rank:
+            continue
+
+        ranku -= min_node_rank
+        rankv -= min_node_rank
 
         axu = graph_axes[ranku]
         transu = axu.get_xaxis_transform()
@@ -265,16 +356,6 @@ def draw_graph(fig, graph_axes, node_axes, g):
             arrowprops={"facecolor": "black", "width": 0.5, "headwidth": 8},
             in_layout=False
         )
-
-
-    # ax.set_axis_on()
-    # ax.yaxis.set_visible(True)
-    # ax.invert_yaxis()
-    # ax.tick_params(axis="y", left=True, labelleft=True)
-    # ax.set_ylim(0, len(graph_layout_data.ylabels))
-    # ax.set_yticks(graph_layout_data.yticks)
-    # ax.set_yticklabels(graph_layout_data.ylabels)
-    # ax.set_ylabel("Rank (node)")
 
 
 if __name__ == '__main__':
