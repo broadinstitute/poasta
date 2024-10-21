@@ -73,7 +73,7 @@ impl<'a, C> PoastaAligner<'a, C>
               G: AlignableRefGraph,
               Seq: AsRef<[u8]>,
     {
-        self.align_u8::<O, _>(ref_graph, seq.as_ref(), None)
+        self.align_u8::<O, _>(ref_graph, seq.as_ref(), None, true)
     }
 
     pub fn align_with_existing_bubbles<O, G, Seq>(
@@ -86,14 +86,27 @@ impl<'a, C> PoastaAligner<'a, C>
               G: AlignableRefGraph,
               Seq: AsRef<[u8]>,
     {
-        self.align_u8::<O, _>(ref_graph, seq.as_ref(), Some(existing_bubbles))
+        self.align_u8::<O, _>(ref_graph, seq.as_ref(), Some(existing_bubbles), true)
+    }
+    
+    pub fn align_no_pruning<O, G, Seq>(
+        &self,
+        ref_graph: &G,
+        seq: &Seq,
+    ) -> AstarResult<G::NodeIndex>
+        where O: OffsetType,
+              G: AlignableRefGraph,
+              Seq: AsRef<[u8]>,
+    {
+        self.align_u8::<O, _>(ref_graph, seq.as_ref(), None, false)
     }
 
     fn align_u8<O, G>(
         &self,
         ref_graph: &G,
         seq: &[u8],
-        existing_bubbles: Option<Rc<BubbleIndex<G::NodeIndex>>>
+        existing_bubbles: Option<Rc<BubbleIndex<G::NodeIndex>>>,
+        enable_pruning: bool,
     ) -> AstarResult<G::NodeIndex>
     where
         O: OffsetType,
@@ -106,6 +119,7 @@ impl<'a, C> PoastaAligner<'a, C>
             self.aln_type,
             self.debug_writer,
             existing_bubbles,
+            enable_pruning,
         )
     }
 }

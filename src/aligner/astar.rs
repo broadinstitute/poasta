@@ -111,7 +111,8 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
     seq: &[u8],
     aln_type: AlignmentType,
     debug_writer: Option<&DebugOutputWriter>,
-    existing_bubbles: Option<Rc<BubbleIndex<G::NodeIndex>>>
+    existing_bubbles: Option<Rc<BubbleIndex<G::NodeIndex>>>,
+    enable_pruning: bool,
 ) -> AstarResult<G::NodeIndex>
     where O: OffsetType,
           C: AlignmentConfig<Costs=Costs>,
@@ -153,7 +154,7 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
             break (score, aln_node);
         }
 
-        if visited_data.prune(score, &aln_node, aln_state) {
+        if enable_pruning && visited_data.prune(score, &aln_node, aln_state) {
             result.num_pruned += 1;
             continue;
         }

@@ -207,7 +207,6 @@ where
             let child_node = AlignmentGraphNode::new(child, child_offset);
 
             if self.ref_graph.is_symbol_equal(child, self.seq[child_offset.as_usize()-1]) {
-
                 if astar_visited
                     .update_score_if_lower(&child_node, AlignState::Match,
                                            parent.aln_graph_node(), AlignState::Match, self.score)
