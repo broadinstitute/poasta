@@ -50,11 +50,11 @@ impl<'a, V, N, O> ReachedBubbleExitsMatch<'a, V, N, O>
             return true;
         }
 
+        // j^min and j^max
         let target_offset_min = aln_node.offset() + O::new(bubble.min_dist_to_exit);
         let target_offset_max = aln_node.offset() + O::new(bubble.max_dist_to_exit);
+
         let min_dist_to_end = bubble_index.get_min_dist_to_end(bubble.bubble_exit)
-            .saturating_sub(1);
-        let max_dist_to_end = bubble_index.get_max_dist_to_end(bubble.bubble_exit)
             .saturating_sub(1);
 
         if target_offset_max.as_usize() > self.seq_len {
@@ -77,28 +77,47 @@ impl<'a, V, N, O> ReachedBubbleExitsMatch<'a, V, N, O>
                 |v| max(target_offset_min, *v + O::one())
             );
 
-            // Gap-affine and 2-piece alignment costs only:
-            // For the first reached bubble to the right of the current alignment state offset,
-            // we additionally check if the current state is already in deletion state and if extending that deletion
-            // can ultimately improve over a newly opened deletion from the bubble exit (that will incur the gap open cost).
-            if aln_state == AlignState::Deletion || aln_state == AlignState::Deletion2
-                && offset1 == target_offset_min
-            {
-                // Extend the gap as far as we can, such that we can still reach the query offset of the
-                // next reached bubble with match edges.
-                let num_required_match = *next_reached - aln_node.offset();
-                if num_required_match.as_usize() < max_dist_to_end {
-                    let gap_ext = max_dist_to_end - (*next_reached - aln_node.offset()).as_usize();
-                    let longest_deletion = bubble_index.get_max_dist_to_end(bubble.bubble_exit)
-                        .saturating_sub(1);
+            // Gap-affine and 2-piece alignment costs only.
+            // If already in a deletion or insertion state, we need to take into account that
+            // the current state under test would not have to incur the gap open cost again,
+            // while an implicitly opened gap from a reached Match state would.
+            if aln_state == AlignState::Deletion {
+                let next_reached_cost = self.visited.get_score(&AlignmentGraphNode::new(
+                    bubble.bubble_exit,
+                    *next_reached
+                ), AlignState::Match);
 
-                    let gap_cost_ext = self.visited.get_costs().gap_cost(aln_state, gap_ext);
-                    let gap_cost_open = self.visited.get_costs().gap_cost(AlignState::Match, longest_deletion);
+                if next_reached_cost + self.visited.get_costs().gap_open() > *current_score {
+                    return true
+                }
+            } else if aln_state == AlignState::Deletion2 {
+                let next_reached_cost = self.visited.get_score(&AlignmentGraphNode::new(
+                    bubble.bubble_exit,
+                    *next_reached
+                ), AlignState::Match);
 
-                    // eprintln!("INDEL Extension test: gap ext len: {gap_ext:?} (cost: {gap_cost_ext:?})");
-                    // eprintln!("INDEL Extension test: gap open len: {longest_deletion:?} (cost: {gap_cost_open:?})");
+                if next_reached_cost + self.visited.get_costs().gap_open2() > *current_score {
+                    return true
+                }
+            }
 
-                    if gap_cost_ext < gap_cost_open {
+            if let Some(prev) = prev_reached {
+                if aln_state == AlignState::Insertion {
+                    let prev_reached_cost = self.visited.get_score(&AlignmentGraphNode::new(
+                        bubble.bubble_exit,
+                        *prev
+                    ), AlignState::Match);
+
+                    if prev_reached_cost + self.visited.get_costs().gap_open() > *current_score {
+                        return true
+                    }
+                } else if aln_state == AlignState::Insertion2 {
+                    let prev_reached_cost = self.visited.get_score(&AlignmentGraphNode::new(
+                        bubble.bubble_exit,
+                        *prev
+                    ), AlignState::Match);
+
+                    if prev_reached_cost + self.visited.get_costs().gap_open2() > *current_score {
                         return true
                     }
                 }
@@ -119,31 +138,6 @@ impl<'a, V, N, O> ReachedBubbleExitsMatch<'a, V, N, O>
                     .can_improve_at_offset(bubble.bubble_exit, offset2, current_score, prev_reached, Some(next_reached), min_dist_to_end)
                 {
                     return true;
-                }
-            }
-
-            if aln_state == AlignState::Insertion || aln_state == AlignState::Insertion2 {
-                if let Some(offset_left) = prev_reached {
-                    // For gap-affine and 2-piece alignment costs only:
-                    // If the current alignment state is already in insertion state, check if this state
-                    // could ultimately improve over an existing bubble by extending this insertion
-                    // up until we reach `next_reached` with match edges
-                    let ext_end_offset = next_reached.as_usize() - bubble.max_dist_to_exit;
-                    if ext_end_offset > aln_node.offset().as_usize() {
-                        let gap_ext = (ext_end_offset - aln_node.offset().as_usize()).saturating_sub(1);
-                        let longest_insertion = (*next_reached - *offset_left).as_usize().saturating_sub(1);
-
-                        let gap_cost_ext = self.visited.get_costs().gap_cost(aln_state, gap_ext);
-                        let gap_cost_open = self.visited.get_costs().gap_cost(AlignState::Match, longest_insertion);
-
-                        // eprintln!("INS Extension test: gap ext len: {gap_ext:?} (cost: {gap_cost_ext:?})");
-                        // eprintln!("INS Extension test: gap open len: {longest_insertion:?} (cost: {gap_cost_open:?})");
-
-                        if gap_cost_ext < gap_cost_open {
-                            return true
-                        }
-
-                    }
                 }
             }
 
@@ -168,32 +162,29 @@ impl<'a, V, N, O> ReachedBubbleExitsMatch<'a, V, N, O>
             return true;
         }
 
-        if let Some(offset_left) = prev_reached {
-            if aln_state == AlignState::Insertion || aln_state == AlignState::Insertion2 {
-                // For gap-affine and 2-piece alignment costs only:
-                // If the current alignment state is already in insertion state, check if this state
-                // could ultimately improve over an existing bubble by extending this insertion as far as we can,
-                // such that we still can reach the bubble exit with match edges.
-                let ext_end_offset = self.seq_len - bubble.max_dist_to_exit;
-                if ext_end_offset > aln_node.offset().as_usize() {
-                    let gap_ext = ext_end_offset - aln_node.offset().as_usize();
-                    let longest_insertion = self.seq_len - offset_left.as_usize();
+        if let Some(prev) = prev_reached {
+            if aln_state == AlignState::Insertion {
+                let prev_reached_cost = self.visited.get_score(&AlignmentGraphNode::new(
+                    bubble.bubble_exit,
+                    *prev
+                ), AlignState::Match);
 
-                    let gap_cost_ext = self.visited.get_costs().gap_cost(aln_state, gap_ext);
-                    let gap_cost_open = self.visited.get_costs().gap_cost(AlignState::Match, longest_insertion);
+                if prev_reached_cost + self.visited.get_costs().gap_open() > *current_score {
+                    return true
+                }
+            } else if aln_state == AlignState::Insertion2 {
+                let prev_reached_cost = self.visited.get_score(&AlignmentGraphNode::new(
+                    bubble.bubble_exit,
+                    *prev
+                ), AlignState::Match);
 
-                    // eprintln!("INS Extension extreme test: gap ext len: {gap_ext:?} (cost: {gap_cost_ext:?})");
-                    // eprintln!("INS Extension extreme test: gap open len: {longest_insertion:?} (cost: {gap_cost_open:?})");
-
-                    if gap_cost_ext < gap_cost_open {
-                        return true
-                    }
+                if prev_reached_cost + self.visited.get_costs().gap_open2() > *current_score {
+                    return true
                 }
             }
         }
 
         // eprintln!("PRUNE");
-
         false
     }
 
