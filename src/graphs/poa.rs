@@ -7,6 +7,7 @@ use petgraph::{Incoming, Outgoing};
 use std::fmt::{Display, Formatter};
 
 use serde::de::DeserializeOwned;
+#[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
 
 use crate::aligner::alignment::{AlignedPair, Alignment};
@@ -17,7 +18,8 @@ use crate::io::graph::format_as_dot;
 /// A sequence aligned to the POA graph.
 ///
 /// Stores the sequence name and the start node in the graph.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone)]
 pub struct Sequence<N>(pub(crate) String, pub(crate) N)
 where
     N: NodeIndexType;
@@ -35,7 +37,8 @@ where
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
+#[derive(Debug)]
 pub struct POANodeData<N>
 where
     N: NodeIndexType,
@@ -56,7 +59,8 @@ where
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
+#[derive(Debug)]
 pub struct POAEdgeData {
     pub weight: usize,
     pub sequence_ids: Vec<usize>,
@@ -81,7 +85,8 @@ impl POAEdgeData {
 pub type POAGraphType<Ix> = StableDiGraph<POANodeData<NodeIndex<Ix>>, POAEdgeData, Ix>;
 pub(crate) type POANodeIndex<Ix> = <POAGraphType<Ix> as GraphBase>::NodeId;
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
+#[derive(Debug, Default)]
 pub struct POAGraph<Ix = u32>
 where
     Ix: PetgraphIndexType,
@@ -465,7 +470,7 @@ where
 }
 
 /// Wrapper with fixed node index types to make serialization to disk easier
-#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub enum POAGraphWithIx {
     U8(POAGraph<u8>),
     U16(POAGraph<u16>),

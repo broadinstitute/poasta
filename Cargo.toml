@@ -21,3 +21,7 @@ rustc-hash = "1.1.0"
 serde = { version = "~1.0", features = ["derive"] }
 serde_json = { version = "1.0.99", features = ["std"] }
 smallvec = { version ="1.11.0", features =  ["const_generics", "union", "serde"] }
+
+[features]
+serialize = []
+default = ["serialize"]
