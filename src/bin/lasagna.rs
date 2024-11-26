@@ -7,14 +7,16 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use noodles::{fasta, fastq};
 use flate2::read::MultiGzDecoder;
+use poasta::io::gfa::FieldValue;
 use rustc_hash::FxHashMap;
 
 use poasta::aligner::config::{AffineMinGapCost, AlignmentConfig};
-use poasta::aligner::scoring::{AlignmentType, GapAffine};
+use poasta::aligner::scoring::{AlignmentType, GapAffine, Score};
 use poasta::aligner::PoastaAligner;
 use poasta::errors::PoastaError;
 use poasta::graphs::poa::{POAGraph, POANodeIndex};
 use poasta::graphs::AlignableRefGraph;
+use poasta::io::gfa::Field;
 use poasta::io::gaf::{alignment_to_gaf, GAFRecord};
 use poasta::io::graph::{load_graph_from_gfa, GraphSegments, POAGraphFromGFA};
 
@@ -121,6 +123,16 @@ where
     let result = aligner.align::<u32, _>(graph, sequence);
     
     alignment_to_gaf(graph_segments, seq_name, sequence, &result.alignment, node_to_segment)
+        .map(|mut r| {
+            if let Score::Score(v) = result.score {
+                r.additional_fields.push(Field {
+                    tag: "AS".to_string(),
+                    value: FieldValue::Integer(v.get() as i64),
+                });
+            }
+            
+            r
+        })
 }
 
 

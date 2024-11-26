@@ -4,6 +4,7 @@ pub mod gap_affine;
 use crate::aligner::aln_graph::{AlignmentGraph, AlignState};
 
 pub use gap_affine::GapAffine;
+use std::default;
 use std::ops::{Add, AddAssign, Sub, SubAssign, Bound};
 use std::fmt::{Display, Formatter};
 use std::cmp::Ordering;
@@ -59,16 +60,12 @@ pub enum AlignmentType {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
 pub enum Score {
     Score(NonMaxU32),  // Use non-max, such that the maximum value can be used for Unvisited
+    
+    #[default]
     Unvisited
-}
-
-impl Default for Score {
-    fn default() -> Self {
-        Score::Unvisited
-    }
 }
 
 impl PartialOrd for Score {

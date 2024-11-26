@@ -186,6 +186,8 @@ where
         num_matches,
         aln_block_len,
         mapping_quality: 60,
-        additional_fields: vec![Field { tag: "cg".to_string(), value: FieldValue::String(cigar_string) }],
+        additional_fields: vec![
+            Field { tag: "cg".to_string(), value: FieldValue::String(cigar_string) },
+        ],
     })
 }
