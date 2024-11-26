@@ -67,11 +67,11 @@ struct CliArgs {
     verbose: u8,
 
     #[command(subcommand)]
-    command: Option<CliSubcommand>,
+    command: Option<PoastaSubcommand>,
 }
 
 #[derive(Subcommand, Debug)]
-enum CliSubcommand {
+enum PoastaSubcommand {
     /// Perform multiple sequence alignment and create or update POA graphs
     Align(AlignArgs),
 
@@ -183,10 +183,12 @@ where
     for result in reader.records() {
         let record = result?;
         let weights: Vec<usize> = vec![1; record.sequence().len()];
+        
+        let seq_name = std::str::from_utf8(record.name())?;
 
         if let Some(debug) = debug_writer {
             debug.log(DebugOutputMessage::NewSequence {
-                seq_name: record.name().to_string(),
+                seq_name: seq_name.to_string(),
                 sequence: String::from_utf8_lossy(record.sequence().as_ref()).to_string(),
                 max_rank: graph.node_count_with_start_and_end(),
             });
@@ -198,10 +200,10 @@ where
 
         if graph.is_empty() {
             // eprintln!("Creating initial graph from {}...", record.name());
-            graph.add_alignment_with_weights(record.name(), record.sequence(), None, &weights)?;
+            graph.add_alignment_with_weights(seq_name, record.sequence().as_ref(), None, &weights)?;
         } else {
-            eprint!("Aligning #{i} {}... ", record.name());
-            let result = aligner.align::<u32, _, _>(graph, record.sequence());
+            eprint!("Aligning #{i} {}... ", seq_name);
+            let result = aligner.align::<u32, _>(graph, record.sequence().as_ref());
             eprintln!("Done. Alignment Score: {:?}", result.score);
             eprintln!();
             eprintln!(
@@ -212,8 +214,8 @@ where
             eprintln!();
 
             graph.add_alignment_with_weights(
-                record.name(),
-                record.sequence(),
+                seq_name,
+                record.sequence().as_ref(),
                 Some(&result.alignment),
                 &weights,
             )?;
@@ -431,9 +433,9 @@ fn main() -> Result<()> {
     let args = CliArgs::parse();
 
     match &args.command {
-        Some(CliSubcommand::Align(v)) => align_subcommand(v)?,
-        Some(CliSubcommand::View(v)) => view_subcommand(v)?,
-        Some(CliSubcommand::Stats(v)) => stats_subcommand(v)?,
+        Some(PoastaSubcommand::Align(v)) => align_subcommand(v)?,
+        Some(PoastaSubcommand::View(v)) => view_subcommand(v)?,
+        Some(PoastaSubcommand::Stats(v)) => stats_subcommand(v)?,
         None => return Err(PoastaError::Other).with_context(|| "No subcommand given.".to_string()),
     };
 

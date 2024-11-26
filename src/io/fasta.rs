@@ -131,7 +131,7 @@ where
     let mut writer = fasta::Writer::new(output);
 
     for (seq_id, seq) in graph.sequences.iter().enumerate() {
-        let header = Definition::new(seq.name(), None);
+        let header = Definition::new(seq.name().as_bytes(), None);
 
         let seq = Sequence::from_iter(fasta_aln_for_seq(
             graph,

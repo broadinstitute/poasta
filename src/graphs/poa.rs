@@ -79,7 +79,7 @@ impl POAEdgeData {
 }
 
 pub type POAGraphType<Ix> = StableDiGraph<POANodeData<NodeIndex<Ix>>, POAEdgeData, Ix>;
-pub(crate) type POANodeIndex<Ix> = <POAGraphType<Ix> as GraphBase>::NodeId;
+pub type POANodeIndex<Ix> = <POAGraphType<Ix> as GraphBase>::NodeId;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct POAGraph<Ix = u32>
@@ -133,15 +133,13 @@ where
         }
     }
 
-    pub fn add_nodes_for_sequence<T: AsRef<[u8]>>(
+    pub fn add_nodes_for_sequence(
         &mut self,
-        sequence: T,
+        sequence: &[u8],
         weights: &[usize],
         start: usize,
         end: usize,
     ) -> Option<(POANodeIndex<Ix>, POANodeIndex<Ix>)> {
-        let seq = sequence.as_ref();
-
         if start == end {
             return None;
         }
@@ -149,7 +147,7 @@ where
         let mut first_node = None;
         let mut prev = None;
         for pos in start..end {
-            let curr_node = self.graph.add_node(POANodeData::new(seq[pos]));
+            let curr_node = self.graph.add_node(POANodeData::new(sequence[pos]));
 
             if first_node.is_none() {
                 first_node = Some(curr_node);
@@ -170,23 +168,21 @@ where
         Some((first_node.unwrap(), prev.unwrap()))
     }
 
-    pub fn add_alignment_with_weights<T: AsRef<[u8]>>(
+    pub fn add_alignment_with_weights(
         &mut self,
         sequence_name: &str,
-        sequence: T,
+        sequence: &[u8],
         alignment_opt: Option<&Alignment<POANodeIndex<Ix>>>,
         weights: &[usize],
     ) -> Result<(), PoastaError> {
-        let seq = sequence.as_ref();
-
-        if seq.len() != weights.len() {
-            return Err(PoastaError::WeightsUnequalSize(seq.len(), weights.len()));
+        if sequence.len() != weights.len() {
+            return Err(PoastaError::WeightsUnequalSize(sequence.len(), weights.len()));
         }
 
         if alignment_opt.is_none() {
             // No aligned bases, just add unaligned nodes
             let (nfirst, _) = self
-                .add_nodes_for_sequence(seq, weights, 0, seq.len())
+                .add_nodes_for_sequence(sequence, weights, 0, sequence.len())
                 .unwrap();
             self.sequences
                 .push(Sequence(sequence_name.to_owned(), nfirst));
@@ -201,7 +197,7 @@ where
         let valid_ix: Vec<usize> = alignment
             .iter()
             .filter_map(|e| e.qpos)
-            .filter(|qpos| *qpos < seq.len())
+            .filter(|qpos| *qpos < sequence.len())
             .collect();
 
         if valid_ix.is_empty() {
@@ -212,7 +208,7 @@ where
         let first = valid_ix.first().unwrap();
         let last = valid_ix.last().unwrap();
 
-        let mut nodes_unaligned_begin = self.add_nodes_for_sequence(seq, weights, 0, *first);
+        let mut nodes_unaligned_begin = self.add_nodes_for_sequence(sequence, weights, 0, *first);
 
         let mut prev = if let Some((_, begin_n2)) = nodes_unaligned_begin {
             Some(begin_n2)
@@ -220,7 +216,7 @@ where
             None
         };
 
-        let nodes_unaligned_end = self.add_nodes_for_sequence(seq, weights, last + 1, seq.len());
+        let nodes_unaligned_end = self.add_nodes_for_sequence(sequence, weights, last + 1, sequence.len());
 
         // Add aligned bases
         for AlignedPair { rpos, qpos } in alignment {
@@ -230,7 +226,7 @@ where
 
             let q = qpos.unwrap();
             let mut curr: Option<POANodeIndex<Ix>> = None;
-            let qsymbol = seq[q];
+            let qsymbol = sequence[q];
 
             if let Some(r) = rpos {
                 // We got an aligned pair

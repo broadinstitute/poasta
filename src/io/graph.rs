@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 use std::fs::File;
-use std::io::{BufReader, Read, Write};
+use std::io::{BufReader, Read, Write, BufRead};
 use std::path::Path;
 use std::{char, fmt};
 
@@ -18,6 +18,8 @@ use serde::de::DeserializeOwned;
 use crate::errors::PoastaError;
 use crate::graphs::poa::{POAGraph, POAGraphWithIx, POANodeData, POANodeIndex, Sequence};
 use crate::graphs::AlignableRefGraph;
+
+use super::gfa::{GfaLine, Strand};
 
 pub fn save_graph(graph: &POAGraphWithIx, out: impl Write) -> Result<(), PoastaError> {
     bincode::serialize_into(out, graph)?;
@@ -87,7 +89,7 @@ pub fn load_graph_from_fasta_msa(path: impl AsRef<Path>) -> Result<POAGraphWithI
                 // First node of this sequence
                 graph
                     .sequences
-                    .push(Sequence(seq.name().to_string(), node_ix));
+                    .push(Sequence(std::str::from_utf8(seq.name()).unwrap().to_string(), node_ix));
             }
 
             prev_node = Some(node_ix);
@@ -97,6 +99,125 @@ pub fn load_graph_from_fasta_msa(path: impl AsRef<Path>) -> Result<POAGraphWithI
     graph.post_process()?;
 
     Ok(POAGraphWithIx::U32(graph))
+}
+
+pub struct POAGraphFromGFA<Ix>
+where 
+    Ix: petgraph::graph::IndexType,
+{
+    pub graph: POAGraph<Ix>,
+    pub graph_segments: GraphSegments<Ix>,
+}
+
+#[derive(Debug, Default)]
+pub struct GraphSegments<Ix> 
+where 
+    Ix: petgraph::graph::IndexType,
+{
+    pub names: Vec<String>,
+    pub start_nodes: Vec<POANodeIndex<Ix>>,
+    pub end_nodes: Vec<POANodeIndex<Ix>>,
+    pub segment_lengths: Vec<usize>,
+}
+
+
+pub fn load_graph_from_gfa<Ix>(path: impl AsRef<Path>) -> Result<POAGraphFromGFA<Ix>, PoastaError> 
+where
+    Ix: petgraph::graph::IndexType + serde::de::DeserializeOwned,
+{
+    let p = path.as_ref();
+    
+    let is_gzipped = p
+        .file_name()
+        .map(|v| v.to_string_lossy().ends_with(".gz"))
+        .unwrap_or(false);
+
+    // Check if we have a gzipped file
+    let reader_inner: BufReader<Box<dyn std::io::Read>> = BufReader::new(if is_gzipped {
+        Box::new(File::open(p).map(MultiGzDecoder::new)?) as Box<dyn std::io::Read>
+    } else {
+        Box::new(File::open(p)?) as Box<dyn std::io::Read>
+    });
+    
+    let mut graph = POAGraph::new();
+    let mut graph_segments = GraphSegments::default();
+    let mut name_to_ix = FxHashMap::default();
+    let mut links_to_add = Vec::new();
+    
+    for line in reader_inner.lines() {
+        let line = line?;
+        let trimmed = line.trim();
+        
+        if trimmed.is_empty() {
+            continue;
+        }
+        
+        match GfaLine::try_from(trimmed) {
+            Ok(gfa_line) => {
+                match gfa_line {
+                    GfaLine::Segment(segment) => {
+                        if let Some(seq) = segment.sequence {
+                            let weights = vec![1; seq.len()];
+                            let (start, end) = graph.add_nodes_for_sequence(seq.as_bytes(), &weights, 0, seq.len()).unwrap();                        
+                            
+                            name_to_ix.insert(segment.sid.clone(), graph_segments.names.len());
+                            graph_segments.names.push(segment.sid.clone());
+                            graph_segments.start_nodes.push(start);
+                            graph_segments.end_nodes.push(end);
+                            graph_segments.segment_lengths.push(seq.len());
+                        } else {
+                            eprintln!("Omitting segment {:?} because it has no sequence.", segment.sid);
+                        }
+                    },
+                    GfaLine::Link(link) => {
+                        if link.strand1 == Strand::Reverse || link.strand2 == Strand::Reverse {
+                            eprintln!("Links using the reverse strand of a segment are not supported!");
+                            eprintln!("Link: {link:?}");
+                            return Err(PoastaError::GraphError);
+                        }
+                        
+                        let from_ix = name_to_ix.get(&link.sid1);
+                        let to_ix = name_to_ix.get(&link.sid2);
+                        
+                        // No corresponding segment yet, maybe later after parsing the entire file?
+                        if from_ix.is_none() || to_ix.is_none() {
+                            links_to_add.push(link);
+                            continue;
+                        }
+                        
+                        let from = graph_segments.end_nodes[*from_ix.unwrap()];
+                        let to = graph_segments.start_nodes[*to_ix.unwrap()];
+                        
+                        graph.add_edge(from, to, 0, 1);
+                    },
+                    _ => (),
+                }
+            },
+            Err(e) => {
+                eprintln!("Failed to parse line: {trimmed}");
+                eprintln!("Error: {e}")
+            },
+        }
+    }
+    
+    for link in links_to_add {
+        let from_ix = name_to_ix.get(&link.sid1);
+        let to_ix = name_to_ix.get(&link.sid2);
+        
+        if from_ix.is_none() || to_ix.is_none() {
+            eprintln!("Omitting link {} -> {} since at least one segment ID does not exists.", link.sid1, link.sid2);
+            continue;
+        }
+        
+        let from = graph_segments.end_nodes[*from_ix.unwrap()];
+        let to = graph_segments.start_nodes[*to_ix.unwrap()];
+        
+        graph.add_edge(from, to, 0, 1);
+    }
+    
+    graph.post_process()?;
+    
+    Ok(POAGraphFromGFA { graph, graph_segments })
 }
 
 pub fn format_as_dot<Ix: IndexType>(
@@ -345,5 +466,23 @@ fn graphviz_node_color(label: u8) -> &'static str {
         b'G' => "#F36C3E",
         b'T' => "#B12028",
         _ => "#939393",
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn test_load_graph_from_gfa() {
+        let gfa_path = Path::new("tests/test.gfa");
+        
+        let POAGraphFromGFA { graph, graph_segments: _ } = load_graph_from_gfa::<u32>(gfa_path).unwrap();
+        
+        assert_eq!(graph.successors(graph.start_node()).count(), 1);
+        assert_eq!(graph.predecessors(graph.end_node()).count(), 2);
+        assert_eq!(graph.node_count(), 26);
     }
 }

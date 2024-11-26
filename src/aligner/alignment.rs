@@ -27,6 +27,14 @@ where
     pub fn is_indel(&self) -> bool {
         !self.is_aligned()
     }
+    
+    pub fn is_deletion(&self) -> bool {
+        self.rpos.is_none() && self.qpos.is_some()
+    }
+    
+    pub fn is_insertion(&self) -> bool {
+        self.rpos.is_some() && self.qpos.is_none()
+    }
 }
 
 pub type Alignment<N> = Vec<AlignedPair<N>>;

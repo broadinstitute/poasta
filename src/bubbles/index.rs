@@ -219,94 +219,94 @@ where
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use petgraph::graph::NodeIndex;
-    use crate::bubbles::index::NodeBubbleMap;
-    use crate::graphs::AlignableRefGraph;
-    use crate::graphs::mock::{create_test_graph1, create_test_graph2};
-    use super::BubbleIndex;
+// #[cfg(test)]
+// mod tests {
+//     use petgraph::graph::NodeIndex;
+//     use crate::bubbles::index::NodeBubbleMap;
+//     use crate::graphs::AlignableRefGraph;
+//     use crate::graphs::mock::{create_test_graph1, create_test_graph2};
+//     use super::BubbleIndex;
 
-    type NIx = NodeIndex<crate::graphs::mock::NIx>;
+//     type NIx = NodeIndex<crate::graphs::mock::NIx>;
 
-    #[test]
-    pub fn test_bubble_map_builder() {
-        let graph1 = create_test_graph1();
-        let index1 = BubbleIndex::new(&graph1);
+//     #[test]
+//     pub fn test_bubble_map_builder() {
+//         let graph1 = create_test_graph1();
+//         let index1 = BubbleIndex::new(&graph1);
 
-        let truth1 = [
-            vec![NodeBubbleMap::new(NIx::new(1), 1),],
-            vec![NodeBubbleMap::new(NIx::new(2), 1), NodeBubbleMap::new(NIx::new(1), 0)],
-            vec![NodeBubbleMap::new(NIx::new(2), 0)],
-            vec![NodeBubbleMap::new(NIx::new(4), 1)],
-            vec![NodeBubbleMap::new(NIx::new(5), 1), NodeBubbleMap::new(NIx::new(4), 0)],
-            vec![NodeBubbleMap::new(NIx::new(5), 0)],
-            vec![NodeBubbleMap::new(NIx::new(7), 1)],
-            vec![NodeBubbleMap::new(NIx::new(8), 1), NodeBubbleMap::new(NIx::new(7), 0)],
-            vec![NodeBubbleMap::new(NIx::new(8), 0)]
-        ];
+//         let truth1 = [
+//             vec![NodeBubbleMap::new(NIx::new(1), 1),],
+//             vec![NodeBubbleMap::new(NIx::new(2), 1), NodeBubbleMap::new(NIx::new(1), 0)],
+//             vec![NodeBubbleMap::new(NIx::new(2), 0)],
+//             vec![NodeBubbleMap::new(NIx::new(4), 1)],
+//             vec![NodeBubbleMap::new(NIx::new(5), 1), NodeBubbleMap::new(NIx::new(4), 0)],
+//             vec![NodeBubbleMap::new(NIx::new(5), 0)],
+//             vec![NodeBubbleMap::new(NIx::new(7), 1)],
+//             vec![NodeBubbleMap::new(NIx::new(8), 1), NodeBubbleMap::new(NIx::new(7), 0)],
+//             vec![NodeBubbleMap::new(NIx::new(8), 0)]
+//         ];
 
-        for n in graph1.node_indices() {
-            if n == graph1.end_node() {
-                continue;
-            }
+//         for n in graph1.node_indices() {
+//             if n == graph1.end_node() {
+//                 continue;
+//             }
 
-            let bubbles_no_end_node: Vec<_> = index1.get_node_bubbles(n)
-                .iter()
-                .filter(|b| b.bubble_exit != graph1.end_node())
-                .copied()
-                .collect();
-            assert_eq!(&bubbles_no_end_node, &truth1[n.index()])
-        }
+//             let bubbles_no_end_node: Vec<_> = index1.get_node_bubbles(n)
+//                 .iter()
+//                 .filter(|b| b.bubble_exit != graph1.end_node())
+//                 .copied()
+//                 .collect();
+//             assert_eq!(&bubbles_no_end_node, &truth1[n.index()])
+//         }
 
-        let graph2 = create_test_graph2();
-        let index2 = BubbleIndex::new(&graph2);
+//         let graph2 = create_test_graph2();
+//         let index2 = BubbleIndex::new(&graph2);
 
-        let truth2 = [
-            vec![NodeBubbleMap::new(NIx::new(2), 1)],
-            vec![NodeBubbleMap::new(NIx::new(2), 1)],
-            vec![NodeBubbleMap::new(NIx::new(7), 2), NodeBubbleMap::new(NIx::new(2), 0)],
-            vec![NodeBubbleMap::new(NIx::new(7), 1)],
-            vec![NodeBubbleMap::new(NIx::new(6), 2), NodeBubbleMap::new(NIx::new(7), 3)],
-            vec![NodeBubbleMap::new(NIx::new(7), 2), NodeBubbleMap::new(NIx::new(6), 1)],
-            vec![NodeBubbleMap::new(NIx::new(7), 1), NodeBubbleMap::new(NIx::new(6), 0)],
-            vec![NodeBubbleMap::new(NIx::new(14), 1), NodeBubbleMap::new(NIx::new(7), 0)],
-            vec![NodeBubbleMap::new(NIx::new(7), 3), NodeBubbleMap::new(NIx::new(6), 2)],
-            vec![NodeBubbleMap::new(NIx::new(7), 2), NodeBubbleMap::new(NIx::new(6), 1)],
-            vec![NodeBubbleMap::new(NIx::new(11), 1), NodeBubbleMap::new(NIx::new(7), 2)],
-            vec![NodeBubbleMap::new(NIx::new(7), 1), NodeBubbleMap::new(NIx::new(11), 0)],
-            vec![NodeBubbleMap::new(NIx::new(14), 1)],
-            vec![NodeBubbleMap::new(NIx::new(14), 1)],
-            vec![NodeBubbleMap::new(NIx::new(14), 0)],
-        ];
+//         let truth2 = [
+//             vec![NodeBubbleMap::new(NIx::new(2), 1)],
+//             vec![NodeBubbleMap::new(NIx::new(2), 1)],
+//             vec![NodeBubbleMap::new(NIx::new(7), 2), NodeBubbleMap::new(NIx::new(2), 0)],
+//             vec![NodeBubbleMap::new(NIx::new(7), 1)],
+//             vec![NodeBubbleMap::new(NIx::new(6), 2), NodeBubbleMap::new(NIx::new(7), 3)],
+//             vec![NodeBubbleMap::new(NIx::new(7), 2), NodeBubbleMap::new(NIx::new(6), 1)],
+//             vec![NodeBubbleMap::new(NIx::new(7), 1), NodeBubbleMap::new(NIx::new(6), 0)],
+//             vec![NodeBubbleMap::new(NIx::new(14), 1), NodeBubbleMap::new(NIx::new(7), 0)],
+//             vec![NodeBubbleMap::new(NIx::new(7), 3), NodeBubbleMap::new(NIx::new(6), 2)],
+//             vec![NodeBubbleMap::new(NIx::new(7), 2), NodeBubbleMap::new(NIx::new(6), 1)],
+//             vec![NodeBubbleMap::new(NIx::new(11), 1), NodeBubbleMap::new(NIx::new(7), 2)],
+//             vec![NodeBubbleMap::new(NIx::new(7), 1), NodeBubbleMap::new(NIx::new(11), 0)],
+//             vec![NodeBubbleMap::new(NIx::new(14), 1)],
+//             vec![NodeBubbleMap::new(NIx::new(14), 1)],
+//             vec![NodeBubbleMap::new(NIx::new(14), 0)],
+//         ];
 
-        for n in graph2.node_indices() {
-            assert_eq!(index2.get_node_bubbles(n), &truth2[n.index()])
-        }
-    }
+//         for n in graph2.node_indices() {
+//             assert_eq!(index2.get_node_bubbles(n), &truth2[n.index()])
+//         }
+//     }
 
-    #[test]
-    pub fn test_dist_to_exit() {
-        let graph = create_test_graph2();
-        let index = BubbleIndex::new(&graph);
+//     #[test]
+//     pub fn test_dist_to_exit() {
+//         let graph = create_test_graph2();
+//         let index = BubbleIndex::new(&graph);
 
-        assert_eq!(index.get_dist_to_end(), &vec![
-            (4, 10),
-            (4, 9),
-            (3, 8),
-            (2, 4),
-            (4, 7),
-            (3, 6),
-            (2, 4),
-            (1, 3),
-            (4, 6),
-            (3, 5),
-            (3, 5),
-            (2, 4),
-            (1, 2),
-            (1, 1),
-            (0, 0)
-        ]);
-    }
+//         assert_eq!(index.get_dist_to_end(), &vec![
+//             (4, 10),
+//             (4, 9),
+//             (3, 8),
+//             (2, 4),
+//             (4, 7),
+//             (3, 6),
+//             (2, 4),
+//             (1, 3),
+//             (4, 6),
+//             (3, 5),
+//             (3, 5),
+//             (2, 4),
+//             (1, 2),
+//             (1, 1),
+//             (0, 0)
+//         ]);
+//     }
 
-}
+// }

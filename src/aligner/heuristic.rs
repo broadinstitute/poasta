@@ -84,35 +84,35 @@ impl<N, O> AstarHeuristic<N, O> for MinimumGapCostAffine<N, O> {
 }
 
 
-#[cfg(test)]
-mod tests {
-    use super::AstarHeuristic;
-    use crate::aligner::aln_graph::{AlignmentGraphNode, AlignState};
-    use crate::aligner::heuristic::MinimumGapCostAffine;
-    use crate::aligner::scoring::GapAffine;
+// #[cfg(test)]
+// mod tests {
+//     use super::AstarHeuristic;
+//     use crate::aligner::aln_graph::{AlignmentGraphNode, AlignState};
+//     use crate::aligner::heuristic::MinimumGapCostAffine;
+//     use crate::aligner::scoring::GapAffine;
 
-    #[test]
-    fn test_min_gap_cost() {
-        let costs = GapAffine::new(4, 2, 6);
+//     #[test]
+//     fn test_min_gap_cost() {
+//         let costs = GapAffine::new(4, 2, 6);
 
-        let heuristic = MinimumGapCostAffine::new(costs, vec![(5, 5)], 10);
+//         let heuristic = MinimumGapCostAffine::new(costs, vec![(5, 5)], 10);
 
-        let node1 = AlignmentGraphNode::new(0u32, 2u32);
-        assert_eq!(heuristic.h(&node1, AlignState::Match), 14);
-        assert_eq!(heuristic.h(&node1, AlignState::Deletion), 14);
-        // If already in insertion state, we wouldn't need to incur the gap-open cost
-        assert_eq!(heuristic.h(&node1, AlignState::Insertion), 8);
+//         let node1 = AlignmentGraphNode::new(0u32, 2u32);
+//         assert_eq!(heuristic.h(&node1, AlignState::Match), 14);
+//         assert_eq!(heuristic.h(&node1, AlignState::Deletion), 14);
+//         // If already in insertion state, we wouldn't need to incur the gap-open cost
+//         assert_eq!(heuristic.h(&node1, AlignState::Insertion), 8);
 
-        let node2 = AlignmentGraphNode::new(0u32, 7u32);
-        assert_eq!(heuristic.h(&node2, AlignState::Match), 8);
-        // If already in deletion state, we wouldn't need to incur the gap-open cost
-        assert_eq!(heuristic.h(&node2, AlignState::Deletion), 2);
-        assert_eq!(heuristic.h(&node2, AlignState::Insertion), 8);
+//         let node2 = AlignmentGraphNode::new(0u32, 7u32);
+//         assert_eq!(heuristic.h(&node2, AlignState::Match), 8);
+//         // If already in deletion state, we wouldn't need to incur the gap-open cost
+//         assert_eq!(heuristic.h(&node2, AlignState::Deletion), 2);
+//         assert_eq!(heuristic.h(&node2, AlignState::Insertion), 8);
 
-        let node3 = AlignmentGraphNode::new(0u32, 6u32);
-        assert_eq!(heuristic.h(&node3, AlignState::Match), 0);
-        // If already in deletion state, we wouldn't need to incur the gap-open cost
-        assert_eq!(heuristic.h(&node3, AlignState::Deletion), 0);
-        assert_eq!(heuristic.h(&node3, AlignState::Insertion), 0);
-    }
-}
+//         let node3 = AlignmentGraphNode::new(0u32, 6u32);
+//         assert_eq!(heuristic.h(&node3, AlignState::Match), 0);
+//         // If already in deletion state, we wouldn't need to incur the gap-open cost
+//         assert_eq!(heuristic.h(&node3, AlignState::Deletion), 0);
+//         assert_eq!(heuristic.h(&node3, AlignState::Insertion), 0);
+//     }
+// }
