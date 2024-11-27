@@ -51,7 +51,7 @@ impl Display for GAFRecord {
             self.num_matches,
             self.aln_block_len,
             self.mapping_quality,
-            fields_str
+            fields_str.trim()
         )?;
         
         Ok(())
