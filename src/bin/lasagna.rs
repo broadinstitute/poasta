@@ -122,7 +122,7 @@ where
 {
     let result = aligner.align::<u32, _>(graph, sequence);
     
-    alignment_to_gaf(graph_segments, seq_name, sequence, &result.alignment, node_to_segment)
+    alignment_to_gaf(graph, graph_segments, seq_name, sequence, &result.alignment, node_to_segment)
         .map(|mut r| {
             if let Score::Score(v) = result.score {
                 r.additional_fields.push(Field {

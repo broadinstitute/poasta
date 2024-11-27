@@ -4,7 +4,8 @@ use rustc_hash::FxHashMap;
 use itertools::Itertools;
 
 use crate::aligner::Alignment;
-use crate::graphs::poa::POANodeIndex;
+use crate::graphs::poa::{POAGraph, POANodeIndex};
+use crate::graphs::AlignableRefGraph;
 
 use super::gfa::{Field, FieldValue};
 use super::graph::GraphSegments;
@@ -60,6 +61,7 @@ impl Display for GAFRecord {
 
 
 pub fn alignment_to_gaf<Ix>(
+    graph: &POAGraph<Ix>,
     graph_segments: &GraphSegments<Ix>,
     seq_name: &str,
     sequence: &[u8],
@@ -99,17 +101,22 @@ where
             }
         } else {
             match (aln_pair.rpos, aln_pair.qpos) {
-                (Some(node), Some(_)) => {
+                (Some(node), Some(qpos)) => {
                     let (segment_ix, segment_pos) = node_to_segment.get(&node).unwrap();
                     
                     if path_segments.last().copied() != Some(*segment_ix) {
                         path_segments.push(*segment_ix);
                     }
                     
-                    cigar_ops.push('M');
+                    cigar_ops.push(if graph.is_symbol_equal(node, sequence[qpos]) {
+                        num_matches += 1;
+                        'M'
+                    } else {
+                        'X'
+                    });
+                    
                     last_match_segment_ix = path_segments.len() - 1;
                     last_match_segment_pos = *segment_pos;
-                    num_matches += 1;
                 },
                 
                 (Some(node), None) => {
