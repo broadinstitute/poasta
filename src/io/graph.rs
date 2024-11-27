@@ -307,8 +307,7 @@ where
 
     // Add links between segments
     for edge in graph.graph.edge_references() {
-        if segment_ends.contains_key(&edge.source()) && segment_starts.contains_key(&edge.target())
-        {
+        if segment_ends.contains_key(&edge.source()) && segment_starts.contains_key(&edge.target()) {
             let src = segment_ends[&edge.source()];
             let target = segment_starts[&edge.target()];
             writeln!(writer, "L\ts{src}\t+\ts{target}\t+\t0M")?;

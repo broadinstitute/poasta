@@ -39,14 +39,11 @@ where
 
 pub type Alignment<N> = Vec<AlignedPair<N>>;
 
-pub fn print_alignment<G, S, N>(graph: &G, sequence: &S, aln: &Alignment<N>) -> String
+pub fn print_alignment<G, N>(graph: &G, sequence: &[u8], aln: &Alignment<N>) -> String
 where
     G: AlignableRefGraph<NodeIndex=N>,
-    S: AsRef<[u8]>,
     N: NodeIndexType
 {
-    let seq = sequence.as_ref();
-
     let mut graph_chars = Vec::with_capacity(aln.len());
     let mut aln_chars = Vec::with_capacity(aln.len());
     let mut query_chars = Vec::with_capacity(aln.len());
@@ -54,7 +51,7 @@ where
     for pair in aln {
         if pair.is_aligned() {
             let node = graph.get_symbol_char(pair.rpos.unwrap());
-            let qry = char::from(seq[pair.qpos.unwrap()]);
+            let qry = char::from(sequence[pair.qpos.unwrap()]);
 
             graph_chars.push(node);
             aln_chars.push(if node == qry { '|' } else { '·' });
@@ -65,7 +62,7 @@ where
             aln_chars.push(' ');
             query_chars.push('-');
         } else if let Some(qpos) = pair.qpos {
-            let qry = char::from(seq[qpos]);
+            let qry = char::from(sequence[qpos]);
             graph_chars.push('-');
             aln_chars.push(' ');
             query_chars.push(qry);

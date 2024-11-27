@@ -148,13 +148,13 @@ where
             output
         });
     
-    eprintln!("Path segments: {:?}", path_segments);
-    eprintln!("Path segments (cut): {:?}", &path_segments[..=last_match_segment_ix]);
     let path_length = path_segments[..=last_match_segment_ix].iter()
         .map(|segment_ix| graph_segments.segment_lengths[*segment_ix])
         .sum();
     
-    let path_aln_end = path_length - graph_segments.segment_lengths[last_match_segment_ix] + last_match_segment_pos;
+    let path_aln_end = path_length 
+        - graph_segments.segment_lengths[path_segments[last_match_segment_ix]] 
+        + last_match_segment_pos;
     
     let query_end = alignment.iter().rev()
         .find(|aln_pair| aln_pair.is_aligned())

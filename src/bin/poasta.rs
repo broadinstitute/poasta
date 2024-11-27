@@ -208,7 +208,7 @@ where
             eprintln!();
             eprintln!(
                 "{}",
-                print_alignment(graph, record.sequence(), &result.alignment)
+                print_alignment(graph, record.sequence().as_ref(), &result.alignment)
             );
             eprintln!();
             eprintln!();
