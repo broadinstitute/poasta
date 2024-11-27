@@ -93,11 +93,16 @@ where
                 let (segment_ix, segment_pos) = node_to_segment.get(&aln_pair.rpos.unwrap()).unwrap();
                 path_aln_start = *segment_pos;
                 path_segments.push(*segment_ix);
-                cigar_ops.push('M');
+                cigar_ops.push(if graph.is_symbol_equal(aln_pair.rpos.unwrap(), sequence[aln_pair.qpos.unwrap()]) {
+                    num_matches += 1;
+                    '='
+                } else {
+                    'X'
+                });
+                    
                 at_aln_start = false;
                 last_match_segment_ix = path_segments.len() - 1;
                 last_match_segment_pos = *segment_pos;
-                num_matches += 1;
             }
         } else {
             match (aln_pair.rpos, aln_pair.qpos) {
