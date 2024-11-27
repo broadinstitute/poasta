@@ -240,7 +240,7 @@ impl TryFrom<&str> for Segment {
         
         let sequence = parts.next()
             .and_then(|v| if v != "*" { 
-                Some(v.to_string())
+                Some(v.to_ascii_uppercase())
             } else { 
                 None 
             });
