@@ -9,7 +9,7 @@ pub mod heuristic;
 pub mod config;
 
 use std::ops::Bound;
-use std::rc::Rc;
+use std::sync::Arc;
 use crate::graphs::AlignableRefGraph;
 use crate::aligner::offsets::OffsetType;
 use crate::aligner::scoring::AlignmentType;
@@ -68,7 +68,7 @@ impl<'a, C> PoastaAligner<'a, C>
         &self,
         ref_graph: &G,
         seq: &[u8],
-        existing_bubbles: Rc<BubbleIndex<G::NodeIndex>>,
+        existing_bubbles: Arc<BubbleIndex<G::NodeIndex>>,
     ) -> AstarResult<G::NodeIndex>
         where O: OffsetType,
               G: AlignableRefGraph,
@@ -91,7 +91,7 @@ impl<'a, C> PoastaAligner<'a, C>
         &self,
         ref_graph: &G,
         seq: &[u8],
-        existing_bubbles: Option<Rc<BubbleIndex<G::NodeIndex>>>,
+        existing_bubbles: Option<Arc<BubbleIndex<G::NodeIndex>>>,
         enable_pruning: bool,
     ) -> AstarResult<G::NodeIndex>
     where

@@ -1,4 +1,5 @@
-use std::rc::Rc;
+use std::sync::Arc;
+
 use crate::aligner::astar::AstarVisited;
 use crate::aligner::heuristic::{Dijkstra, AstarHeuristic, MinimumGapCostAffine};
 use crate::aligner::offsets::OffsetType;
@@ -32,7 +33,7 @@ pub trait AlignmentConfig {
         ref_graph: &G,
         seq: &[u8],
         aln_type: AlignmentType,
-        bubble_index: Rc<BubbleIndex<G::NodeIndex>>,
+        bubble_index: Arc<BubbleIndex<G::NodeIndex>>,
     ) -> (
         <Self::Costs as AlignmentCosts>::AlignmentGraphType,
         Self::AstarData<G::NodeIndex, O>,
@@ -67,7 +68,7 @@ impl AlignmentConfig for AffineDijkstra {
     {
         let aln_graph = self.0.new_alignment_graph(aln_type);
 
-        let bubble_index = Rc::new(BubbleIndex::new(ref_graph));
+        let bubble_index = Arc::new(BubbleIndex::new(ref_graph));
 
         let astar_data = AffineAstarData::new(self.0, ref_graph, seq, bubble_index);
         let heuristic = Dijkstra::default();
@@ -80,7 +81,7 @@ impl AlignmentConfig for AffineDijkstra {
         ref_graph: &G,
         seq: &[u8],
         aln_type: AlignmentType,
-        bubble_index: Rc<BubbleIndex<G::NodeIndex>>,
+        bubble_index: Arc<BubbleIndex<G::NodeIndex>>,
     ) -> (
         <Self::Costs as AlignmentCosts>::AlignmentGraphType,
         Self::AstarData<G::NodeIndex, O>,
@@ -122,7 +123,7 @@ impl AlignmentConfig for AffineMinGapCost {
     {
         let aln_graph = self.0.new_alignment_graph(aln_type);
 
-        let bubble_index = Rc::new(BubbleIndex::new(ref_graph));
+        let bubble_index = Arc::new(BubbleIndex::new(ref_graph));
 
         let astar_data = AffineAstarData::new(self.0, ref_graph, seq, bubble_index.clone());
         let heuristic = MinimumGapCostAffine::new(self.0, bubble_index, seq.len());
@@ -135,7 +136,7 @@ impl AlignmentConfig for AffineMinGapCost {
         ref_graph: &G,
         seq: &[u8],
         aln_type: AlignmentType,
-        bubble_index: Rc<BubbleIndex<G::NodeIndex>>,
+        bubble_index: Arc<BubbleIndex<G::NodeIndex>>,
     ) -> (
         <Self::Costs as AlignmentCosts>::AlignmentGraphType,
         Self::AstarData<G::NodeIndex, O>,

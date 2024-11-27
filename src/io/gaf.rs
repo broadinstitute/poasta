@@ -148,6 +148,8 @@ where
             output
         });
     
+    eprintln!("Path segments: {:?}", path_segments);
+    eprintln!("Path segments (cut): {:?}", &path_segments[..=last_match_segment_ix]);
     let path_length = path_segments[..=last_match_segment_ix].iter()
         .map(|segment_ix| graph_segments.segment_lengths[*segment_ix])
         .sum();
@@ -167,10 +169,12 @@ where
     
     match cigar_rle.last() {
         Some(('I', _)) => {
-            cigar_rle.pop();
+            let removed = cigar_rle.pop().unwrap();
+            eprintln!("Removed insertion from end {}", removed.1);
         },
         Some(('D', _)) => {
-            cigar_rle.pop();
+            let removed = cigar_rle.pop().unwrap();
+            eprintln!("Removed insertion from end {}", removed.1);
         }
         _ => (),
     }

@@ -1,12 +1,14 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::thread;
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use noodles::{fasta, fastq};
 use flate2::read::MultiGzDecoder;
+use poasta::bubbles::index::BubbleIndex;
 use poasta::io::gfa::FieldValue;
 use rustc_hash::FxHashMap;
 
@@ -113,6 +115,7 @@ fn align_sequence<Ix, C>(
     graph_segments: &GraphSegments<Ix>,
     node_to_segment: &FxHashMap<POANodeIndex<Ix>, (usize, usize)>,
     aligner: &mut PoastaAligner<C>,
+    bubble_index: Arc<BubbleIndex<POANodeIndex<Ix>>>,
     seq_name: &str, 
     sequence: &[u8],
 ) -> Option<GAFRecord>
@@ -120,7 +123,7 @@ where
     Ix: petgraph::graph::IndexType + serde::de::DeserializeOwned,
     C: AlignmentConfig,
 {
-    let result = aligner.align::<u32, _>(graph, sequence);
+    let result = aligner.align_with_existing_bubbles::<u32, _>(graph, sequence, bubble_index);
     
     alignment_to_gaf(graph, graph_segments, seq_name, sequence, &result.alignment, node_to_segment)
         .map(|mut r| {
@@ -182,6 +185,9 @@ fn read_fasta(
 fn align_subcommand(args: &AlignArgs) -> Result<()> {
     let POAGraphFromGFA { graph, graph_segments } = load_graph_from_gfa::<u32>(&args.graph)
         .with_context(|| "Could not load graph from GFA.")?;
+     
+    // Construct bubble index
+    let bubble_index = Arc::new(BubbleIndex::new(&graph));
     
     // TODO: this is maybe a bit memory inefficient, storing segment id for every node
     let mut node_to_segment = FxHashMap::default();
@@ -264,12 +270,13 @@ fn align_subcommand(args: &AlignArgs) -> Result<()> {
             let node_to_segment = &node_to_segment;
             let thread_rx = rx.clone();
             let tx_out_thread = tx_out.clone();
+            let bubble_index_thread = bubble_index.clone();
             
             scope.spawn(move || -> Result<()> {
                 let mut aligner = PoastaAligner::new(AffineMinGapCost(scoring), AlignmentType::Global);
                 
                 while let Ok(SequenceRecord(seq_name, sequence)) = thread_rx.recv() {
-                    let result = align_sequence(graph, graph_segments, node_to_segment, &mut aligner, &seq_name, &sequence);
+                    let result = align_sequence(graph, graph_segments, node_to_segment, &mut aligner, bubble_index_thread.clone(), &seq_name, &sequence);
                     
                     if let Some(r) = result {
                         tx_out_thread.send(r)?;

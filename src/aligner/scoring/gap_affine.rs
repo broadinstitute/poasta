@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::fmt::Write;
 use std::marker::PhantomData;
-use std::rc::Rc;
+use std::sync::Arc;
 use rustc_hash::FxHashMap;
 use crate::aligner::{AlignedPair, Alignment};
 
@@ -580,7 +580,7 @@ where N: NodeIndexType,
 {
     costs: GapAffine,
     seq_len: usize,
-    bubble_index: Rc<BubbleIndex<N>>,
+    bubble_index: Arc<BubbleIndex<N>>,
     visited: BlockedVisitedStorageAffine<N, O>,
 
     bubbles_reached_m: Vec<BTreeSet<O>>,
@@ -590,7 +590,7 @@ impl<N, O> AffineAstarData<N, O>
     where N: NodeIndexType,
           O: OffsetType
 {
-    pub fn new<G>(costs: GapAffine, ref_graph: &G, seq: &[u8], bubble_index: Rc<BubbleIndex<G::NodeIndex>>) -> Self
+    pub fn new<G>(costs: GapAffine, ref_graph: &G, seq: &[u8], bubble_index: Arc<BubbleIndex<G::NodeIndex>>) -> Self
         where G: AlignableRefGraph<NodeIndex=N>,
     {
         Self {

@@ -1,5 +1,5 @@
 use std::fmt::Write;
-use std::rc::Rc;
+use std::sync::Arc;
 use nonmax::NonMaxU32;
 use crate::aligner::Alignment;
 use crate::aligner::aln_graph::{AlignmentGraph, AlignmentGraphNode, AlignState};
@@ -111,7 +111,7 @@ pub fn astar_alignment<O, C, Costs, AG, Q, G>(
     seq: &[u8],
     aln_type: AlignmentType,
     debug_writer: Option<&DebugOutputWriter>,
-    existing_bubbles: Option<Rc<BubbleIndex<G::NodeIndex>>>,
+    existing_bubbles: Option<Arc<BubbleIndex<G::NodeIndex>>>,
     enable_pruning: bool,
 ) -> AstarResult<G::NodeIndex>
     where O: OffsetType,

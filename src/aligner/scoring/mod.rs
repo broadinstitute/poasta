@@ -4,7 +4,6 @@ pub mod gap_affine;
 use crate::aligner::aln_graph::{AlignmentGraph, AlignState};
 
 pub use gap_affine::GapAffine;
-use std::default;
 use std::ops::{Add, AddAssign, Sub, SubAssign, Bound};
 use std::fmt::{Display, Formatter};
 use std::cmp::Ordering;

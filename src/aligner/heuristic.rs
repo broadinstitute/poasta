@@ -1,5 +1,5 @@
 use std::marker::PhantomData;
-use std::rc::Rc;
+use std::sync::Arc;
 use crate::aligner::aln_graph::{AlignmentGraphNode, AlignState};
 use crate::aligner::offsets::OffsetType;
 use crate::aligner::scoring::{AlignmentCosts, GapAffine};
@@ -30,13 +30,13 @@ impl<N, O> AstarHeuristic<N, O> for Dijkstra<N, O> {
 
 pub struct MinimumGapCostAffine<N, O> {
     costs: GapAffine,
-    bubble_index: Rc<BubbleIndex<N>>,
+    bubble_index: Arc<BubbleIndex<N>>,
     seq_length: usize,
     dummy: PhantomData<O>,
 }
 
 impl<N, O> MinimumGapCostAffine<N, O> {
-    pub fn new(costs: GapAffine, bubble_index: Rc<BubbleIndex<N>>, seq_length: usize) -> Self {
+    pub fn new(costs: GapAffine, bubble_index: Arc<BubbleIndex<N>>, seq_length: usize) -> Self {
         Self {
             costs,
             bubble_index,
