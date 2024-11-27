@@ -110,7 +110,7 @@ where
                     
                     cigar_ops.push(if graph.is_symbol_equal(node, sequence[qpos]) {
                         num_matches += 1;
-                        'M'
+                        '='
                     } else {
                         'X'
                     });
