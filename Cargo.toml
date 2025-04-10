@@ -12,7 +12,7 @@ ahash = { version = "0.8.3" }
 anyhow = "1.0.71"
 bincode = "1.3.3"
 clap = { version = "4.3", features = ["derive"] }
-crossbeam-channel = "0.5.13"
+crossbeam-channel = "0.5.15"
 flate2 = "1.0.26"
 itertools = "0.13.0"
 nonmax = "0.5.5"
