@@ -202,16 +202,16 @@ where
             // eprintln!("Creating initial graph from {}...", record.name());
             graph.add_alignment_with_weights(seq_name, record.sequence().as_ref(), None, &weights)?;
         } else {
-            eprint!("Aligning #{i} {}... ", seq_name);
+            // eprint!("Aligning #{i} {}... ", seq_name);
             let result = aligner.align::<u32, _>(graph, record.sequence().as_ref());
-            eprintln!("Done. Alignment Score: {:?}", result.score);
-            eprintln!();
-            eprintln!(
-                "{}",
-                print_alignment(graph, record.sequence().as_ref(), &result.alignment)
-            );
-            eprintln!();
-            eprintln!();
+            // eprintln!("Done. Alignment Score: {:?}", result.score);
+            // eprintln!();
+            // eprintln!(
+            //     "{}",
+            //     print_alignment(graph, record.sequence().as_ref(), &result.alignment)
+            // );
+            // eprintln!();
+            // eprintln!();
 
             graph.add_alignment_with_weights(
                 seq_name,
