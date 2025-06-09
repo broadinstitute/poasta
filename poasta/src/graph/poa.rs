@@ -581,7 +581,8 @@ where
     ) -> POANodeIndex<Ix> {
         let new_ix = self.graph.add_node(node_data);
         
-        if self.is_empty() {
+        if self.node_count() == 3 {
+            debug!("Previously empty graph, removing start->end edge, adding start->{new_ix:?}->end edges");
             self.graph.remove_edge(self.graph.find_edge(self.start_node, self.end_node).unwrap());
             self.graph.add_edge(self.start_node, new_ix, POAEdgeData::new_with_seq_id(self.sequences.len()));
             self.graph.add_edge(new_ix, self.end_node, POAEdgeData::new_with_seq_id(self.sequences.len()));
@@ -1226,6 +1227,7 @@ where
             let in_degree_target = self.graph.edges_directed(e.target(), Incoming).count();
             
             if in_degree_target > 1 {
+                debug!("Removing edge {:?} -> {:?}, in_degree_target: {}", e.source(), e.target(), in_degree_target);
                 // Remove edges with multiple incoming edges
                 to_remove.push(e.id());
             }
@@ -1235,6 +1237,7 @@ where
             let out_degree_src = self.graph.edges_directed(e.source(), Outgoing).count();
             
             if out_degree_src > 1 {
+                debug!("Removing edge {:?} -> {:?}, in_degree_target: {}", e.source(), e.target(), out_degree_src);
                 to_remove.push(e.id());
             }
         }
