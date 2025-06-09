@@ -1,3 +1,5 @@
+use tracing::debug;
+
 use super::{
     astar::AlignableGraph,
     fr_points::{to_node_pos, Diag, DiagType, PosType},
@@ -19,21 +21,13 @@ fn common_prefix_len(x: &[u8], y: &[u8]) -> usize {
         .count()
 }
 
-pub(crate) enum ExtendResult<O> {
-    /// Variant indicating that we reached the end of the node sequence
-    NodeEnd(O),
-
-    /// Other, intermediate, extension end point
-    OtherEnd(O),
-}
-
 pub fn extend<G, D, O>(
     graph: &G,
     seq: &[u8],
     node: G::NodeType,
     diag: Diag<D>,
     offset: O,
-) -> ExtendResult<O>
+) -> O
 where
     G: AlignableGraph,
     D: DiagType,
@@ -42,22 +36,21 @@ where
     let node_seq = graph.node_seq(node);
     let node_len = graph.node_len(node);
     let node_pos = to_node_pos(diag, offset.as_usize());
+    
+    debug!("Checking on node {node:?}, length: {node_len}, current pos: {node_pos}, query offset: {offset:?}");
 
-    if node_pos == node_len - 1 {
-        return ExtendResult::NodeEnd(offset);
+    if node_pos >= node_len - 1 {
+        debug!("- at node end, return {offset:?}");
+        return offset;
     }
 
     if offset.as_usize() == seq.len() {
-        return ExtendResult::OtherEnd(offset);
+        debug!("- at qry end, return {offset:?}");
+        return offset;
     }
 
     let lcp = common_prefix_len(&node_seq[node_pos+1..], &seq[offset.as_usize()..]);
     let new_offset = offset.as_usize() + lcp;
-    let new_node_pos = node_pos + lcp;
-
-    if new_node_pos == node_len - 1 {
-        ExtendResult::NodeEnd(O::new(new_offset))
-    } else {
-        ExtendResult::OtherEnd(O::new(new_offset))
-    }
+    
+    O::new(new_offset)
 }

@@ -728,13 +728,6 @@ where
         self.fr_points.get(ix).and_then(|v| v.get_furthest(diag))
     }
     
-    pub fn set_furthest(&mut self, score: Score, diag: Diag<D>, offset: O) {
-        self.ensure_space(score);
-        
-        let ix = (score - self.score_min).as_usize();
-        self.fr_points[ix].set_furthest(diag, offset)
-    }
-
     fn ensure_space(&mut self, score: Score) {
         if self.is_empty() {
             self.fr_points.resize(8, Diagonals::default());

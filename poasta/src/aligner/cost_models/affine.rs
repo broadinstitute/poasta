@@ -7,7 +7,7 @@ use crate::aligner::{
         queue::{LayeredQueue, QueueLayer},
         AlignState, AlignableGraph, AlignableGraphNodeId, AlignableGraphNodePos, AstarState,
     },
-    extension::{extend, ExtendResult},
+    extension::extend,
     fr_points::{to_node_pos, Diag, DiagType, NodeFrPoints, PosType, Score},
     utils::AlignedPair,
     AlignmentMode,
@@ -51,16 +51,16 @@ impl AlignmentCostModel for Affine {
         F: Fn(&<Self::AstarStateType<G, D, O> as AstarState<G>>::AstarItem) -> usize,
     {
         let mut state = AffineAstarState::new(*self, graph, seq, alignment_mode);
-        let start = AffineAstarItem::new(
+        let initial_state = AffineAstarItem::new(
             Score::default(),
             graph.start_node(),
             Diag::default(),
             AlignState::Match,
         );
-
-        state.update_if_further(&start, 0);
-        let h = heuristic(&start);
-        state.queue_item(start, h);
+        
+        state.update_if_further(&initial_state, 0);
+        let h = heuristic(&initial_state);
+        state.queue_item(initial_state, h);
 
         state
     }
@@ -156,17 +156,6 @@ where
         }
     }
 
-    fn set_furthest<N>(&mut self, item: &AffineAstarItem<N, D>, offset: O) {
-        match item.state {
-            AlignState::Match => self.fr_points_m.set_furthest(item.score, item.diag, offset),
-            AlignState::Deletion => self.fr_points_d.set_furthest(item.score, item.diag, offset),
-            AlignState::Insertion => self.fr_points_i.set_furthest(item.score, item.diag, offset),
-            AlignState::Deletion2 | AlignState::Insertion2 => {
-                panic!("Invalid gap-affine state {:?}", item.state)
-            }
-        }
-    }
-
     fn update_if_further<N>(&mut self, item: &AffineAstarItem<N, D>, offset: O) -> bool {
         match item.state {
             AlignState::Match => self
@@ -246,12 +235,7 @@ where
         }
     }
 
-    fn set_furthest(&mut self, item: &AffineAstarItem<G::NodeType, D>, offset: O) {
-        self.fr_points[item.node.index()].set_furthest(item, offset);
-        self.fr_points[item.node.index()].set_visited(item);
-    }
-
-    fn extend_and_relax_match<F>(
+    fn relax_match<F>(
         &mut self,
         graph: &G,
         seq: &[u8],
@@ -260,201 +244,224 @@ where
     ) where
         F: Fn(&AffineAstarItem<G::NodeType, D>) -> usize,
     {
+        if item.node == graph.end_node() {
+            return;
+        }
+        
         let fr_point = self.fr_points[item.node.index()]
             .get_furthest(item)
             .unwrap_or(O::zero());
+        
+        let node_len = graph.node_len(item.node);
+        let node_pos = to_node_pos(item.diag, fr_point.as_usize());
+        
+        debug!("Relaxing match, {:?}, length: {node_len}, pos: {node_pos}", item.node);
 
-        debug!(
-            "Offset before extend: {:?}, diagonal: {:?}",
-            fr_point.as_usize(), item.diag
-        );
-        let extend_result = extend(graph, seq, item.node, item.diag, fr_point);
-
-        match extend_result {
-            ExtendResult::NodeEnd(extended_offset) => {
-                debug!(
-                    "(NodeEnd) Extended offset: {extended_offset:?} {:?}",
-                    item.node
+        if node_pos == node_len - 1 {
+            self.relax_match_at_succ(graph, seq, item, heuristic, fr_point);
+        } else {
+            // Not at the node end yet, so queue mismatch, deletion, and insertion states within the node
+            if fr_point.as_usize() < self.seq_length {
+                let new_item_mis = AffineAstarItem::new(
+                    item.score + self.costs.mismatch(),
+                    item.node,
+                    item.diag,
+                    AlignState::Match,
                 );
-                self.set_furthest(item, extended_offset);
-
+                let extended_offset = extend(graph, seq, item.node, item.diag, fr_point.increase_one());
+                
                 trace!(
                     target: "poasta::aligner::cost_models::affine::extend",
-                    score=item.score.as_usize(),
-                    node=item.node.index(),
-                    diag=item.diag.as_isize(),
-                    offset=fr_point.as_usize(),
+                    score=new_item_mis.score.as_usize(),
+                    node=new_item_mis.node.index(),
+                    diag=new_item_mis.diag.as_isize(),
+                    offset=fr_point.increase_one().as_usize(),
                     extended_offset=extended_offset.as_usize(),
-                    state=tracing::field::debug(&item.state)
-                );
-
-                let parent_node_len = graph.node_len(item.node);
-                let mut any_mismatch = false;
-                for succ in graph.successors(item.node) {
-                    let succ_diag = item.diag + parent_node_len;
-                    let succ_seq = graph.node_seq(succ);
-                    let succ_len = succ_seq.len();
-                    debug!("Succ: {:?} (diag: {succ_diag:?})", succ);
-
-                    if succ == graph.end_node() {
-                        debug!("Reached end node");
-
-                        // We reached the end node, immediately queue with zero cost
-                        let new_item =
-                            AffineAstarItem::new(item.score, succ, succ_diag, AlignState::Match);
-
-                        if self
-                            .update_if_further(&new_item, extended_offset.increase_one().as_usize())
-                        {
-                            let h = heuristic(&new_item);
-                            self.queue_item(new_item, h);
-                        }
-
-                        continue;
-                    }
-
-                    let mut mismatch = false;
-                    if extended_offset.as_usize() < self.seq_length {
-                        // Check if we have a match or mismatch
-                        let succ_qry_offset = extended_offset.increase_one();
-                        let succ_pos = to_node_pos(succ_diag, succ_qry_offset.as_usize());
-                        debug!("Succ pos: {succ_pos} (len: {succ_len}), succ offset: {succ_qry_offset:?} (seq len: {})", self.seq_length);
-                        let succ_item = if succ_seq[succ_pos] == seq[succ_qry_offset.as_usize() - 1]
-                        {
-                            // We have a successor with a match
-                            debug!(
-                                "match {:?} == {:?}",
-                                char::from(succ_seq[succ_pos]),
-                                char::from(seq[succ_qry_offset.as_usize() - 1])
-                            );
-                            AffineAstarItem::new(item.score, succ, succ_diag, AlignState::Match)
-                        } else {
-                            // We have a successor with a mismatch
-                            debug!(
-                                "mismatch {:?} != {:?}",
-                                char::from(succ_seq[succ_pos]),
-                                char::from(seq[succ_qry_offset.as_usize() - 1])
-                            );
-                            mismatch = true;
-                            AffineAstarItem::new(
-                                item.score + self.costs.mismatch(),
-                                succ,
-                                succ_diag,
-                                AlignState::Match,
-                            )
-                        };
-
-                        if self.fr_points[succ.index()]
-                            .update_if_further(&succ_item, succ_qry_offset)
-                        {
-                            let h = heuristic(&succ_item);
-                            self.queue_item(succ_item, h)
-                        }
-                    }
-
-                    // Check if we should open a deletion
-                    if extended_offset.as_usize() == self.seq_length || mismatch {
-                        let new_item_del = AffineAstarItem::new(
-                            item.score + self.costs.gap_open() + self.costs.gap_extend(),
-                            succ,
-                            succ_diag - 1isize,
-                            AlignState::Deletion,
-                        );
-
-                        if self.fr_points[succ.index()]
-                            .update_if_further(&new_item_del, extended_offset)
-                        {
-                            let h = heuristic(&new_item_del);
-                            self.queue_item(new_item_del, h)
-                        }
-                    }
-
-                    any_mismatch |= mismatch;
+                    state=tracing::field::debug(&item.state),
+                    "extend"
+                ); 
+                
+                if self.update_if_further(&new_item_mis, extended_offset.as_usize()) {
+                    let h = heuristic(&new_item_mis);
+                    self.queue_item(new_item_mis, h);
                 }
-
-                // Besides moving to successor nodes, see if we can open an insertion
-                if any_mismatch && extended_offset.as_usize() < self.seq_length {
-                    let new_item_ins = AffineAstarItem::new(
-                        item.score + self.costs.gap_open() + self.costs.gap_extend(),
-                        item.node,
-                        item.diag + 1isize,
-                        AlignState::Insertion,
-                    );
-
-                    if self.fr_points[item.node.index()]
-                        .update_if_further(&new_item_ins, extended_offset.increase_one())
-                    {
-                        let h = heuristic(&new_item_ins);
-                        self.queue_item(new_item_ins, h)
-                    }
-                }
-            }
-            ExtendResult::OtherEnd(extended_offset) => {
-                debug!("Extended offset: {extended_offset:?}");
-                self.set_furthest(item, extended_offset);
-
-                trace!(
-                    target: "poasta::aligner::cost_models::affine::extend",
-                    score=item.score.as_usize(),
-                    node=item.node.index(),
-                    diag=item.diag.as_isize(),
-                    offset=fr_point.as_usize(),
-                    extended_offset=extended_offset.as_usize(),
-                    state=tracing::field::debug(&item.state)
-                );
-
-                // Extension ended within a node, queue the mismatch and open indels, expanding to other diagonals
-                if extended_offset.as_usize() < self.seq_length {
-                    let new_item_mis = AffineAstarItem::new(
-                        item.score + self.costs.mismatch(),
-                        item.node,
-                        item.diag,
-                        AlignState::Match,
-                    );
-
-                    if self.fr_points[item.node.index()]
-                        .update_if_further(&new_item_mis, extended_offset.increase_one())
-                    {
-                        let h = heuristic(&new_item_mis);
-                        self.queue_item(new_item_mis, h)
-                    }
-
-                    let new_item_ins = AffineAstarItem::new(
-                        item.score + self.costs.gap_open() + self.costs.gap_extend(),
-                        item.node,
-                        item.diag + 1isize,
-                        AlignState::Insertion,
-                    );
-
-                    if self.fr_points[item.node.index()]
-                        .update_if_further(&new_item_ins, extended_offset.increase_one())
-                    {
-                        let h = heuristic(&new_item_ins);
-                        self.queue_item(new_item_ins, h)
-                    }
-                }
-
-                let new_item_del = AffineAstarItem::new(
+                
+                let new_item_ins = AffineAstarItem::new(
                     item.score + self.costs.gap_open() + self.costs.gap_extend(),
                     item.node,
-                    item.diag - 1isize,
+                    item.diag + 1isize,
+                    AlignState::Insertion,
+                );
+                
+                if self.update_if_further(&new_item_ins, fr_point.increase_one().as_usize()) {
+                    let h = heuristic(&new_item_ins);
+                    self.queue_item(new_item_ins, h);
+                }
+            }
+            
+            let new_item_del = AffineAstarItem::new(
+                item.score + self.costs.gap_open() + self.costs.gap_extend(),
+                item.node,
+                item.diag - 1isize,
+                AlignState::Deletion,
+            );
+            
+            if self.update_if_further(&new_item_del, fr_point.as_usize()) {
+                let h = heuristic(&new_item_del);
+                self.queue_item(new_item_del, h);
+            }
+        }
+    }
+    
+    fn relax_match_at_succ(
+        &mut self,
+        graph: &G,
+        seq: &[u8],
+        item: &AffineAstarItem<G::NodeType, D>,
+        heuristic: impl Fn(&AffineAstarItem<G::NodeType, D>) -> usize,
+        curr_offset: O,
+    ) {
+        // At the end of a node, we need to check successors to extend the (mis)match
+        let node_len = graph.node_len(item.node);
+        let mut any_mismatch = false;
+        
+        debug!("At node end, checking successors.");
+        
+        for succ in graph.successors(item.node) {
+            let new_diag = item.diag + node_len;
+            let succ_offset = curr_offset.increase_one();
+            let succ_node_pos = to_node_pos(new_diag, succ_offset.as_usize());
+            let succ_seq = graph.node_seq(succ);
+            
+            debug!("- Successor: {succ:?}, new diagonal: {new_diag:?}, new offset: {succ_offset:?}");
+            
+            if succ == graph.end_node() {
+                debug!("Succ is end node");
+
+                // We reached the end node, immediately queue with zero cost
+                let new_item =
+                    AffineAstarItem::new(item.score, succ, new_diag, AlignState::Match);
+
+                if self
+                    .update_if_further(&new_item, curr_offset.increase_one().as_usize())
+                {
+                    let h = heuristic(&new_item);
+                    self.queue_item(new_item, h);
+                }
+                
+                any_mismatch = true;
+
+                continue;
+            }
+            
+            if succ_offset.as_usize() > self.seq_length {
+                debug!("Moving beyond sequence, opening deletion only.");
+                
+                // Beyond the sequence length, but ensure we open deletion on the successor node
+                let new_item_del = AffineAstarItem::new(
+                    item.score + self.costs.gap_open() + self.costs.gap_extend(),
+                    succ,
+                    new_diag - 1isize,
                     AlignState::Deletion,
                 );
-
-                if self.fr_points[item.node.index()]
-                    .update_if_further(&new_item_del, extended_offset)
-                {
+                
+                if self.update_if_further(&new_item_del, curr_offset.as_usize()) {
                     let h = heuristic(&new_item_del);
-                    self.queue_item(new_item_del, h)
+                    self.queue_item(new_item_del, h);
+                }
+            } else if succ_seq[succ_node_pos] != seq[succ_offset.as_usize()-1] {
+                debug!("Mismatch at successor node {succ:?}, pos: {succ_node_pos}, qry offset: {:?}", 
+                    succ_offset);
+                
+                let new_item_mis = AffineAstarItem::new(
+                    item.score + self.costs.mismatch(),
+                    succ,
+                    new_diag,
+                    AlignState::Match,
+                );
+                
+                let extended_offset = extend(graph, seq, succ, new_diag, succ_offset);
+                trace!(
+                    target: "poasta::aligner::cost_models::affine::extend",
+                    score=new_item_mis.score.as_usize(),
+                    node=new_item_mis.node.index(),
+                    diag=new_item_mis.diag.as_isize(),
+                    offset=succ_offset.as_usize(),
+                    extended_offset=extended_offset.as_usize(),
+                    state=tracing::field::debug(&new_item_mis.state),
+                    "extend"
+                ); 
+                
+                if self.update_if_further(&new_item_mis, extended_offset.as_usize()) {
+                    let h = heuristic(&new_item_mis);
+                    self.queue_item(new_item_mis, h);
+                }
+                
+                let new_item_del = AffineAstarItem::new(
+                    item.score + self.costs.gap_open() + self.costs.gap_extend(),
+                    succ,
+                    new_diag - 1isize,
+                    AlignState::Deletion,
+                );
+                
+                if self.update_if_further(&new_item_del, curr_offset.as_usize()) {
+                    let h = heuristic(&new_item_del);
+                    self.queue_item(new_item_del, h);
+                }
+                
+                any_mismatch = true;
+            } else {
+                debug!("Match at successor node {succ:?}, pos: {succ_node_pos}, qry offset: {:?}", 
+                    succ_offset);
+                let extended_offset = extend(graph, seq, succ, new_diag, succ_offset);
+                
+                let new_item_match = AffineAstarItem::new(
+                    item.score,
+                    succ,
+                    new_diag,
+                    AlignState::Match,
+                );
+                
+                trace!(
+                    target: "poasta::aligner::cost_models::affine::extend",
+                    score=new_item_match.score.as_usize(),
+                    node=new_item_match.node.index(),
+                    diag=new_item_match.diag.as_isize(),
+                    offset=succ_offset.as_usize(),
+                    extended_offset=extended_offset.as_usize(),
+                    state=tracing::field::debug(&new_item_match.state),
+                    "extend"
+                ); 
+
+                if self.update_if_further(&new_item_match, extended_offset.as_usize()) {
+                    let h = heuristic(&new_item_match);
+                    self.queue_item(new_item_match, h);
+                }
+            }
+        }
+        
+        if any_mismatch {
+            // If we had a mismatch, we should also open an insertion on the current node, one diagonal up
+            if curr_offset.as_usize() < self.seq_length {
+                let new_item_ins = AffineAstarItem::new(
+                    item.score + self.costs.gap_open() + self.costs.gap_extend(),
+                    item.node,
+                    item.diag + 1isize,
+                    AlignState::Insertion,
+                );
+
+                if self.update_if_further(&new_item_ins, curr_offset.increase_one().as_usize()) {
+                    let h = heuristic(&new_item_ins);
+                    self.queue_item(new_item_ins, h);
                 }
             }
         }
     }
-
+    
     fn relax_deletion<F>(
         &mut self,
         graph: &G,
-        _: &[u8],
+        seq: &[u8],
         item: &AffineAstarItem<G::NodeType, D>,
         heuristic: F,
     ) where
@@ -470,6 +477,10 @@ where
         if node_pos == node_len - 1 {
             // At the end of a node, we need to check successors to extend the deletion
             for succ in graph.successors(item.node) {
+                if succ == graph.end_node() {
+                    continue;
+                }
+                
                 let new_item_del = AffineAstarItem::new(
                     item.score + self.costs.gap_extend(),
                     succ,
@@ -499,8 +510,20 @@ where
         // Close deletion if we can
         let new_item_match =
             AffineAstarItem::new(item.score, item.node, item.diag, AlignState::Match);
-
-        if self.update_if_further(&new_item_match, fr_point.as_usize()) {
+        let extended_offset = extend(graph, seq, item.node, item.diag, fr_point);
+        
+        trace!(
+            target: "poasta::aligner::cost_models::affine::extend",
+            score=new_item_match.score.as_usize(),
+            node=new_item_match.node.index(),
+            diag=new_item_match.diag.as_isize(),
+            offset=fr_point.as_usize(),
+            extended_offset=extended_offset.as_usize(),
+            state=tracing::field::debug(&new_item_match.state),
+            "extend"
+        ); 
+        
+        if self.update_if_further(&new_item_match, extended_offset.as_usize()) {
             let h = heuristic(&new_item_match);
             self.queue_item(new_item_match, h)
         }
@@ -508,8 +531,8 @@ where
 
     fn relax_insertion<F>(
         &mut self,
-        _: &G,
-        _: &[u8],
+        graph: &G,
+        seq: &[u8],
         item: &AffineAstarItem<G::NodeType, D>,
         heuristic: F,
     ) where
@@ -536,8 +559,20 @@ where
         // Close insertion if we can
         let new_item_match =
             AffineAstarItem::new(item.score, item.node, item.diag, AlignState::Match);
+        let extended_offset = extend(graph, seq, item.node, item.diag, fr_point);
+        
+        trace!(
+            target: "poasta::aligner::cost_models::affine::extend",
+            score=new_item_match.score.as_usize(),
+            node=new_item_match.node.index(),
+            diag=new_item_match.diag.as_isize(),
+            offset=fr_point.as_usize(),
+            extended_offset=extended_offset.as_usize(),
+            state=tracing::field::debug(&new_item_match.state),
+            "extend"
+        ); 
 
-        if self.update_if_further(&new_item_match, fr_point.as_usize()) {
+        if self.update_if_further(&new_item_match, extended_offset.as_usize()) {
             let h = heuristic(&new_item_match);
             self.queue_item(new_item_match, h)
         }
@@ -789,7 +824,7 @@ where
         F: Fn(&Self::AstarItem) -> usize,
     {
         match item.state {
-            AlignState::Match => self.extend_and_relax_match(graph, seq, item, heuristic),
+            AlignState::Match => self.relax_match(graph, seq, item, heuristic),
             AlignState::Deletion => self.relax_deletion(graph, seq, item, heuristic),
             AlignState::Insertion => self.relax_insertion(graph, seq, item, heuristic),
             AlignState::Deletion2 | AlignState::Insertion2 => {
