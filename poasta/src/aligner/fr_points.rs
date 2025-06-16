@@ -71,7 +71,7 @@ pub trait PosType: NumOperations + Unsigned {
 impl PosType for u8 {
     #[inline(always)]
     fn new(value: usize) -> Self {
-        (value as Self) & Self::MAX >> 1
+        (value as Self) & (Self::MAX >> 1)
     }
     
     #[inline(always)]
@@ -125,7 +125,7 @@ impl PosType for u8 {
 impl PosType for u16 {
     #[inline(always)]
     fn new(value: usize) -> Self {
-        (value as Self) & Self::MAX >> 1
+        (value as Self) & (Self::MAX >> 1)
     }
     
     #[inline(always)]
@@ -179,7 +179,7 @@ impl PosType for u16 {
 impl PosType for u32 {
     #[inline(always)]
     fn new(value: usize) -> Self {
-        (value as Self) & Self::MAX >> 1
+        (value as Self) & (Self::MAX >> 1)
     }
     
     #[inline(always)]
@@ -233,7 +233,7 @@ impl PosType for u32 {
 impl PosType for u64 {
     #[inline(always)]
     fn new(value: usize) -> Self {
-        (value as Self) & Self::MAX >> 1
+        (value as Self) & (Self::MAX >> 1)
     }
     
     #[inline(always)]
