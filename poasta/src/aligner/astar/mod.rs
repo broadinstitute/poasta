@@ -1,15 +1,17 @@
 use std::fmt;
-use std::hash::Hash;
 use std::marker::PhantomData;
 
 use crate::errors::PoastaError;
 use heuristic::AstarHeuristic;
 use tracing::{debug, span, Level};
+
 use super::utils::AlignedPair;
 use super::{fr_points::Score, AlignmentMode};
 
 pub mod queue;
 pub mod heuristic;
+
+use crate::aligner::traits::AlignableGraph;
 
 /// Enum representing the alignment state of a particular cell in the alignment matrix
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -19,49 +21,6 @@ pub enum AlignState {
     Insertion,
     Deletion2, // For two-piece gap model
     Insertion2,
-}
-
-
-pub trait AlignableGraphNodeId: fmt::Debug + Clone + Copy + PartialEq + Eq + Hash {
-    fn index(&self) -> usize;
-}
-
-pub trait AlignableGraphNodePos: fmt::Debug + Clone + Copy + PartialEq + Eq {
-    type NodeType: AlignableGraphNodeId;
-    
-    fn new(node: Self::NodeType, pos: usize) -> Self;
-    fn node(&self) -> Self::NodeType;
-    fn pos(&self) -> usize;
-}
-
-
-pub trait AlignableGraph {
-    type NodeType: AlignableGraphNodeId;
-    type NodePosType: AlignableGraphNodePos<NodeType = Self::NodeType>;
-    
-    type Successors<'a>: Iterator<Item=Self::NodeType> + 'a
-        where Self: 'a;
-    type Predecessors<'a>: Iterator<Item=Self::NodeType> + 'a
-        where Self: 'a;
-
-    fn start_node(&self) -> Self::NodeType;
-    fn end_node(&self) -> Self::NodeType;
-
-    fn node_count(&self) -> usize;
-    fn node_bound(&self) -> usize;
-
-    fn node_seq(&self, node: Self::NodeType) -> &[u8];
-
-    fn node_len(&self, node: Self::NodeType) -> usize {
-        self.node_seq(node).len()
-    }
-    
-    fn get_node_symbol(&self, p: Self::NodePosType) -> u8 {
-        self.node_seq(p.node())[p.pos()]
-    }
-
-    fn successors(&self, node: Self::NodeType) -> Self::Successors<'_>;
-    fn predecessors(&self, node: Self::NodeType) -> Self::Predecessors<'_>;
 }
 
 
@@ -100,7 +59,6 @@ pub(crate) struct Astar<'a, 'b, 'c, G, H, AS> {
     heuristic: &'c H,
     alignment_mode: AlignmentMode,
     state: AS,
-    dummy: PhantomData<G>,
 }
 
 impl<'a, 'b, 'c, G, H, AS> Astar<'a, 'b, 'c, G, H, AS>
@@ -119,7 +77,6 @@ where
             heuristic,
             alignment_mode,
             state,
-            dummy: PhantomData,
         }
     }
 

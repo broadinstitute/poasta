@@ -4,7 +4,7 @@ use std::io::Write;
 use petgraph::graph::IndexType;
 use petgraph::visit::{IntoEdgeReferences, EdgeRef};
 
-use crate::aligner::astar::AlignableGraph;
+use crate::aligner::traits::AlignableGraph;
 use crate::errors::PoastaIOError;
 use crate::graph::poa::POASeqGraph;
 

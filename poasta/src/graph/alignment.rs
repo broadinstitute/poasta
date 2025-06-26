@@ -5,7 +5,7 @@ use petgraph::graph::IndexType;
 
 use tracing::debug;
 
-use crate::aligner::astar::{AlignableGraph, AlignableGraphNodePos};
+use crate::aligner::traits::{AlignableGraph, AlignableGraphNodePos};
 use crate::aligner::utils::AlignedPair;
 
 use super::poa::{POANodeIndex, POASeqGraph, SplitTracker};
@@ -507,7 +507,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::graph::poa::POASeqGraph;
-    use super::{AlignedPair, AlignmentBlocks, AlignmentBlock, AlignmentBlockType, POANodePos, SplitTracker};
+    use super::{AlignedPair, AlignmentBlock, AlignmentBlockType, AlignmentBlocks, POANodePos, SplitTracker};
 
     #[test]
     fn test_alignment_block_mismatches() {

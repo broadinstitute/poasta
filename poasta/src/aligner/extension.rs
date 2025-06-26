@@ -1,9 +1,6 @@
 use tracing::debug;
-
-use super::{
-    astar::AlignableGraph,
-    fr_points::{to_node_pos, Diag, DiagType, PosType},
-};
+use super::traits::AlignableGraph;
+use super::fr_points::{to_node_pos, Diag, DiagType, PosType};
 
 /// SIMD-accelerated longest common prefix length calculator
 ///

@@ -1,5 +1,6 @@
+use crate::aligner::traits::AlignableGraph;
 use super::{
-    astar::{AlignableGraph, AstarState},
+    astar::AstarState,
     fr_points::{DiagType, PosType},
     AlignmentMode,
 };

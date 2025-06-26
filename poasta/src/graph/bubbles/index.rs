@@ -1,6 +1,8 @@
 use std::cmp::max;
 use std::collections::VecDeque;
 use rustc_hash::FxHashSet;
+use crate::graph::traits::{GraphNodeId, GraphWithStartEnd};
+
 use super::finder::SuperbubbleFinder;
 
 #[derive(Copy, Clone)]
@@ -45,17 +47,17 @@ pub struct BubbleIndex<N> {
 
 impl<N> BubbleIndex<N>
 where
-    N: NodeIndexType,
+    N: GraphNodeId,
 {
     pub fn new<G>(graph: &G) -> Self
-        where G: AlignableRefGraph<NodeIndex=N>
+        where G: GraphWithStartEnd<NodeType = N>
     {
         // Identify the bubbles in the graph and store entrances and exits
         let finder = SuperbubbleFinder::new(graph);
 
         // Two separate lists because nodes can be both an entrance and an exit
-        let mut bubble_entrances = vec![BubbleNode::None; graph.node_count_with_start_and_end()];
-        let mut bubble_exits = vec![BubbleNode::None; graph.node_count_with_start_and_end()];
+        let mut bubble_entrances = vec![BubbleNode::None; graph.node_count()];
+        let mut bubble_exits = vec![BubbleNode::None; graph.node_count()];
 
         for (entrance, exit) in finder.iter() {
             bubble_entrances[entrance.index()] = BubbleNode::Entrance(exit);
@@ -69,8 +71,8 @@ where
         // We keep a stack of bubbles that we have entered, and each time a node is popped
         // from the queue, we store which bubbles are currently active for the popped node, and the
         // shortest path distance to the exit.
-        let mut node_bubble_map = vec![Vec::default(); graph.node_count_with_start_and_end()];
-        let mut dists_to_end = vec![(0, 0); graph.node_count_with_start_and_end()];
+        let mut node_bubble_map = vec![Vec::default(); graph.node_count()];
+        let mut dists_to_end = vec![(0, 0); graph.node_count()];
 
         // Check if the end node is a bubble exit, and if yes, initialize the bubble stack with that bubble.
         let end_node_bubblestack = if bubble_exits[graph.end_node().index()].is_exit() {
@@ -207,7 +209,7 @@ pub struct NodeBubbleMap<N> {
 
 impl<N> NodeBubbleMap<N>
 where
-    N: NodeIndexType,
+    N: GraphNodeId,
 {
     pub fn new(bubble_exit: N, min_dist_to_exit: usize, max_dist_to_exit: usize) -> Self {
         NodeBubbleMap {
@@ -221,10 +223,12 @@ where
 #[cfg(test)]
 mod tests {
     use petgraph::graph::NodeIndex;
+    
+    use crate::graph::mock::{create_test_graph1, create_test_graph2};
     use super::NodeBubbleMap;
     use super::BubbleIndex;
 
-    type NIx = NodeIndex<crate::graphs::mock::NIx>;
+    type NIx = NodeIndex<crate::graph::mock::NIx>;
 
     #[test]
     pub fn test_bubble_map_builder() {
@@ -232,15 +236,15 @@ mod tests {
         let index1 = BubbleIndex::new(&graph1);
 
         let truth1 = [
-            vec![NodeBubbleMap::new(NIx::new(1), 1),],
-            vec![NodeBubbleMap::new(NIx::new(2), 1), NodeBubbleMap::new(NIx::new(1), 0)],
-            vec![NodeBubbleMap::new(NIx::new(2), 0)],
-            vec![NodeBubbleMap::new(NIx::new(4), 1)],
-            vec![NodeBubbleMap::new(NIx::new(5), 1), NodeBubbleMap::new(NIx::new(4), 0)],
-            vec![NodeBubbleMap::new(NIx::new(5), 0)],
-            vec![NodeBubbleMap::new(NIx::new(7), 1)],
-            vec![NodeBubbleMap::new(NIx::new(8), 1), NodeBubbleMap::new(NIx::new(7), 0)],
-            vec![NodeBubbleMap::new(NIx::new(8), 0)]
+            vec![NodeBubbleMap::new(NIx::new(1), 1, 0),],
+            vec![NodeBubbleMap::new(NIx::new(2), 1, 0), NodeBubbleMap::new(NIx::new(1), 0, 0)],
+            vec![NodeBubbleMap::new(NIx::new(2), 0, 0)],
+            vec![NodeBubbleMap::new(NIx::new(4), 1, 0)],
+            vec![NodeBubbleMap::new(NIx::new(5), 1, 0), NodeBubbleMap::new(NIx::new(4), 0, 0)],
+            vec![NodeBubbleMap::new(NIx::new(5), 0, 0)],
+            vec![NodeBubbleMap::new(NIx::new(7), 1, 0)],
+            vec![NodeBubbleMap::new(NIx::new(8), 1, 0), NodeBubbleMap::new(NIx::new(7), 0, 0)],
+            vec![NodeBubbleMap::new(NIx::new(8), 0, 0)]
         ];
 
         for n in graph1.node_indices() {
@@ -260,21 +264,21 @@ mod tests {
         let index2 = BubbleIndex::new(&graph2);
 
         let truth2 = [
-            vec![NodeBubbleMap::new(NIx::new(2), 1)],
-            vec![NodeBubbleMap::new(NIx::new(2), 1)],
-            vec![NodeBubbleMap::new(NIx::new(7), 2), NodeBubbleMap::new(NIx::new(2), 0)],
-            vec![NodeBubbleMap::new(NIx::new(7), 1)],
-            vec![NodeBubbleMap::new(NIx::new(6), 2), NodeBubbleMap::new(NIx::new(7), 3)],
-            vec![NodeBubbleMap::new(NIx::new(7), 2), NodeBubbleMap::new(NIx::new(6), 1)],
-            vec![NodeBubbleMap::new(NIx::new(7), 1), NodeBubbleMap::new(NIx::new(6), 0)],
-            vec![NodeBubbleMap::new(NIx::new(14), 1), NodeBubbleMap::new(NIx::new(7), 0)],
-            vec![NodeBubbleMap::new(NIx::new(7), 3), NodeBubbleMap::new(NIx::new(6), 2)],
-            vec![NodeBubbleMap::new(NIx::new(7), 2), NodeBubbleMap::new(NIx::new(6), 1)],
-            vec![NodeBubbleMap::new(NIx::new(11), 1), NodeBubbleMap::new(NIx::new(7), 2)],
-            vec![NodeBubbleMap::new(NIx::new(7), 1), NodeBubbleMap::new(NIx::new(11), 0)],
-            vec![NodeBubbleMap::new(NIx::new(14), 1)],
-            vec![NodeBubbleMap::new(NIx::new(14), 1)],
-            vec![NodeBubbleMap::new(NIx::new(14), 0)],
+            vec![NodeBubbleMap::new(NIx::new(2), 1, 0)],
+            vec![NodeBubbleMap::new(NIx::new(2), 1, 0)],
+            vec![NodeBubbleMap::new(NIx::new(7), 2, 0), NodeBubbleMap::new(NIx::new(2), 0, 0)],
+            vec![NodeBubbleMap::new(NIx::new(7), 1, 0)],
+            vec![NodeBubbleMap::new(NIx::new(6), 2, 0), NodeBubbleMap::new(NIx::new(7), 3, 0)],
+            vec![NodeBubbleMap::new(NIx::new(7), 2, 0), NodeBubbleMap::new(NIx::new(6), 1, 0)],
+            vec![NodeBubbleMap::new(NIx::new(7), 1, 0), NodeBubbleMap::new(NIx::new(6), 0, 0)],
+            vec![NodeBubbleMap::new(NIx::new(14), 1, 0), NodeBubbleMap::new(NIx::new(7), 0, 0)],
+            vec![NodeBubbleMap::new(NIx::new(7), 3, 0), NodeBubbleMap::new(NIx::new(6), 2, 0)],
+            vec![NodeBubbleMap::new(NIx::new(7), 2, 0), NodeBubbleMap::new(NIx::new(6), 1, 0)],
+            vec![NodeBubbleMap::new(NIx::new(11), 1, 0), NodeBubbleMap::new(NIx::new(7), 2, 0)],
+            vec![NodeBubbleMap::new(NIx::new(7), 1, 0), NodeBubbleMap::new(NIx::new(11), 0, 0)],
+            vec![NodeBubbleMap::new(NIx::new(14), 1, 0)],
+            vec![NodeBubbleMap::new(NIx::new(14), 1, 0)],
+            vec![NodeBubbleMap::new(NIx::new(14), 0, 0)],
         ];
 
         for n in graph2.node_indices() {

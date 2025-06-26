@@ -1,11 +1,12 @@
 use std::{marker::PhantomData, ops::Bound};
 
-use astar::{heuristic::AstarHeuristic, AlignableGraph, Astar, AstarResult, AstarState};
+use astar::{heuristic::AstarHeuristic, Astar, AstarResult, AstarState};
 use cost_models::AlignmentCostModel;
 use fr_points::{DiagType, PosType};
-
+use traits::AlignableGraph;
 use crate::errors::PoastaError;
 
+pub mod traits;
 pub mod astar;
 pub mod cost_models;
 pub(crate) mod extension;

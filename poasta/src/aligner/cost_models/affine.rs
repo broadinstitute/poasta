@@ -5,13 +5,15 @@ use super::AlignmentCostModel;
 use crate::aligner::{
     astar::{
         queue::{LayeredQueue, QueueLayer},
-        AlignState, AlignableGraph, AlignableGraphNodeId, AlignableGraphNodePos, AstarState,
+        AlignState, AstarState,
     },
     extension::extend,
     fr_points::{to_node_pos, Diag, DiagType, NodeFrPoints, PosType, Score},
     utils::AlignedPair,
     AlignmentMode,
 };
+use crate::aligner::traits::{AlignableGraph, AlignableGraphNodePos};
+use crate::graph::traits::GraphNodeId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Affine {
@@ -225,7 +227,7 @@ where
     O: PosType,
 {
     fn new(costs: Affine, graph: &G, seq: &[u8], alignment_mode: AlignmentMode) -> Self {
-        let node_count = graph.node_bound();
+        let node_count = graph.node_count();
         Self {
             costs,
             seq_length: seq.len(),

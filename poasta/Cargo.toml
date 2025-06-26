@@ -13,6 +13,7 @@ tracing = { version = "0.1.40" }
 noodles = { version = "~0.83", features = ["fasta", "fastq"] }
 itertools = "0.13.0"
 foldhash = "0.1.3"
+rustc-hash = "2.1.1"
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3.18" }

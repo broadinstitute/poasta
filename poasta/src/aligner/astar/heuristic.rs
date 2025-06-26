@@ -1,11 +1,13 @@
-use super::AlignableGraph;
+use std::sync::Arc;
+use crate::aligner::traits::AlignableGraph;
+use crate::graph::bubbles::index::BubbleIndex;
 
 
 pub trait AstarHeuristic<G, T>: Default
 where
     G: AlignableGraph,
 {
-    fn init(&mut self, graph: &G, seq: &[u8]);
+    fn init(&mut self, graph: &G, seq: &[u8], bubble_index: Arc<BubbleIndex<G::NodeType>>);
     
     fn h(&self, item: &T) -> usize;
 }
@@ -18,7 +20,7 @@ where
     G: AlignableGraph
 {
     #[inline(always)]
-    fn init(&mut self, _: &G, _: &[u8]) {
+    fn init(&mut self, _: &G, _: &[u8], _: Arc<BubbleIndex<G::NodeType>>) {
         
     }
     

@@ -2,8 +2,9 @@ use std::cmp::min;
 use std::iter::Rev;
 use std::ops::Range;
 use rustc_hash::FxHashMap;
-use crate::graphs::{AlignableRefGraph, NodeIndexType};
-use crate::graphs::tools::rev_postorder_nodes;
+
+use crate::graph::traits::{GraphBase, GraphWithStartEnd};
+use crate::graph::utils::rev_postorder_nodes;
 
 /// Identify superbubbles in a directed acyclic graph
 ///
@@ -14,18 +15,18 @@ use crate::graphs::tools::rev_postorder_nodes;
 ///    https://doi.org/10.1186/s13015-018-0134-3.
 pub struct SuperbubbleFinder<'a, G>
 where
-    G: AlignableRefGraph
+    G: GraphWithStartEnd,
 {
     graph: &'a G,
     rev_postorder: Vec<usize>,
-    inv_rev_postorder: Vec<G::NodeIndex>,
-    out_parent: FxHashMap<G::NodeIndex, i64>,
-    out_child: FxHashMap<G::NodeIndex, i64>,
+    inv_rev_postorder: Vec<G::NodeType>,
+    out_parent: FxHashMap<G::NodeType, i64>,
+    out_child: FxHashMap<G::NodeType, i64>,
 }
 
 impl<'a, G> SuperbubbleFinder<'a, G>
 where
-    G: AlignableRefGraph,
+    G: GraphWithStartEnd,
 {
     pub fn new(graph: &'a G) -> Self {
         let inv_rev_postorder = rev_postorder_nodes(graph);
@@ -34,7 +35,7 @@ where
             rev_postorder[node_ix.index()] = postorder
         }
 
-        let out_parent = graph.all_nodes()
+        let out_parent = graph.all_nodes_iter()
             .map(|n| {
                 let min_pred = graph.predecessors(n)
                     .map(|p| rev_postorder[p.index()] as i64)
@@ -69,7 +70,7 @@ where
         &self.rev_postorder
     }
 
-    pub fn inv_rev_postorder(&self) -> &[G::NodeIndex] {
+    pub fn inv_rev_postorder(&self) -> &[G::NodeType] {
         &self.inv_rev_postorder
     }
 
@@ -81,25 +82,25 @@ where
 
 pub struct SuperbubbleIterator<'a, G>
 where
-    G: AlignableRefGraph,
+    G: GraphWithStartEnd,
 {
     finder: &'a SuperbubbleFinder<'a, G>,
-    out_parent_map: FxHashMap<G::NodeIndex, i64>,
-    stack: Vec<G::NodeIndex>,
+    out_parent_map: FxHashMap<G::NodeType, i64>,
+    stack: Vec<G::NodeType>,
     curr: Rev<Range<usize>>,
-    candidate_exit: Option<G::NodeIndex>,
+    candidate_exit: Option<G::NodeType>,
 }
 
 impl<'a, G> SuperbubbleIterator<'a, G>
 where
-    G: AlignableRefGraph,
+    G: GraphWithStartEnd,
 {
     fn new(finder: &'a SuperbubbleFinder<'a, G>) -> Self {
         Self {
             finder,
             out_parent_map: FxHashMap::default(),
             stack: Vec::default(),
-            curr: (0..finder.graph.node_count_with_start_and_end()).rev(),
+            curr: (0..finder.graph.node_count()).rev(),
             candidate_exit: None,
         }
     }
@@ -108,9 +109,9 @@ where
 
 impl<'a, G> Iterator for SuperbubbleIterator<'a, G>
 where
-    G: AlignableRefGraph,
+    G: GraphWithStartEnd,
 {
-    type Item = (G::NodeIndex, G::NodeIndex);
+    type Item = (G::NodeType, G::NodeType);
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(curr) = self.curr.next() {
@@ -180,9 +181,9 @@ where
 #[cfg(test)]
 mod tests {
     use rustc_hash::FxHashSet;
-    use crate::bubbles::finder::SuperbubbleFinder;
-    use crate::graphs::AlignableRefGraph;
-    use crate::graphs::mock::{create_test_graph1, create_test_graph2};
+    use crate::graph::bubbles::finder::SuperbubbleFinder;
+    use crate::graph::traits::GraphWithStartEnd;
+    use crate::graph::mock::{create_test_graph1, create_test_graph2};
 
 
     #[test]

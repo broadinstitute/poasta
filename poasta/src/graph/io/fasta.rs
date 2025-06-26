@@ -5,7 +5,7 @@ use std::ops::Range;
 use foldhash::HashMap;
 use petgraph::graph::IndexType;
 
-use crate::aligner::astar::{AlignableGraph, AlignableGraphNodePos};
+use crate::aligner::traits::{AlignableGraph, AlignableGraphNodePos};
 use crate::graph::alignment::POANodePos;
 use crate::graph::poa::POANodeIndex;
 
