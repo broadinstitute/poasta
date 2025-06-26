@@ -1,0 +1,15 @@
+H	VN:Z:1.1
+
+S	1	AAACTGC
+S	2	AC
+S	3	TGC
+S	4	TTGCTGACGT
+S	5	TA
+S	6	CG
+
+L	1	+	2	+	0M
+L	1	+	3	+	0M
+L	2	+	4	+	0M
+L	3	+	4	+	0M
+L	4	+	5	+	0M
+L	4	+	6	+	0M
