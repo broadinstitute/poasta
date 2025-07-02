@@ -4,7 +4,7 @@ use std::fmt::Debug;
 use crate::aligner::astar::AstarVisited;
 use crate::aligner::scoring::{AlignmentCosts, Score};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AlignState {
     Match,
     Deletion,

@@ -1,9 +1,11 @@
 // pub mod gap_linear;
 pub mod gap_affine;
+pub mod gap_multi_piece_affine;
 
 use crate::aligner::aln_graph::{AlignmentGraph, AlignState};
 
 pub use gap_affine::GapAffine;
+pub use gap_multi_piece_affine::GapMultiPieceAffine;
 use std::ops::{Add, AddAssign, Sub, SubAssign, Bound};
 use std::fmt::{Display, Formatter};
 use std::cmp::Ordering;
