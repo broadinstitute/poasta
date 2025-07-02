@@ -1,0 +1,221 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{geometry}
+\geometry{margin=1in}
+
+\title{Two-Piece Gap-Affine Penalties for Partial Order Alignment on Graphs}
+\author{Mathematical Framework and Algorithmic Design}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+
+Partial order alignment (POA) extends traditional sequence alignment to align sequences against directed acyclic graphs (DAGs) representing multiple sequences. The current POASTA implementation uses standard affine gap penalties, which may over-penalize long insertions and deletions. This document presents a mathematical framework for implementing two-piece gap-affine penalties that better model biological gap length distributions.
+
+\section{Mathematical Framework}
+
+\subsection{Standard Affine Gap Model}
+
+The current gap penalty function is defined as:
+\begin{equation}
+g_{\text{affine}}(k) = \begin{cases} 
+0 & \text{if } k = 0 \\
+\alpha + \beta \cdot (k-1) & \text{if } k > 0
+\end{cases}
+\end{equation}
+
+where $\alpha$ is the gap opening penalty, $\beta$ is the gap extension penalty, and $k$ is the gap length.
+
+\subsection{Two-Piece Gap-Affine Model}
+
+The two-piece gap-affine model introduces a breakpoint $k_0$ to distinguish between short and long gaps:
+
+\begin{equation}
+g_{\text{two-piece}}(k) = \begin{cases}
+0 & \text{if } k = 0 \\
+\alpha + \beta_1 \cdot (k-1) & \text{if } 1 \leq k \leq k_0 \\
+\alpha + \beta_1 \cdot (k_0-1) + \beta_2 \cdot (k-k_0) & \text{if } k > k_0
+\end{cases}
+\end{equation}
+
+where:
+\begin{align}
+\alpha &= \text{gap opening penalty} \\
+\beta_1 &= \text{gap extension penalty for short gaps} \\
+\beta_2 &= \text{gap extension penalty for long gaps} \\
+k_0 &= \text{breakpoint length}
+\end{align}
+
+Typically, $\beta_2 < \beta_1$ to reduce over-penalization of long gaps.
+
+\subsection{Biological Justification}
+
+Empirical studies of protein structural alignments show that gap length distributions exhibit bilinear behavior in log-space:
+\begin{equation}
+\log P(\text{gap length} = k) = \begin{cases}
+a_1 + b_1 \cdot k & \text{if } k \leq 3 \\
+a_2 + b_2 \cdot k & \text{if } k > 3
+\end{cases}
+\end{equation}
+
+where $|b_2| < |b_1|$, indicating that long gaps ($k > 3$) are relatively less penalized than expected from a single exponential distribution.
+
+\section{Graph Alignment Formulation}
+
+\subsection{Problem Definition}
+
+Let $G = (V, E)$ be a directed acyclic graph representing a partial order alignment, and let $q = q_1q_2...q_n$ be a query sequence. The goal is to find an optimal alignment path through $G$ that aligns $q$ to the graph.
+
+\subsection{State Space}
+
+Define the state space as:
+\begin{equation}
+\mathcal{S} = \{(i, v, s, l) : i \in [0,n], v \in V, s \in \Sigma, l \in \mathbb{N}\}
+\end{equation}
+
+where:
+\begin{align}
+i &= \text{position in query sequence} \\
+v &= \text{current node in graph} \\
+s &= \text{alignment state} \in \{\text{M}, \text{I}_1, \text{I}_2, \text{D}_1, \text{D}_2\} \\
+l &= \text{current gap length}
+\end{align}
+
+The alignment states are:
+\begin{align}
+\text{M} &= \text{match/mismatch state} \\
+\text{I}_1 &= \text{insertion state, short gap} \\
+\text{I}_2 &= \text{insertion state, long gap} \\
+\text{D}_1 &= \text{deletion state, short gap} \\
+\text{D}_2 &= \text{deletion state, long gap}
+\end{align}
+
+\subsection{Dynamic Programming Recurrence Relations}
+
+Let $\text{OPT}(i, v, s, l)$ denote the optimal alignment score for state $(i, v, s, l)$.
+
+\subsubsection{Match State}
+\begin{align}
+\text{OPT}(i, v, \text{M}, 0) = \min_{u \in \text{pred}(v)} \{ &\text{OPT}(i-1, u, \text{M}, 0) + \sigma(q_i, v), \\
+&\min_{l'} \text{OPT}(i-1, u, \text{I}_1, l') + \sigma(q_i, v), \\
+&\min_{l'} \text{OPT}(i-1, u, \text{I}_2, l') + \sigma(q_i, v), \\
+&\min_{l'} \text{OPT}(i-1, u, \text{D}_1, l') + \sigma(q_i, v), \\
+&\min_{l'} \text{OPT}(i-1, u, \text{D}_2, l') + \sigma(q_i, v) \}
+\end{align}
+
+where $\sigma(q_i, v)$ is the substitution score for aligning query character $q_i$ with graph node $v$.
+
+\subsubsection{Short Insertion States}
+\begin{align}
+\text{OPT}(i, v, \text{I}_1, 1) &= \text{OPT}(i-1, v, \text{M}, 0) + \alpha + \beta_1 \cdot 0 \\
+\text{OPT}(i, v, \text{I}_1, l) &= \text{OPT}(i-1, v, \text{I}_1, l-1) + \beta_1 \quad \text{for } 1 < l \leq k_0
+\end{align}
+
+\subsubsection{Long Insertion States}
+\begin{align}
+\text{OPT}(i, v, \text{I}_2, k_0+1) &= \text{OPT}(i-1, v, \text{I}_1, k_0) + \beta_2 \\
+\text{OPT}(i, v, \text{I}_2, l) &= \text{OPT}(i-1, v, \text{I}_2, l-1) + \beta_2 \quad \text{for } l > k_0+1
+\end{align}
+
+\subsubsection{Short Deletion States}
+\begin{align}
+\text{OPT}(i, v, \text{D}_1, 1) &= \min_{u \in \text{pred}(v)} \text{OPT}(i, u, \text{M}, 0) + \alpha + \beta_1 \cdot 0 \\
+\text{OPT}(i, v, \text{D}_1, l) &= \min_{u \in \text{pred}(v)} \text{OPT}(i, u, \text{D}_1, l-1) + \beta_1 \quad \text{for } 1 < l \leq k_0
+\end{align}
+
+\subsubsection{Long Deletion States}
+\begin{align}
+\text{OPT}(i, v, \text{D}_2, k_0+1) &= \min_{u \in \text{pred}(v)} \text{OPT}(i, u, \text{D}_1, k_0) + \beta_2 \\
+\text{OPT}(i, v, \text{D}_2, l) &= \min_{u \in \text{pred}(v)} \text{OPT}(i, u, \text{D}_2, l-1) + \beta_2 \quad \text{for } l > k_0+1
+\end{align}
+
+\section{A* Algorithm Adaptation}
+
+\subsection{Heuristic Function}
+
+The admissible heuristic function for the remaining alignment cost is:
+\begin{equation}
+h(i, v, s, l) = h_{\text{gap}}(n-i) + h_{\text{sub}}(i, v)
+\end{equation}
+
+where $h_{\text{gap}}(r)$ is the minimum gap cost for $r$ remaining characters:
+\begin{equation}
+h_{\text{gap}}(r) = \begin{cases}
+0 & \text{if } r = 0 \\
+\alpha + \beta_1 \cdot (r-1) & \text{if } r \leq k_0 \\
+\alpha + \beta_1 \cdot (k_0-1) + \beta_2 \cdot (r-k_0) & \text{if } r > k_0
+\end{cases}
+\end{equation}
+
+and $h_{\text{sub}}(i, v)$ is the minimum substitution cost from node $v$ to the end of the graph.
+
+\subsection{Priority Function}
+
+The A* priority function is:
+\begin{equation}
+f(i, v, s, l) = g(i, v, s, l) + h(i, v, s, l)
+\end{equation}
+
+where $g(i, v, s, l)$ is the actual cost to reach state $(i, v, s, l)$.
+
+\section{Complexity Analysis}
+
+\subsection{Time Complexity}
+
+The time complexity of the two-piece gap-affine algorithm is:
+\begin{equation}
+O(|V| \cdot |E| \cdot n \cdot k_{\max})
+\end{equation}
+
+where $k_{\max}$ is the maximum gap length considered. This represents a factor of $k_{\max}$ increase over the standard affine model.
+
+\subsection{Space Complexity}
+
+The space complexity is:
+\begin{equation}
+O(|V| \cdot n \cdot k_{\max})
+\end{equation}
+
+The additional space requirement can be managed through:
+\begin{itemize}
+\item Limiting $k_{\max}$ to biologically reasonable values (e.g., 20-50)
+\item Using sparse representations for gap length states
+\item Implementing state pruning strategies
+\end{itemize}
+
+\section{Implementation Considerations}
+
+\subsection{Parameter Selection}
+
+Based on empirical studies, recommended parameters are:
+\begin{align}
+k_0 &= 3 \quad \text{(breakpoint at length 3)} \\
+\beta_1 &= 2 \quad \text{(standard extension penalty)} \\
+\beta_2 &= 1 \quad \text{(reduced penalty for long gaps)} \\
+\alpha &= 6 \quad \text{(gap opening penalty)}
+\end{align}
+
+\subsection{Memory Optimization}
+
+To manage memory requirements:
+\begin{enumerate}
+\item Use blocked storage with separate blocks for different gap length ranges
+\item Implement lazy state creation
+\item Employ bit-packing for small gap lengths
+\item Use hash maps for sparse long gap states
+\end{enumerate}
+
+\section{Conclusion}
+
+The two-piece gap-affine penalty model provides a more biologically realistic approach to gap scoring in partial order alignment. While it increases computational complexity by a factor of $k_{\max}$, careful implementation with appropriate parameter selection and optimization strategies can make it practical for real-world applications.
+
+The mathematical framework presented here provides a solid foundation for implementing this model in the POASTA system, with clear algorithmic specifications and complexity analysis to guide the implementation process.
+
+\end{document}
