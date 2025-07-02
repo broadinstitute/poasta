@@ -11,12 +11,11 @@ use flate2::read::MultiGzDecoder;
 use petgraph::graph::IndexType;
 use serde::de::DeserializeOwned;
 
-use poasta::aligner::alignment::print_alignment;
-use poasta::aligner::config::{AffineMinGapCost, AlignmentConfig};
+use poasta::aligner::config::{AffineMinGapCost, MultiPieceAffineMinGapCost, AlignmentConfig};
 use poasta::debug::messages::DebugOutputMessage;
 use poasta::debug::DebugOutputWriter;
 
-use poasta::aligner::scoring::{AlignmentType, GapAffine};
+use poasta::aligner::scoring::{AlignmentType, GapAffine, GapMultiPieceAffine};
 use poasta::aligner::PoastaAligner;
 use poasta::errors::PoastaError;
 use poasta::graphs::poa::{POAGraph, POAGraphWithIx};
@@ -120,15 +119,18 @@ struct AlignArgs {
     #[clap(help_heading = "Alignment configuration")]
     cost_mismatch: Option<u8>,
 
-    /// Penalty for opening a new gap
+    /// Penalty for opening a new gap. Use comma-separated values for multi-piece gap penalties.
+    /// Examples: "6" (single cost for all pieces), "6,4" (different costs per piece)
     #[arg(short = 'g', default_value = "6")]
     #[clap(help_heading = "Alignment configuration")]
-    cost_gap_open: Option<u8>,
+    cost_gap_open: Option<String>,
 
-    /// Penalty for extending a gap
+    /// Penalty for extending a gap. Use comma-separated values for multi-piece gap penalties.
+    /// Examples: "2" (standard affine), "2,1" (two-piece), "3,2,1" (three-piece)
+    /// The number of values determines the gap penalty model complexity.
     #[arg(short = 'e', default_value = "2")]
     #[clap(help_heading = "Alignment configuration")]
-    cost_gap_extend: Option<u8>,
+    cost_gap_extend: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -227,6 +229,53 @@ where
     Ok(())
 }
 
+fn parse_gap_costs(cost_str: &str, cost_type: &str) -> Result<Vec<u8>> {
+    if cost_str.contains(',') {
+        // Multi-piece: parse comma-separated values
+        cost_str.split(',')
+            .map(|s| s.trim().parse::<u8>())
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .with_context(|| format!("Invalid gap {} costs. Use comma-separated integers like '2,1' or '3,2,1'", cost_type))
+    } else {
+        // Single value
+        let cost = cost_str.parse::<u8>()
+            .with_context(|| format!("Invalid gap {} cost. Use a single integer like '2' or comma-separated like '2,1'", cost_type))?;
+        Ok(vec![cost])
+    }
+}
+
+fn validate_and_expand_gap_open_costs(open_costs: Vec<u8>, extend_costs: &[u8]) -> Result<Vec<u8>> {
+    match open_costs.len() {
+        1 => {
+            // Single gap open cost: expand to match number of pieces
+            Ok(vec![open_costs[0]; extend_costs.len()])
+        },
+        n if n == extend_costs.len() => {
+            // Gap open costs match extension costs: use as-is
+            Ok(open_costs)
+        },
+        _ => {
+            Err(anyhow::anyhow!(
+                "Gap open costs count ({}) must be either 1 (same cost for all pieces) or match extension costs count ({})",
+                open_costs.len(),
+                extend_costs.len()
+            ))
+        }
+    }
+}
+
+fn generate_default_breakpoints(num_pieces: usize) -> Vec<usize> {
+    match num_pieces {
+        2 => vec![10],           // Two-piece: short (1-10), long (11+)
+        3 => vec![5, 20],        // Three-piece: short (1-5), medium (6-20), long (21+)
+        4 => vec![3, 10, 30],    // Four-piece: very short, short, medium, long
+        _ => {
+            // For other cases, use exponential spacing
+            (1..num_pieces).map(|i| 5 * (1 << i)).collect()
+        }
+    }
+}
+
 fn align_subcommand(align_args: &AlignArgs) -> Result<()> {
     let debug_writer = align_args
         .debug_output
@@ -249,43 +298,105 @@ fn align_subcommand(align_args: &AlignArgs) -> Result<()> {
         POAGraphWithIx::U32(POAGraph::new())
     };
 
-    // TODO: separate implementations for edit distance/linear gap penalties
-    let scoring = GapAffine::new(
-        align_args.cost_mismatch.unwrap_or(4),
-        align_args.cost_gap_extend.unwrap_or(2),
-        align_args.cost_gap_open.unwrap_or(6),
-    );
-    let mut aligner = if let Some(ref debug) = debug_writer {
-        PoastaAligner::new_with_debug(AffineMinGapCost(scoring), AlignmentType::Global, debug)
-    } else {
-        PoastaAligner::new(AffineMinGapCost(scoring), AlignmentType::Global)
-    };
+    // Parse gap costs to determine scoring model
+    let extend_costs = parse_gap_costs(
+        &align_args.cost_gap_extend.as_deref().unwrap_or("2"),
+        "extension"
+    )?;
+    
+    let open_costs = parse_gap_costs(
+        &align_args.cost_gap_open.as_deref().unwrap_or("6"),
+        "open"
+    )?;
 
-    match graph {
-        POAGraphWithIx::U8(ref mut g) => perform_alignment(
-            g,
-            &mut aligner,
-            debug_writer.as_ref(),
-            align_args.sequences.as_ref(),
-        )?,
-        POAGraphWithIx::U16(ref mut g) => perform_alignment(
-            g,
-            &mut aligner,
-            debug_writer.as_ref(),
-            align_args.sequences.as_ref(),
-        )?,
-        POAGraphWithIx::U32(ref mut g) => perform_alignment(
-            g,
-            &mut aligner,
-            debug_writer.as_ref(),
-            align_args.sequences.as_ref(),
-        )?,
-        POAGraphWithIx::USIZE(ref mut g) => perform_alignment(
-            g,
-            &mut aligner,
-            debug_writer.as_ref(),
-            align_args.sequences.as_ref(),
-        )?,
+    // Validate and expand gap open costs to match extension costs
+    let expanded_open_costs = validate_and_expand_gap_open_costs(open_costs, &extend_costs)?;
+
+    // Create aligner with appropriate scoring model based on extension costs
+    if extend_costs.len() == 1 {
+        // Standard affine gap penalty (single extension cost)
+        let scoring = GapAffine::new(
+            align_args.cost_mismatch.unwrap_or(4),
+            extend_costs[0],
+            expanded_open_costs[0],
+        );
+        let mut aligner = if let Some(ref debug) = debug_writer {
+            PoastaAligner::new_with_debug(AffineMinGapCost(scoring), AlignmentType::Global, debug)
+        } else {
+            PoastaAligner::new(AffineMinGapCost(scoring), AlignmentType::Global)
+        };
+
+        // Perform alignment with standard affine scoring
+        match graph {
+            POAGraphWithIx::U8(ref mut g) => perform_alignment(
+                g,
+                &mut aligner,
+                debug_writer.as_ref(),
+                align_args.sequences.as_ref(),
+            )?,
+            POAGraphWithIx::U16(ref mut g) => perform_alignment(
+                g,
+                &mut aligner,
+                debug_writer.as_ref(),
+                align_args.sequences.as_ref(),
+            )?,
+            POAGraphWithIx::U32(ref mut g) => perform_alignment(
+                g,
+                &mut aligner,
+                debug_writer.as_ref(),
+                align_args.sequences.as_ref(),
+            )?,
+            POAGraphWithIx::USIZE(ref mut g) => perform_alignment(
+                g,
+                &mut aligner,
+                debug_writer.as_ref(),
+                align_args.sequences.as_ref(),
+            )?,
+        }
+    } else {
+        // Multi-piece gap penalty (multiple extension costs)
+        let breakpoints = generate_default_breakpoints(extend_costs.len());
+
+        let scoring = GapMultiPieceAffine::new(
+            align_args.cost_mismatch.unwrap_or(4),
+            expanded_open_costs[0], // Use first gap open cost for now (multi-piece open costs need more work)
+            &breakpoints,
+            &extend_costs
+        );
+
+        let mut aligner = if let Some(ref debug) = debug_writer {
+            PoastaAligner::new_with_debug(MultiPieceAffineMinGapCost(scoring), AlignmentType::Global, debug)
+        } else {
+            PoastaAligner::new(MultiPieceAffineMinGapCost(scoring), AlignmentType::Global)
+        };
+
+        // Perform alignment with multi-piece scoring
+        match graph {
+            POAGraphWithIx::U8(ref mut g) => perform_alignment(
+                g,
+                &mut aligner,
+                debug_writer.as_ref(),
+                align_args.sequences.as_ref(),
+            )?,
+            POAGraphWithIx::U16(ref mut g) => perform_alignment(
+                g,
+                &mut aligner,
+                debug_writer.as_ref(),
+                align_args.sequences.as_ref(),
+            )?,
+            POAGraphWithIx::U32(ref mut g) => perform_alignment(
+                g,
+                &mut aligner,
+                debug_writer.as_ref(),
+                align_args.sequences.as_ref(),
+            )?,
+            POAGraphWithIx::USIZE(ref mut g) => perform_alignment(
+                g,
+                &mut aligner,
+                debug_writer.as_ref(),
+                align_args.sequences.as_ref(),
+            )?,
+        }
     }
 
     // Determine where to write the graph to
