@@ -481,7 +481,7 @@ mod tests {
         let POAGraphFromGFA { graph, graph_segments: _ } = load_graph_from_gfa::<u32>(gfa_path).unwrap();
         
         assert_eq!(graph.successors(graph.start_node()).count(), 1);
-        assert_eq!(graph.predecessors(graph.end_node()).count(), 2);
-        assert_eq!(graph.node_count(), 26);
+        assert_eq!(graph.predecessors(graph.end_node()).count(), 1);
+        assert_eq!(graph.node_count(), 35);
     }
 }

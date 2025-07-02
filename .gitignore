@@ -14,3 +14,4 @@ debug_presentation/
 debug_*/
 debug/
 __pycache__
+tests/test.gfa
