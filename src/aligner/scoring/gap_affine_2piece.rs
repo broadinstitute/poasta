@@ -155,43 +155,34 @@ impl AlignmentGraph for Affine2PieceAlignmentGraph {
         match self.aln_type {
             AlignmentType::Global => vec![AlignmentGraphNode::new(ref_graph.start_node(), O::zero())],
             AlignmentType::EndsFree {
-                qry_free_begin, qry_free_end: _,
+                qry_free_begin: _, qry_free_end: _,
                 graph_free_begin, graph_free_end: _ }
             => {
                 use std::ops::Bound;
                 let mut initial_states = Vec::new();
                 
-                // Determine which graph nodes to start from
-                if matches!(graph_free_begin, Bound::Unbounded) {
-                    // Can start from any node in the graph
-                    for node in ref_graph.all_nodes() {
-                        // Skip start and end nodes for now - they're virtual
-                        if node != ref_graph.start_node() && node != ref_graph.end_node() {
-                            initial_states.push(AlignmentGraphNode::new(node, O::zero()));
+                // Implement true ends-free initial states
+                match graph_free_begin {
+                    Bound::Unbounded => {
+                        // Free graph beginning: can start at any real node without penalty
+                        for node in ref_graph.all_nodes() {
+                            if node != ref_graph.start_node() && node != ref_graph.end_node() {
+                                initial_states.push(AlignmentGraphNode::new(node, O::zero()));
+                            }
                         }
+                    },
+                    _ => {
+                        // Bounded or no free beginning: start from start_node
+                        initial_states.push(AlignmentGraphNode::new(ref_graph.start_node(), O::zero()));
                     }
-                } else {
-                    // Must start from the beginning of the graph
-                    initial_states.push(AlignmentGraphNode::new(ref_graph.start_node(), O::zero()));
                 }
                 
-                // If query beginning is free, we can also start with query offsets > 0
-                if matches!(qry_free_begin, Bound::Unbounded) {
-                    // For each starting graph node, also allow starting at any query position
-                    let _graph_starts: Vec<_> = if matches!(graph_free_begin, Bound::Unbounded) {
-                        ref_graph.all_nodes()
-                            .filter(|&node| node != ref_graph.start_node() && node != ref_graph.end_node())
-                            .collect()
-                    } else {
-                        vec![ref_graph.start_node()]
-                    };
-                    
-                    // Note: We'll handle query offset initialization during alignment
-                    // For now, just use the graph node starts with offset 0
-                }
+                // Note: For free query beginning, we would need sequence length information
+                // which is not available in this method. This is handled in the aligner
+                // by starting alignment from different query positions.
                 
+                // Ensure we have at least one initial state
                 if initial_states.is_empty() {
-                    // Fallback to standard start if no other options
                     initial_states.push(AlignmentGraphNode::new(ref_graph.start_node(), O::zero()));
                 }
                 
@@ -218,7 +209,11 @@ impl AlignmentGraph for Affine2PieceAlignmentGraph {
                 
                 // Check if we can end at this position based on free end constraints
                 let can_end_here_query = match qry_free_end {
-                    Bound::Unbounded => node.offset().as_usize() > 0 || seq.is_empty(), // Consume at least something from query unless empty
+                    Bound::Unbounded => {
+                        // Can end at any query position for free query ending
+                        // Must have consumed at least something unless query is empty
+                        node.offset().as_usize() > 0 || seq.is_empty()
+                    },
                     Bound::Included(max_free) => {
                         // Can end if we're within max_free bases of the query end
                         let remaining_query = seq.len() - node.offset().as_usize();
@@ -232,8 +227,9 @@ impl AlignmentGraph for Affine2PieceAlignmentGraph {
                 
                 let can_end_here_graph = match graph_free_end {
                     Bound::Unbounded => {
-                        // For unbounded graph free end, require reaching graph end
-                        node.node() == ref_graph.end_node()
+                        // Free graph ending: can end at any node
+                        // This allows skipping reference suffix without penalty
+                        true
                     },
                     Bound::Included(_) | Bound::Excluded(_) => {
                         // For bounded free ends, still require reaching graph end for now
