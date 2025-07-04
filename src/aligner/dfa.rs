@@ -33,7 +33,7 @@ where
     }
 
     #[inline]
-    fn children_iter(&self) -> RefMut<I> {
+    fn children_iter(&self) -> RefMut<'_, I> {
         self.1.borrow_mut()
     }
 }

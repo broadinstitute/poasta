@@ -131,6 +131,49 @@ poasta view -Ogfa existing_msa.poasta > poa_graph.gfa
 poasta view -Ofasta existing_msa.poasta > poa_msa.fasta
 ```
 
+## Gap penalty configuration
+
+POASTA supports both standard affine gap penalties and two-piece affine gap penalties for more flexible gap modeling.
+
+### Standard affine gap penalties
+
+By default, POASTA uses standard affine gap penalties with the following defaults:
+- Gap opening penalty: 6
+- Gap extension penalty: 2
+- Mismatch penalty: 4
+
+You can customize these penalties:
+
+```bash
+poasta align -g 8 -e 3 -n 5 sequences.fasta
+```
+
+### Two-piece affine gap penalties
+
+For more sophisticated gap modeling, POASTA supports two-piece affine gap penalties, which use different penalties for short and long gaps. This can better model biological insertion/deletion patterns.
+
+To enable two-piece affine mode, provide comma-separated values for both gap opening and extension penalties:
+
+```bash
+# Two-piece affine: short gaps (8,2) and long gaps (24,1)
+poasta align -g 8,24 -e 2,1 -n 5 sequences.fasta
+```
+
+The first values (8,2) apply to short gaps, while the second values (24,1) apply to longer gaps. The extension penalty for short gaps should be higher than for long gaps to properly model the two-piece behavior.
+
+### Alignment modes
+
+POASTA supports different alignment modes:
+- `global`: End-to-end alignment (default)
+- `semi-global`: Query aligned globally, but graph gaps are free at ends  
+- `ends-free`: Free gaps at sequence beginnings/ends for both query and graph
+
+```bash
+poasta align -m ends-free sequences.fasta
+```
+
+Note: Currently, `ends-free` and `semi-global` modes are only supported with `global` alignment.
+
 
 ## Related repositories
 

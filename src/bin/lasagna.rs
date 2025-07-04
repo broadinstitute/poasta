@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 
@@ -8,7 +8,6 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use noodles::{fasta, fastq};
 use flate2::read::MultiGzDecoder;
-use poasta::aligner::alignment::print_alignment;
 use poasta::bubbles::index::BubbleIndex;
 use poasta::io::gfa::FieldValue;
 use rustc_hash::FxHashMap;
@@ -21,7 +20,7 @@ use poasta::graphs::poa::{POAGraph, POANodeIndex};
 use poasta::graphs::AlignableRefGraph;
 use poasta::io::gfa::Field;
 use poasta::io::gaf::{alignment_to_gaf, GAFRecord};
-use poasta::io::graph::{graph_to_dot, load_graph_from_gfa, GraphSegments, POAGraphFromGFA};
+use poasta::io::graph::{load_graph_from_gfa, GraphSegments, POAGraphFromGFA};
 
 /// The various output formats supported by Lasagna
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
