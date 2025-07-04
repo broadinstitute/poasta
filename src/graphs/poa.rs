@@ -201,6 +201,18 @@ where
             .collect();
 
         if valid_ix.is_empty() {
+            // For empty sequences, this is valid - just return success
+            if sequence.is_empty() {
+                self.sequences.push(Sequence(sequence_name.to_owned(), self.start_node));
+                self.post_process()?;
+                return Ok(());
+            }
+            // Debug: print alignment details for diagnosis
+            // eprintln!("DEBUG: Invalid alignment for sequence '{}' (len={})", sequence_name, sequence.len());
+            // eprintln!("DEBUG: Alignment length: {}", alignment.len());
+            // for (i, aligned_pair) in alignment.iter().enumerate() {
+            //     eprintln!("DEBUG: Alignment[{}]: rpos={:?}, qpos={:?}", i, aligned_pair.rpos, aligned_pair.qpos);
+            // }
             return Err(PoastaError::InvalidAlignment);
         }
 

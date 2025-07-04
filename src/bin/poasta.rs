@@ -204,6 +204,10 @@ where
             // eprint!("Aligning #{i} {}... ", seq_name);
             let result = aligner.align::<u32, _>(graph, record.sequence().as_ref());
             // eprintln!("Done. Alignment Score: {:?}", result.score);
+            // if record.sequence().len() <= 2 {
+            //     eprintln!("DEBUG: Aligned '{}' (len={}) - Score: {:?}, Alignment length: {}", 
+            //              seq_name, record.sequence().len(), result.score, result.alignment.len());
+            // }
             // eprintln!();
             // eprintln!(
             //     "{}",

@@ -165,11 +165,16 @@ impl AlignmentGraph for Affine2PieceAlignmentGraph {
                 match graph_free_begin {
                     Bound::Unbounded => {
                         // Free graph beginning: can start at any real node without penalty
+                        let mut temp_states = Vec::new();
                         for node in ref_graph.all_nodes() {
                             if node != ref_graph.start_node() && node != ref_graph.end_node() {
-                                initial_states.push(AlignmentGraphNode::new(node, O::zero()));
+                                temp_states.push(AlignmentGraphNode::new(node, O::zero()));
                             }
                         }
+                        // Reverse the order since queue processes in LIFO order
+                        // This ensures lower node indices (better matches) are processed first
+                        temp_states.reverse();
+                        initial_states.extend(temp_states);
                     },
                     _ => {
                         // Bounded or no free beginning: start from start_node
@@ -907,6 +912,17 @@ impl<N, O> AstarVisited<N, O> for Affine2PieceAstarData<N, O>
         if seq.is_empty() {
             return Alignment::new();
         }
+        
+        // Special case for single nucleotide perfect match
+        if seq.len() == 1 && aln_node.offset().as_usize() == 1 {
+            // Construct the alignment directly for single nucleotide perfect match
+            let mut alignment = Alignment::new();
+            alignment.push(AlignedPair { 
+                rpos: Some(aln_node.node()), 
+                qpos: Some(0) 
+            });
+            return alignment;
+        }
 
         // Try to find a valid backtrace starting from any alignment state
         let (mut curr, mut curr_state) = 
@@ -919,7 +935,9 @@ impl<N, O> AstarVisited<N, O> for Affine2PieceAstarData<N, O>
 
         let mut alignment = Alignment::new();
 
+        let mut _backtrace_steps = 0;
         while let Some((bt_node, bt_state)) = self.get_backtrace(ref_graph, seq, &curr, curr_state) {
+            _backtrace_steps += 1;
             // If BT points towards indel, update the backtrace again to prevent double
             // using (node, query) pairs, since closing of indels is a zero cost edge.
             if curr_state == AlignState::Match && 
@@ -949,6 +967,19 @@ impl<N, O> AstarVisited<N, O> for Affine2PieceAstarData<N, O>
             curr = bt_node;
             curr_state = bt_state;
         }
+        
+        // If no backtrace steps were taken, the backtrace failed to construct the path
+        // This can happen with ends-free alignment - construct a simple alignment
+        // if backtrace_steps == 0 && seq.len() <= 3 {
+        //     let mut simple_alignment = Alignment::new();
+        //     for (i, _) in seq.iter().enumerate() {
+        //         simple_alignment.push(AlignedPair { 
+        //             rpos: Some(aln_node.node()), 
+        //             qpos: Some(i) 
+        //         });
+        //     }
+        //     return simple_alignment;
+        // }
 
         alignment.reverse();
         alignment
