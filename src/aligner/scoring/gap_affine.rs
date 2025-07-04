@@ -775,20 +775,22 @@ impl<N, O> AstarVisited<N, O> for AffineAstarData<N, O>
         
         // Special case for single nucleotide perfect match
         if seq.len() == 1 && aln_node.offset().as_usize() == 1 {
-            // Construct the alignment directly for single nucleotide perfect match
-            eprintln!("DEBUG: Single nucleotide special case triggered for node {:?}", aln_node);
-            let mut alignment = Alignment::new();
-            alignment.push(AlignedPair { 
-                rpos: Some(aln_node.node()), 
-                qpos: Some(0) 
-            });
-            return alignment;
+            // Only trigger for actual perfect matches
+            if ref_graph.is_symbol_equal(aln_node.node(), seq[0]) {
+                // Construct the alignment directly for single nucleotide perfect match
+                let mut alignment = Alignment::new();
+                alignment.push(AlignedPair { 
+                    rpos: Some(aln_node.node()), 
+                    qpos: Some(0) 
+                });
+                return alignment;
+            }
         }
         
-        // Debug output for diagnosis
-        // if seq.len() <= 2 {
-        //     eprintln!("DEBUG: Backtrace called for query len={}, node {:?}, offset={}", seq.len(), aln_node, aln_node.offset().as_usize());
-        // }
+        // Debug output for diagnosis  
+        if seq.len() == 4 && seq == b"TCGA" {
+            eprintln!("DEBUG: Backtrace called for TCGA, node {:?}, offset={}", aln_node, aln_node.offset().as_usize());
+        }
         
         // Try to find a valid backtrace starting from any alignment state
         let backtrace_result = 
@@ -1161,6 +1163,42 @@ mod tests {
         
         let result = aligner.align::<u16, _>(&graph, query);
         assert!(matches!(result.score, Score::Score(_)));
+    }
+
+    #[test]
+    fn test_multi_char_ends_free() {
+        // Debug multi-character ends-free alignment
+        let mut graph = POAGraph::<u32>::new();
+        
+        // Add reference sequence
+        let ref_seq = b"ATCGATCGATCG";
+        let weights = vec![1; ref_seq.len()];
+        graph.add_alignment_with_weights("ref", ref_seq, None, &weights).unwrap();
+        
+        // Test with two-piece affine like CLI
+        let costs = crate::aligner::scoring::gap_affine_2piece::GapAffine2Piece::new(4, 2, 8, 1, 24);
+        let config = crate::aligner::config::Affine2PieceMinGapCost(costs);
+        let aligner = PoastaAligner::new(config, AlignmentType::EndsFree {
+            qry_free_begin: std::ops::Bound::Unbounded,
+            qry_free_end: std::ops::Bound::Unbounded,
+            graph_free_begin: std::ops::Bound::Unbounded,
+            graph_free_end: std::ops::Bound::Unbounded,
+        });
+        
+        let query = b"TCGA";
+        let result = aligner.align::<u32, _>(&graph, query);
+        
+        eprintln!("DEBUG: Multi-char test - Query 'TCGA' - Score: {:?}, Alignment length: {}", 
+                 result.score, result.alignment.len());
+        for (i, aligned_pair) in result.alignment.iter().enumerate() {
+            eprintln!("DEBUG: Alignment[{}]: rpos={:?}, qpos={:?}", i, aligned_pair.rpos, aligned_pair.qpos);
+        }
+        
+        assert!(matches!(result.score, Score::Score(_)));
+        let score = u32::from(result.score);
+        // This should be 0 for perfect match, but let's see what we get
+        eprintln!("Score for TCGA alignment: {}", score);
+        assert!(result.alignment.len() > 0, "Alignment should not be empty");
     }
 
     // #[test]
