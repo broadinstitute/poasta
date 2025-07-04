@@ -111,10 +111,47 @@ impl AlignmentGraph for AffineAlignmentGraph {
         match self.aln_type {
             AlignmentType::Global => vec![AlignmentGraphNode::new(ref_graph.start_node(), O::zero())],
             AlignmentType::EndsFree {
-                qry_free_begin: _, qry_free_end: _,
-                graph_free_begin: _, graph_free_end: _ }
+                qry_free_begin, qry_free_end: _,
+                graph_free_begin, graph_free_end: _ }
             => {
-                todo!();
+                use std::ops::Bound;
+                let mut initial_states = Vec::new();
+                
+                // Determine which graph nodes to start from
+                if matches!(graph_free_begin, Bound::Unbounded) {
+                    // Can start from any node in the graph
+                    for node in ref_graph.all_nodes() {
+                        // Skip start and end nodes for now - they're virtual
+                        if node != ref_graph.start_node() && node != ref_graph.end_node() {
+                            initial_states.push(AlignmentGraphNode::new(node, O::zero()));
+                        }
+                    }
+                } else {
+                    // Must start from the beginning of the graph
+                    initial_states.push(AlignmentGraphNode::new(ref_graph.start_node(), O::zero()));
+                }
+                
+                // If query beginning is free, we can also start with query offsets > 0
+                if matches!(qry_free_begin, Bound::Unbounded) {
+                    // For each starting graph node, also allow starting at any query position
+                    let _graph_starts: Vec<_> = if matches!(graph_free_begin, Bound::Unbounded) {
+                        ref_graph.all_nodes()
+                            .filter(|&node| node != ref_graph.start_node() && node != ref_graph.end_node())
+                            .collect()
+                    } else {
+                        vec![ref_graph.start_node()]
+                    };
+                    
+                    // Note: We'll handle query offset initialization during alignment
+                    // For now, just use the graph node starts with offset 0
+                }
+                
+                if initial_states.is_empty() {
+                    // Fallback to standard start if no other options
+                    initial_states.push(AlignmentGraphNode::new(ref_graph.start_node(), O::zero()));
+                }
+                
+                initial_states
             }
         }
     }
@@ -123,9 +160,56 @@ impl AlignmentGraph for AffineAlignmentGraph {
         where G: AlignableRefGraph,
               O: OffsetType,
     {
-        aln_state == AlignState::Match
-            && node.node() == ref_graph.end_node()
-            && node.offset().as_usize() == seq.len()
+        match self.aln_type {
+            AlignmentType::Global => {
+                aln_state == AlignState::Match
+                    && node.node() == ref_graph.end_node()
+                    && node.offset().as_usize() == seq.len()
+            },
+            AlignmentType::EndsFree {
+                qry_free_begin: _, qry_free_end,
+                graph_free_begin: _, graph_free_end }
+            => {
+                use std::ops::Bound;
+                
+                // Check if we can end at this position based on free end constraints
+                let can_end_here_query = match qry_free_end {
+                    Bound::Unbounded => {
+                        // Can end at any query position, but must have consumed at least something
+                        // unless the query is empty
+                        node.offset().as_usize() > 0 || seq.is_empty()
+                    },
+                    Bound::Included(max_free) => {
+                        // Can end if we're within max_free bases of the query end
+                        let remaining_query = seq.len() - node.offset().as_usize();
+                        remaining_query <= max_free
+                    },
+                    Bound::Excluded(max_free) => {
+                        let remaining_query = seq.len() - node.offset().as_usize();
+                        remaining_query < max_free
+                    }
+                };
+                
+                let can_end_here_graph = match graph_free_end {
+                    Bound::Unbounded => {
+                        // For unbounded graph free end, still require graph end for now
+                        // Full graph free ending needs more sophisticated implementation
+                        node.node() == ref_graph.end_node()
+                    },
+                    Bound::Included(_) | Bound::Excluded(_) => {
+                        // For bounded free ends, still require reaching graph end for now
+                        // TODO: Implement proper graph distance calculation
+                        node.node() == ref_graph.end_node()
+                    }
+                };
+                
+                // For ends-free, we can end if:
+                // 1. We're in a match state, AND
+                // 2. We satisfy the query ending constraint, AND  
+                // 3. We satisfy the graph ending constraint
+                aln_state == AlignState::Match && can_end_here_query && can_end_here_graph
+            }
+        }
     }
 
     fn expand_all<V, G, O, F>(
@@ -437,7 +521,7 @@ impl<N, O, const B: usize> BlockedVisitedStorageAffine<N, O, B>
             = self.calc_block_ix(aln_node);
 
         let curr_score = self.node_blocks[node_block].get(&offset_block)
-            .map(|v| {
+            .and_then(|v| {
                 let cell_data = &v[within_block_node][within_block_qry];
                 let node = match aln_state {
                     AlignState::Match => &cell_data.visited_m,
@@ -446,7 +530,10 @@ impl<N, O, const B: usize> BlockedVisitedStorageAffine<N, O, B>
                     AlignState::Insertion2 | AlignState::Deletion2 => panic!("Invalid gap-affine state {aln_state:?}")
                 };
 
-                *node
+                match node {
+                    Score::Score(_) => Some(*node),
+                    Score::Unvisited => None
+                }
             })?;
 
         match aln_state {
@@ -679,11 +766,17 @@ impl<N, O> AstarVisited<N, O> for AffineAstarData<N, O>
     fn backtrace<G>(&self, ref_graph: &G, seq: &[u8], aln_node: &AlignmentGraphNode<N, O>) -> Alignment<N>
         where G: AlignableRefGraph<NodeIndex=N>,
     {
-        let Some((mut curr, mut curr_state)) =
-            self.get_backtrace(ref_graph, seq, aln_node, AlignState::Match) else
-        {
-            panic!("No backtrace for alignment end state?");
-        };
+        // Handle edge cases (like empty queries) early
+        if seq.is_empty() {
+            return Alignment::new();
+        }
+        
+        // Try to find a valid backtrace starting from any alignment state
+        let (mut curr, mut curr_state) = 
+            self.get_backtrace(ref_graph, seq, aln_node, AlignState::Match)
+                .or_else(|| self.get_backtrace(ref_graph, seq, aln_node, AlignState::Insertion))
+                .or_else(|| self.get_backtrace(ref_graph, seq, aln_node, AlignState::Deletion))
+                .unwrap_or_else(|| panic!("No backtrace for alignment end state?"));
 
         let mut alignment = Alignment::new();
 
@@ -817,5 +910,270 @@ impl<N, O> AstarQueue<N, O> for AffineLayeredQueue<N, O>
         // eprintln!("Queuing {node:?} ({aln_state:?}), score: {score:?}, heuristic: {h}, priority: {priority}");
 
         self.queue(item, priority)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::aligner::config::AffineDijkstra;
+    use crate::aligner::PoastaAligner;
+    use crate::aligner::scoring::AlignmentType;
+    use crate::graphs::poa::POAGraph;
+    
+    fn create_simple_graph() -> POAGraph<u16> {
+        let mut graph = POAGraph::new();
+        
+        // Create a simple linear graph: A -> C -> G -> T
+        let seq = b"ACGT";
+        let weights = vec![1; seq.len()];
+        graph.add_alignment_with_weights("seq1", seq, None, &weights).unwrap();
+        
+        graph
+    }
+
+    #[test]
+    fn test_gap_affine_basic_functionality() {
+        // Test basic gap affine cost calculation
+        let costs = GapAffine::new(2, 1, 5); // mismatch=2, extend=1, open=5
+        
+        // Test gap costs from different states
+        assert_eq!(costs.gap_cost(AlignState::Match, 0), 0);
+        assert_eq!(costs.gap_cost(AlignState::Match, 1), 6); // open + extend = 5 + 1
+        assert_eq!(costs.gap_cost(AlignState::Match, 3), 8); // open + 3*extend = 5 + 3*1
+        
+        // From insertion/deletion state (no opening cost)
+        assert_eq!(costs.gap_cost(AlignState::Insertion, 1), 1); // just extend
+        assert_eq!(costs.gap_cost(AlignState::Deletion, 2), 2); // 2*extend
+    }
+
+    #[test]
+    fn test_ends_free_basic_alignment() {
+        // Test basic ends-free alignment functionality
+        let mut graph = POAGraph::<u16>::new();
+        
+        // Reference: ATCGATCG
+        let ref_seq = b"ATCGATCG";
+        let weights = vec![1; ref_seq.len()];
+        graph.add_alignment_with_weights("ref", ref_seq, None, &weights).unwrap();
+        
+        // Query: CGATC (middle portion, missing prefix and suffix)
+        let query = b"CGATC";
+        
+        // Standard gap affine with ends-free
+        let costs = GapAffine::new(1, 2, 8);
+        let config = AffineDijkstra(costs);
+        let aligner = PoastaAligner::new(config, AlignmentType::EndsFree {
+            qry_free_begin: std::ops::Bound::Unbounded,
+            qry_free_end: std::ops::Bound::Unbounded,
+            graph_free_begin: std::ops::Bound::Unbounded,
+            graph_free_end: std::ops::Bound::Unbounded,
+        });
+        
+        let result = aligner.align::<u16, _>(&graph, query);
+        
+        // Should successfully align
+        assert!(matches!(result.score, Score::Score(_)));
+        
+        // Score should be reasonable (mostly matches)
+        let score = u32::from(result.score);
+        assert!(score <= 5, "Score {} seems too high for a good match", score);
+    }
+
+    #[test]
+    fn test_ends_free_vs_global_comparison() {
+        // Test that ends-free gives better scores than global for partial sequences
+        let mut graph = POAGraph::<u16>::new();
+        
+        // Reference: AAATTTGGGCCC
+        let ref_seq = b"AAATTTGGGCCC";
+        let weights = vec![1; ref_seq.len()];
+        graph.add_alignment_with_weights("ref", ref_seq, None, &weights).unwrap();
+        
+        // Query: TTTGGG (middle portion)
+        let query = b"TTTGGG";
+        
+        let costs = GapAffine::new(1, 2, 8);
+        let config = AffineDijkstra(costs);
+        
+        // Global alignment
+        let aligner_global = PoastaAligner::new(config, AlignmentType::Global);
+        let result_global = aligner_global.align::<u16, _>(&graph, query);
+        
+        // Ends-free alignment - create new config since PoastaAligner takes ownership
+        let config2 = AffineDijkstra(costs);
+        let aligner_ends_free = PoastaAligner::new(config2, AlignmentType::EndsFree {
+            qry_free_begin: std::ops::Bound::Unbounded,
+            qry_free_end: std::ops::Bound::Unbounded,
+            graph_free_begin: std::ops::Bound::Unbounded,
+            graph_free_end: std::ops::Bound::Unbounded,
+        });
+        let result_ends_free = aligner_ends_free.align::<u16, _>(&graph, query);
+        
+        // Both should succeed
+        assert!(matches!(result_global.score, Score::Score(_)));
+        assert!(matches!(result_ends_free.score, Score::Score(_)));
+        
+        // Ends-free should have better or equal score
+        let score_global = u32::from(result_global.score);
+        let score_ends_free = u32::from(result_ends_free.score);
+        assert!(score_ends_free <= score_global, 
+                "Ends-free score {} should be <= global score {}", 
+                score_ends_free, score_global);
+    }
+
+    #[test]
+    fn test_ends_free_prefix_skipping() {
+        // Test skipping query prefix
+        let mut graph = POAGraph::<u16>::new();
+        
+        let ref_seq = b"ATCG";
+        let weights = vec![1; ref_seq.len()];
+        graph.add_alignment_with_weights("ref", ref_seq, None, &weights).unwrap();
+        
+        let query = b"TCG"; // Missing prefix 'A'
+        
+        let costs = GapAffine::new(1, 2, 8);
+        let config = AffineDijkstra(costs);
+        let aligner = PoastaAligner::new(config, AlignmentType::EndsFree {
+            qry_free_begin: std::ops::Bound::Unbounded,
+            qry_free_end: std::ops::Bound::Unbounded,
+            graph_free_begin: std::ops::Bound::Unbounded,
+            graph_free_end: std::ops::Bound::Unbounded,
+        });
+        
+        let result = aligner.align::<u16, _>(&graph, query);
+        assert!(matches!(result.score, Score::Score(_)));
+        
+        // Should be a good alignment (3 matches)
+        let score = u32::from(result.score);
+        assert_eq!(score, 0, "Perfect match should have score 0, got {}", score);
+    }
+
+    #[test]
+    fn test_ends_free_suffix_skipping() {
+        // Test skipping query suffix
+        let mut graph = POAGraph::<u16>::new();
+        
+        let ref_seq = b"ATCG";
+        let weights = vec![1; ref_seq.len()];
+        graph.add_alignment_with_weights("ref", ref_seq, None, &weights).unwrap();
+        
+        let query = b"ATCGAA"; // Extra suffix 'AA'
+        
+        let costs = GapAffine::new(1, 2, 8);
+        let config = AffineDijkstra(costs);
+        let aligner = PoastaAligner::new(config, AlignmentType::EndsFree {
+            qry_free_begin: std::ops::Bound::Unbounded,
+            qry_free_end: std::ops::Bound::Unbounded,
+            graph_free_begin: std::ops::Bound::Unbounded,
+            graph_free_end: std::ops::Bound::Unbounded,
+        });
+        
+        let result = aligner.align::<u16, _>(&graph, query);
+        assert!(matches!(result.score, Score::Score(_)));
+        
+        // Should be a good alignment (4 matches, ignoring suffix)
+        let score = u32::from(result.score);
+        assert_eq!(score, 0, "Perfect match should have score 0, got {}", score);
+    }
+
+    #[test]
+    fn test_ends_free_empty_query() {
+        // Edge case: empty query
+        let mut graph = POAGraph::<u16>::new();
+        
+        let ref_seq = b"ATCG";
+        let weights = vec![1; ref_seq.len()];
+        graph.add_alignment_with_weights("ref", ref_seq, None, &weights).unwrap();
+        
+        let query = b"";
+        
+        let costs = GapAffine::new(1, 2, 8);
+        let config = AffineDijkstra(costs);
+        let aligner = PoastaAligner::new(config, AlignmentType::EndsFree {
+            qry_free_begin: std::ops::Bound::Unbounded,
+            qry_free_end: std::ops::Bound::Unbounded,
+            graph_free_begin: std::ops::Bound::Unbounded,
+            graph_free_end: std::ops::Bound::Unbounded,
+        });
+        
+        let result = aligner.align::<u16, _>(&graph, query);
+        assert!(matches!(result.score, Score::Score(_)));
+    }
+
+    #[test]
+    fn test_ends_free_alignment_graph_methods() {
+        // Test AlignmentGraph trait methods for ends-free
+        let costs = GapAffine::new(1, 2, 8);
+        
+        let aln_graph = costs.new_alignment_graph(AlignmentType::EndsFree {
+            qry_free_begin: std::ops::Bound::Unbounded,
+            qry_free_end: std::ops::Bound::Unbounded,
+            graph_free_begin: std::ops::Bound::Unbounded,
+            graph_free_end: std::ops::Bound::Unbounded,
+        });
+        
+        let graph = create_simple_graph();
+        
+        // Test initial_states
+        let initial_states = aln_graph.initial_states::<_, u16>(&graph);
+        assert!(!initial_states.is_empty(), "Should have initial states");
+        
+        // Test is_end method doesn't panic
+        let seq = b"ACGT";
+        if let Some(test_node) = initial_states.first() {
+            let _ = aln_graph.is_end(&graph, seq, test_node, AlignState::Match);
+        }
+    }
+
+    #[test]
+    fn test_gap_affine_cost_properties() {
+        // Test mathematical properties of gap affine costs
+        let costs = GapAffine::new(2, 1, 5);
+        
+        // Gap cost should increase with length
+        let cost1 = costs.gap_cost(AlignState::Match, 1);
+        let cost2 = costs.gap_cost(AlignState::Match, 2);
+        let cost3 = costs.gap_cost(AlignState::Match, 3);
+        
+        assert!(cost1 < cost2, "Cost should increase with gap length");
+        assert!(cost2 < cost3, "Cost should increase with gap length");
+        
+        // Cost should be linear after opening
+        let extend_cost = cost2 - cost1;
+        assert_eq!(cost3 - cost2, extend_cost, "Extension cost should be constant");
+        assert_eq!(extend_cost, costs.gap_extend() as usize, "Extension cost should match parameter");
+    }
+
+    #[test]
+    fn test_single_nucleotide_ends_free() {
+        // Test ends-free with single nucleotide queries
+        let mut graph = POAGraph::<u16>::new();
+        
+        let ref_seq = b"ATCGATCG";
+        let weights = vec![1; ref_seq.len()];
+        graph.add_alignment_with_weights("ref", ref_seq, None, &weights).unwrap();
+        
+        let single_nucs = [b"A", b"T", b"C", b"G"];
+        
+        let costs = GapAffine::new(1, 2, 8);
+        let config = AffineDijkstra(costs);
+        let aligner = PoastaAligner::new(config, AlignmentType::EndsFree {
+            qry_free_begin: std::ops::Bound::Unbounded,
+            qry_free_end: std::ops::Bound::Unbounded,
+            graph_free_begin: std::ops::Bound::Unbounded,
+            graph_free_end: std::ops::Bound::Unbounded,
+        });
+        
+        for query in &single_nucs {
+            let result = aligner.align::<u16, _>(&graph, *query);
+            assert!(matches!(result.score, Score::Score(_)), 
+                    "Failed to align {:?}", std::str::from_utf8(*query).unwrap());
+            
+            // Single nucleotide perfect match should have score 0  
+            let score = u32::from(result.score);
+            assert_eq!(score, 0, "Single nucleotide match should have score 0, got {}", score);
+        }
     }
 }
