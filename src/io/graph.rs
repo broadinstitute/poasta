@@ -480,8 +480,11 @@ mod tests {
         
         let POAGraphFromGFA { graph, graph_segments: _ } = load_graph_from_gfa::<u32>(gfa_path).unwrap();
         
+        // The test GFA has 4 segments with a total of 35 characters
+        // s1→s2→s3→s4 and s2→s4
+        // Only s4 has no outgoing edges, so only it connects to end node
         assert_eq!(graph.successors(graph.start_node()).count(), 1);
-        assert_eq!(graph.predecessors(graph.end_node()).count(), 2);
-        assert_eq!(graph.node_count(), 26);
+        assert_eq!(graph.predecessors(graph.end_node()).count(), 1);
+        assert_eq!(graph.node_count(), 35);
     }
 }
