@@ -11,7 +11,6 @@ output/
 /*.png
 debug_test/
 debug_presentation/
-debug_*/
 debug/
 __pycache__
 _old
