@@ -27,7 +27,17 @@ minimum supported Rust version is 1.70.
 1. Download and install `rustup`: https://rustup.rs/
 2. Run `rustup update`
 
+#### Install from git
+Rust's build tool, `cargo` supports installing a cli tool straight from github. To do this, simply run the following command. Note that we set the rust compiler flags `-C` and `target-cpu=native` to ensure the compiler optimises the build for your CPU. If you wish to make the binary portable, then you can remove these flags.
+
+```bash
+RUSTFLAGS="-C target-cpu=native" cargo install --git https://github.com/broadinstitute/poasta
+```
+This command installs the executables `lasagna` and `poasta` that you can access from anywhere (the actual binaries are typically stored in `$HOME/.cargo/bin/poasta`)
+
 #### Building POASTA
+
+Alternatively, you can clone the repository and build `POASTA` that way.
 
 1. Clone the repository. 
     
