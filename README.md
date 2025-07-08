@@ -7,11 +7,9 @@ POASTA is a fast and optimal partial order aligner that supports gap-affine alig
 a recent [algorithm for pairwise alignment](https://github.com/smarco/WFA2-lib), it can exploit exact matches
 between the query and the graph, greatly speeding up the alignment process.
 
-POASTA accelerates alignment using three key techniques: 1) An A* heuristic prioritizing alignment states with
-low minimum remaining gap cost, 2) A depth-first extension strategy that exploits exact matches between the query
-and the graph, and 3) a graph-topology informed technique to prune suboptimal alignment states.
-
 <img src="doc/algo_intro.jpeg" width="800">
+
+POASTA is based on the A* algorithm and accelerates alignment through three algorithmic innovations: (a) A novel heuristic for POA that prioritizes alignment states with a low minimum remaining gap cost (light-colored squares); i.e. states where the unaligned query sequence length is similar to the path lengths to the POA graph end node τ. (b) Reducing the number of computed alignment states by combining the A* algorithm with a depth-first search component, greedily aligning matches between the query and a path in the graph (black arrow). Adjacent insertion and deletion states are only queued when encountering a mismatch (squares with dashed borders). (c) Using knowledge about superbubble topology to prune states not part of the optimal solution. POASTA checks whether the best-case alignment paths (blue and green arrows) from a state under test (red square) can improve over the costs of implicitly opened gaps from prior reached bubble exits (bordered squares). All examples use the linear gap cost model with $\Delta_m = 0, \Delta_x = 4$ and $\Delta_g = 2$.
 
 POASTA is [published in Oxford Bioinformatics](https://academic.oup.com/bioinformatics/article/41/1/btae757/7942505)
 and can be cited as:
