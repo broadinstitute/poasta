@@ -9,13 +9,9 @@ between the query and the graph, greatly speeding up the alignment process.
 
 ## Installation
 
-### Pre-built binaries
-
-TODO
-
 ### Conda
 
-TODO
+- Bioconda packages are still work in progress.
 
 ### Building POASTA from source
 
@@ -26,6 +22,21 @@ minimum supported Rust version is 1.70.
 
 1. Download and install `rustup`: https://rustup.rs/
 2. Run `rustup update`
+
+#### Install from crates.io
+
+POASTA is available on crates.io, and can be installed using `cargo`:
+
+```bash
+cargo install poasta
+```
+This command installs the executables `lasagna` and `poasta` that you can access from anywhere.
+
+To use poasta as a dependency, use `cargo add`:
+
+```bash
+cargo add poasta
+```
 
 #### Install from git
 Rust's build tool, `cargo` supports installing a cli tool straight from github. To do this, simply run the following command. Note that we set the rust compiler flags `-C` and `target-cpu=native` to ensure the compiler optimises the build for your CPU. If you wish to make the binary portable, then you can remove these flags.
