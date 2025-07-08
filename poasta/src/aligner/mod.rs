@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::{marker::PhantomData, ops::Bound};
 
 use astar::{heuristic::AstarHeuristic, Astar, AstarResult, AstarState};
@@ -5,6 +6,7 @@ use cost_models::AlignmentCostModel;
 use fr_points::{DiagType, PosType};
 use traits::AlignableGraph;
 use crate::errors::PoastaError;
+use crate::graph::bubbles::index::BubbleIndex;
 
 pub mod traits;
 pub mod astar;
@@ -83,7 +85,10 @@ where
         alignment_mode: AlignmentMode,
         mut heuristic: H,
     ) -> Result<AstarResult<G>, PoastaError> {
-        heuristic.init(graph, seq);
+        // TODO: pass bubble index as parameter
+        let bubble_index = Arc::new(BubbleIndex::new(graph));
+        heuristic.init(graph, seq, bubble_index);
+        
         let astar_state = self
             .cost_model
             .initialize(graph, seq, alignment_mode, |item| heuristic.h(item));

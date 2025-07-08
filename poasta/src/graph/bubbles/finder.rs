@@ -3,7 +3,7 @@ use std::iter::Rev;
 use std::ops::Range;
 use rustc_hash::FxHashMap;
 
-use crate::graph::traits::{GraphBase, GraphWithStartEnd};
+use crate::graph::traits::{GraphNodeId, GraphWithStartEnd};
 use crate::graph::utils::rev_postorder_nodes;
 
 /// Identify superbubbles in a directed acyclic graph
@@ -46,7 +46,7 @@ where
             })
             .collect();
 
-        let out_child = graph.all_nodes()
+        let out_child = graph.all_nodes_iter()
             .map(|n| {
                 let max_succ = graph.successors(n)
                     .map(|s| rev_postorder[s.index()] as i64)

@@ -4,8 +4,8 @@ use rustc_hash::FxHashSet;
 use super::traits::{GraphBase, GraphWithStartEnd};
 
 
-pub fn rev_postorder_nodes<G, N>(graph: &G) -> Vec<N>
-    where G: GraphBase<NodeType=N> + GraphWithStartEnd<NodeType=N>,
+pub fn rev_postorder_nodes<G>(graph: &G) -> Vec<G::NodeType>
+    where G: GraphWithStartEnd
 {
     let mut ordered = Vec::with_capacity(graph.node_count());
 
@@ -14,7 +14,7 @@ pub fn rev_postorder_nodes<G, N>(graph: &G) -> Vec<N>
     ];
 
     let next_valid_child = 
-        |succ_iter: &RefCell<<G as GraphBase>::Successors<'_>>, visited: &FxHashSet<N>| {
+        |succ_iter: &RefCell<<G as GraphBase>::Successors<'_>>, visited: &FxHashSet<G::NodeType>| {
             while let Some(child) = succ_iter.borrow_mut().next() {
                 if !visited.contains(&child) {
                     return Some(child)

@@ -1,11 +1,9 @@
-use std::cmp::max;
-use std::collections::VecDeque;
-use rustc_hash::FxHashSet;
-use crate::graph::traits::{GraphNodeId, GraphWithStartEnd};
+use crate::graph::traits::{GraphNodeId, GraphWithNodeLengths, GraphWithStartEnd};
+use std::collections::BTreeMap;
 
 use super::finder::SuperbubbleFinder;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum BubbleNode<N> {
     /// Indicates that this node is not a bubble entrance or exit
     None,
@@ -14,7 +12,7 @@ enum BubbleNode<N> {
     Entrance(N),
 
     /// Represents a bubble exit, the associated data is the corresponding entrance node ID
-    Exit(N)
+    Exit(N),
 }
 
 impl<N> BubbleNode<N> {
@@ -29,7 +27,6 @@ impl<N> BubbleNode<N> {
     }
 }
 
-
 #[derive(Clone)]
 pub struct BubbleIndex<N> {
     /// Vector indicating whether a node is a bubble entrance
@@ -39,10 +36,10 @@ pub struct BubbleIndex<N> {
     bubble_exit: Vec<BubbleNode<N>>,
 
     /// For each node, stores which bubbles it is part of, and the distance to the bubble exit
-    node_bubble_map: Vec<Vec<NodeBubbleMap<N>>>,
+    node_bubble_map: Vec<BTreeMap<N, BubbleDistToExit>>,
 
     /// For each node, stores the shortest and longest path length to the POA graph end node
-    dist_to_end: Vec<(usize, usize)>
+    dist_to_end: Vec<(usize, usize)>,
 }
 
 impl<N> BubbleIndex<N>
@@ -50,7 +47,8 @@ where
     N: GraphNodeId,
 {
     pub fn new<G>(graph: &G) -> Self
-        where G: GraphWithStartEnd<NodeType = N>
+    where
+        G: GraphWithStartEnd<NodeType = N> + GraphWithNodeLengths<NodeType = N>,
     {
         // Identify the bubbles in the graph and store entrances and exits
         let finder = SuperbubbleFinder::new(graph);
@@ -64,87 +62,72 @@ where
             bubble_exits[exit.index()] = BubbleNode::Exit(entrance);
         }
 
-        // To identify which nodes are part of which bubbles, and the path length to the corresponding
-        // bubble exit, we run a backward BFS from the POA graph end node.
-        // Since the edges in the POA graph do not have weights, we can use BFS also to compute
-        // the shortest path length from the graph end node (our BFS starting point).
-        // We keep a stack of bubbles that we have entered, and each time a node is popped
-        // from the queue, we store which bubbles are currently active for the popped node, and the
-        // shortest path distance to the exit.
-        let mut node_bubble_map = vec![Vec::default(); graph.node_count()];
-        let mut dists_to_end = vec![(0, 0); graph.node_count()];
+        // To identify which nodes are part of which bubbles, we run BFS on the graph
+        // and track entering and exiting bubbles while visiting nodes.
+        let mut node_bubble_map: Vec<BTreeMap<N, BubbleDistToExit>> =
+            vec![BTreeMap::default(); graph.node_count()];
 
-        // Check if the end node is a bubble exit, and if yes, initialize the bubble stack with that bubble.
-        let end_node_bubblestack = if bubble_exits[graph.end_node().index()].is_exit() {
-            vec![(0usize, graph.end_node())]
-        } else {
-            Vec::default()
-        };
+        // First, iterate over nodes in reverse post order, determining which nodes
+        // are contained in which bubbles.
+        for n in finder.inv_rev_postorder().iter() {
+            let mut to_add = vec![];
 
-        let mut queue: VecDeque<_> = vec![
-            (graph.end_node(), 0usize, end_node_bubblestack)
-        ].into();
+            for pred in graph.predecessors(*n) {
+                // Find bubbles that contain the predecessor; those bubbles also contain the current node
+                // unless the corresponding bubble exit is the current node itself.
+                for pred_bubble_exit in node_bubble_map[pred.index()].keys() {
+                    if *pred_bubble_exit == *n {
+                        continue;
+                    }
 
-        let mut visited = FxHashSet::default();
-        visited.insert(graph.end_node());
+                    to_add.push(*pred_bubble_exit);
+                }
 
-        while !queue.is_empty() {
-            let (curr, dist_from_end, bubble_stack) = queue.pop_front().unwrap();
+                // Add the bubble and its corresponding exit to the current node if it's not already present.
+                // Initialize with default values since we will compute the min and max distance to the exit
+                // later.
+                for bubble_to_add in &to_add {
+                    node_bubble_map[n.index()]
+                        .entry(*bubble_to_add)
+                        .or_default();
+                }
 
-            // For each active bubble (as indicated by the presence of a bubble on the bubble stack),
-            // store this bubble in the node -> bubble map, accompanied with the minimum distance to the exit.
-            for (bubble_dist_from_end, bubble_exit) in bubble_stack.iter() {
-                node_bubble_map[curr.index()].push(NodeBubbleMap {
-                    bubble_exit: *bubble_exit,
-                    min_dist_to_exit: dist_from_end - *bubble_dist_from_end,
-                    max_dist_to_exit: 0 // to be computed later
-                })
+                to_add.clear();
             }
 
-            // BFS can be used to compute the shortest path length to the POA graph end node
-            dists_to_end[curr.index()].0 = dist_from_end;
-
-            for pred in graph.predecessors(curr) {
-                if !visited.contains(&pred) {
-                    let new_dist_from_end = dist_from_end + 1;
-                    let mut new_bubble_stack = bubble_stack.clone();
-
-                    // if the predecessor is an entrance, remove it from the stack since we're moving backward,
-                    // and thus are exiting this bubble.
-                    if bubble_entrances[pred.index()].is_entrance() {
-                        let (bubble_dist_from_start, bubble_exit) = new_bubble_stack.pop().unwrap();
-                        node_bubble_map[pred.index()].push(NodeBubbleMap {
-                            bubble_exit,
-                            min_dist_to_exit: new_dist_from_end - bubble_dist_from_start,
-                            max_dist_to_exit: 0 // to be computed later
-                        });
-                    }
-
-                    // We're entering a new bubble
-                    if bubble_exits[pred.index()].is_exit() {
-                        new_bubble_stack.push((new_dist_from_end, pred));
-                    }
-
-                    visited.insert(pred);
-                    queue.push_back((pred, new_dist_from_end, new_bubble_stack));
-                }
+            // Check if the current node is a bubble entrance, and if so,
+            // add the bubble and its corresponding exit to the current node.
+            if let BubbleNode::Entrance(bubble_exit) = bubble_entrances[n.index()] {
+                node_bubble_map[n.index()].entry(bubble_exit).or_default();
             }
         }
 
-        // While BFS can be found to compute the shortest path length, to compute the
-        // longest path length to the POA graph end node we separately process each node in post order.
+        // With the node => bubble map completed, compute the min and max distances to the bubble exits and the graph end node.
+        // We compute this by visiting nodes in postorder, recursively computing the distances.
+        let mut dist_to_end = vec![(0usize, 0usize); graph.node_count()];
         for n in finder.inv_rev_postorder().iter().rev() {
-            let mut max_dist_to_end = 0;
+            let node_length = graph.node_length(*n);
 
-            for succ in graph.successors(*n) {
-                max_dist_to_end = max(max_dist_to_end, dists_to_end[succ.index()].1 + 1);
-            }
+            let min_dist = graph
+                .successors(*n)
+                .map(|succ| dist_to_end[succ.index()].0 + node_length)
+                .min()
+                .unwrap_or(0);
 
-            dists_to_end[n.index()].1 = max_dist_to_end;
+            let max_dist = graph
+                .successors(*n)
+                .map(|succ| dist_to_end[succ.index()].1 + node_length)
+                .max()
+                .unwrap_or(0);
 
-            // Compute max distance to bubble exits
-            for bubble in node_bubble_map[n.index()].iter_mut() {
-                bubble.max_dist_to_exit = max_dist_to_end - dists_to_end[bubble.bubble_exit.index()].1;
+            dist_to_end[n.index()] = (min_dist, max_dist);
+
+            // Compute min/max distance to bubble exits
+            for (bubble_exit, bubble_dists) in node_bubble_map[n.index()].iter_mut() {
+                bubble_dists.min_dist =
+                    dist_to_end[n.index()].0 - dist_to_end[bubble_exit.index()].0;
+                bubble_dists.max_dist =
+                    dist_to_end[n.index()].1 - dist_to_end[bubble_exit.index()].1;
             }
         }
 
@@ -152,7 +135,7 @@ where
             bubble_entrance: bubble_entrances,
             bubble_exit: bubble_exits,
             node_bubble_map,
-            dist_to_end: dists_to_end
+            dist_to_end,
         }
     }
 
@@ -167,7 +150,7 @@ where
     }
 
     #[inline]
-    pub fn get_node_bubbles(&self, node: N) -> &[NodeBubbleMap<N>] {
+    pub fn get_node_bubbles(&self, node: N) -> &BTreeMap<N, BubbleDistToExit> {
         &self.node_bubble_map[node.index()]
     }
 
@@ -178,7 +161,8 @@ where
 
     #[inline]
     pub fn num_bubbles(&self) -> usize {
-        self.bubble_entrance.iter()
+        self.bubble_entrance
+            .iter()
             .filter(|v| v.is_entrance())
             .count()
     }
@@ -199,34 +183,26 @@ where
     }
 }
 
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct NodeBubbleMap<N> {
-    pub bubble_exit: N,
-    pub min_dist_to_exit: usize,
-    pub max_dist_to_exit: usize
+#[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
+pub struct BubbleDistToExit {
+    pub min_dist: usize,
+    pub max_dist: usize,
 }
 
-impl<N> NodeBubbleMap<N>
-where
-    N: GraphNodeId,
-{
-    pub fn new(bubble_exit: N, min_dist_to_exit: usize, max_dist_to_exit: usize) -> Self {
-        NodeBubbleMap {
-            bubble_exit,
-            min_dist_to_exit,
-            max_dist_to_exit
-        }
+impl BubbleDistToExit {
+    pub fn new(min_dist: usize, max_dist: usize) -> Self {
+        BubbleDistToExit { min_dist, max_dist }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use petgraph::graph::NodeIndex;
-    
-    use crate::graph::mock::{create_test_graph1, create_test_graph2};
-    use super::NodeBubbleMap;
+
+    use super::BubbleDistToExit;
     use super::BubbleIndex;
+    use crate::graph::mock::{create_test_graph1, create_test_graph2};
+    use crate::graph::traits::GraphWithStartEnd;
 
     type NIx = NodeIndex<crate::graph::mock::NIx>;
 
@@ -236,53 +212,190 @@ mod tests {
         let index1 = BubbleIndex::new(&graph1);
 
         let truth1 = [
-            vec![NodeBubbleMap::new(NIx::new(1), 1, 0),],
-            vec![NodeBubbleMap::new(NIx::new(2), 1, 0), NodeBubbleMap::new(NIx::new(1), 0, 0)],
-            vec![NodeBubbleMap::new(NIx::new(2), 0, 0)],
-            vec![NodeBubbleMap::new(NIx::new(4), 1, 0)],
-            vec![NodeBubbleMap::new(NIx::new(5), 1, 0), NodeBubbleMap::new(NIx::new(4), 0, 0)],
-            vec![NodeBubbleMap::new(NIx::new(5), 0, 0)],
-            vec![NodeBubbleMap::new(NIx::new(7), 1, 0)],
-            vec![NodeBubbleMap::new(NIx::new(8), 1, 0), NodeBubbleMap::new(NIx::new(7), 0, 0)],
-            vec![NodeBubbleMap::new(NIx::new(8), 0, 0)]
+            vec![(NIx::new(1), BubbleDistToExit::new(1, 1))],
+            vec![(NIx::new(2), BubbleDistToExit::new(1, 1))],
+            vec![],
+            vec![(NIx::new(4), BubbleDistToExit::new(1, 1))],
+            vec![(NIx::new(5), BubbleDistToExit::new(1, 1))],
+            vec![],
+            vec![(NIx::new(7), BubbleDistToExit::new(1, 1))],
+            vec![(NIx::new(8), BubbleDistToExit::new(1, 1))],
+            vec![],
+            vec![],
         ];
 
-        for n in graph1.node_indices() {
-            if n == graph1.end_node() {
-                continue;
-            }
+        assert_eq!(index1.node_bubble_map.len(), truth1.len());
 
-            let bubbles_no_end_node: Vec<_> = index1.get_node_bubbles(n)
+        for n in graph1.node_indices() {
+            let i = n.index();
+            let excl_end_node_bubbles = index1.node_bubble_map[i]
                 .iter()
-                .filter(|b| b.bubble_exit != graph1.end_node())
-                .copied()
-                .collect();
-            assert_eq!(&bubbles_no_end_node, &truth1[n.index()])
+                .map(|(k, v)| (*k, *v))
+                .filter(|(k, _)| *k != graph1.end_node())
+                .collect::<Vec<_>>();
+
+            assert_eq!(excl_end_node_bubbles, truth1[i]);
         }
 
         let graph2 = create_test_graph2();
         let index2 = BubbleIndex::new(&graph2);
 
         let truth2 = [
-            vec![NodeBubbleMap::new(NIx::new(2), 1, 0)],
-            vec![NodeBubbleMap::new(NIx::new(2), 1, 0)],
-            vec![NodeBubbleMap::new(NIx::new(7), 2, 0), NodeBubbleMap::new(NIx::new(2), 0, 0)],
-            vec![NodeBubbleMap::new(NIx::new(7), 1, 0)],
-            vec![NodeBubbleMap::new(NIx::new(6), 2, 0), NodeBubbleMap::new(NIx::new(7), 3, 0)],
-            vec![NodeBubbleMap::new(NIx::new(7), 2, 0), NodeBubbleMap::new(NIx::new(6), 1, 0)],
-            vec![NodeBubbleMap::new(NIx::new(7), 1, 0), NodeBubbleMap::new(NIx::new(6), 0, 0)],
-            vec![NodeBubbleMap::new(NIx::new(14), 1, 0), NodeBubbleMap::new(NIx::new(7), 0, 0)],
-            vec![NodeBubbleMap::new(NIx::new(7), 3, 0), NodeBubbleMap::new(NIx::new(6), 2, 0)],
-            vec![NodeBubbleMap::new(NIx::new(7), 2, 0), NodeBubbleMap::new(NIx::new(6), 1, 0)],
-            vec![NodeBubbleMap::new(NIx::new(11), 1, 0), NodeBubbleMap::new(NIx::new(7), 2, 0)],
-            vec![NodeBubbleMap::new(NIx::new(7), 1, 0), NodeBubbleMap::new(NIx::new(11), 0, 0)],
-            vec![NodeBubbleMap::new(NIx::new(14), 1, 0)],
-            vec![NodeBubbleMap::new(NIx::new(14), 1, 0)],
-            vec![NodeBubbleMap::new(NIx::new(14), 0, 0)],
+            vec![(
+                NIx::new(2),
+                BubbleDistToExit {
+                    min_dist: 1,
+                    max_dist: 2,
+                },
+            )], // node 0
+            vec![(
+                NIx::new(2),
+                BubbleDistToExit {
+                    min_dist: 1,
+                    max_dist: 1,
+                },
+            )], // node 1
+            vec![(
+                NIx::new(7),
+                BubbleDistToExit {
+                    min_dist: 2,
+                    max_dist: 5,
+                },
+            )], // node 2
+            vec![(
+                NIx::new(7),
+                BubbleDistToExit {
+                    min_dist: 1,
+                    max_dist: 1,
+                },
+            )], // node 3
+            vec![
+                (
+                    NIx::new(6),
+                    BubbleDistToExit {
+                        min_dist: 2,
+                        max_dist: 3,
+                    },
+                ),
+                (
+                    NIx::new(7),
+                    BubbleDistToExit {
+                        min_dist: 3,
+                        max_dist: 4,
+                    },
+                ),
+            ], // node 4
+            vec![
+                (
+                    NIx::new(6),
+                    BubbleDistToExit {
+                        min_dist: 1,
+                        max_dist: 2,
+                    },
+                ),
+                (
+                    NIx::new(7),
+                    BubbleDistToExit {
+                        min_dist: 2,
+                        max_dist: 3,
+                    },
+                ),
+            ], // node 5
+            vec![(
+                NIx::new(7),
+                BubbleDistToExit {
+                    min_dist: 1,
+                    max_dist: 1,
+                },
+            )], // node 6
+            vec![(
+                NIx::new(14),
+                BubbleDistToExit {
+                    min_dist: 1,
+                    max_dist: 3,
+                },
+            )], // node 7
+            vec![
+                (
+                    NIx::new(6),
+                    BubbleDistToExit {
+                        min_dist: 2,
+                        max_dist: 2,
+                    },
+                ),
+                (
+                    NIx::new(7),
+                    BubbleDistToExit {
+                        min_dist: 3,
+                        max_dist: 3,
+                    },
+                ),
+            ], // node 8
+            vec![
+                (
+                    NIx::new(6),
+                    BubbleDistToExit {
+                        min_dist: 1,
+                        max_dist: 1,
+                    },
+                ),
+                (
+                    NIx::new(7),
+                    BubbleDistToExit {
+                        min_dist: 2,
+                        max_dist: 2,
+                    },
+                ),
+            ], // node 9
+            vec![
+                (
+                    NIx::new(7),
+                    BubbleDistToExit {
+                        min_dist: 2,
+                        max_dist: 2,
+                    },
+                ),
+                (
+                    NIx::new(11),
+                    BubbleDistToExit {
+                        min_dist: 1,
+                        max_dist: 1,
+                    },
+                ),
+            ], // node 10
+            vec![(
+                NIx::new(7),
+                BubbleDistToExit {
+                    min_dist: 1,
+                    max_dist: 1,
+                },
+            )], // node 11
+            vec![(
+                NIx::new(14),
+                BubbleDistToExit {
+                    min_dist: 1,
+                    max_dist: 2,
+                },
+            )], // node 12
+            vec![(
+                NIx::new(14),
+                BubbleDistToExit {
+                    min_dist: 1,
+                    max_dist: 1,
+                },
+            )], // node 13
+            vec![], // node 14
         ];
 
         for n in graph2.node_indices() {
-            assert_eq!(index2.get_node_bubbles(n), &truth2[n.index()])
+            let i = n.index();
+
+            let bubble_dists = index2.node_bubble_map[i]
+                .iter()
+                .map(|(k, v)| (*k, *v))
+                .collect::<Vec<_>>();
+
+            assert_eq!(bubble_dists, truth2[i]);
         }
     }
 
@@ -291,23 +404,25 @@ mod tests {
         let graph = create_test_graph2();
         let index = BubbleIndex::new(&graph);
 
-        assert_eq!(index.get_dist_to_end(), &vec![
-            (4, 10),
-            (4, 9),
-            (3, 8),
-            (2, 4),
-            (4, 7),
-            (3, 6),
-            (2, 4),
-            (1, 3),
-            (4, 6),
-            (3, 5),
-            (3, 5),
-            (2, 4),
-            (1, 2),
-            (1, 1),
-            (0, 0)
-        ]);
+        assert_eq!(
+            index.get_dist_to_end(),
+            &vec![
+                (4, 10),
+                (4, 9),
+                (3, 8),
+                (2, 4),
+                (4, 7),
+                (3, 6),
+                (2, 4),
+                (1, 3),
+                (4, 6),
+                (3, 5),
+                (3, 5),
+                (2, 4),
+                (1, 2),
+                (1, 1),
+                (0, 0)
+            ]
+        );
     }
-
 }

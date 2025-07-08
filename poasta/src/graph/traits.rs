@@ -1,7 +1,7 @@
 use std::fmt;
 use std::hash::Hash;
 
-pub trait GraphNodeId: fmt::Debug + Clone + Copy + PartialEq + Eq + Hash {
+pub trait GraphNodeId: fmt::Debug + Clone + Copy + PartialEq + Eq + Hash + Ord {
     fn index(&self) -> usize;
 }
 
@@ -27,4 +27,10 @@ pub trait GraphBase {
 pub trait GraphWithStartEnd: GraphBase {
     fn start_node(&self) -> <Self as GraphBase>::NodeType;
     fn end_node(&self) -> <Self as GraphBase>::NodeType;
+}
+
+
+/// Trait for graphs where node have lengths
+pub trait GraphWithNodeLengths: GraphBase {
+    fn node_length(&self, node: Self::NodeType) -> usize;
 }

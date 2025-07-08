@@ -1,11 +1,14 @@
 //! A module containing a mock graph struct useful for creating
 //! test graphs in unit tests
 
+use petgraph::Direction::Outgoing;
 use rustc_hash::FxHashMap;
 use petgraph::graph::{DiGraph, NodeIndex, NodeIndices, Neighbors};
 use petgraph::Incoming;
 
 use crate::graph::traits::{GraphBase, GraphWithStartEnd};
+
+use super::traits::GraphWithNodeLengths;
 
 pub(crate) type NIx = u32;
 
@@ -41,11 +44,21 @@ impl GraphBase for MockGraph {
 
 impl GraphWithStartEnd for MockGraph {
     fn start_node(&self) -> Self::NodeType {
-        self.node_indices().next().unwrap()
+        self.node_indices()
+            .find(|n| self.neighbors_directed(*n, Incoming).count() == 0)
+            .unwrap()
     }
 
     fn end_node(&self) -> Self::NodeType {
-        self.node_indices().next_back().unwrap()
+        self.node_indices()
+            .find(|n| self.neighbors_directed(*n, Outgoing).count() == 0)
+            .unwrap()
+    }
+}
+
+impl GraphWithNodeLengths for MockGraph {
+    fn node_length(&self, node: Self::NodeType) -> usize {
+        1
     }
 }
 
@@ -76,7 +89,7 @@ pub(crate) fn create_test_graph1() -> MockGraph {
     // Create a mock "end node"
     let end_node = g.add_node(10);
     for n in g.node_indices() {
-        if n != end_node && g.out_degree(n) == 0 {
+        if n != end_node && g.successors(n).count() == 0 {
             g.add_edge(n, end_node, ());
         }
     }

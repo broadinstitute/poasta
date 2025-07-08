@@ -41,7 +41,7 @@ impl<G, T> AstarHeuristic<G, T> for MinGapCostAffine
 where
     G: AlignableGraph
 {
-    fn init(&mut self, graph: &G, _: &[u8]) {
+    fn init(&mut self, graph: &G, _: &[u8], _: Arc<BubbleIndex<G::NodeType>>) {
         self.min_dist_to_end = vec![0; graph.node_count()];
         self.max_dist_to_end = vec![0; graph.node_count()];
     }

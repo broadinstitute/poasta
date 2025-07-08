@@ -254,7 +254,7 @@ where
             .get_furthest(item)
             .unwrap_or(O::zero());
         
-        let node_len = graph.node_len(item.node);
+        let node_len = graph.node_length(item.node);
         let node_pos = to_node_pos(item.diag, fr_point.as_usize());
         
         debug!("Relaxing match, {:?}, length: {node_len}, pos: {node_pos}", item.node);
@@ -324,7 +324,7 @@ where
         curr_offset: O,
     ) {
         // At the end of a node, we need to check successors to extend the (mis)match
-        let node_len = graph.node_len(item.node);
+        let node_len = graph.node_length(item.node);
         let mut any_mismatch = false;
         
         debug!("At node end, checking successors.");
@@ -473,7 +473,7 @@ where
             .get_furthest(item)
             .unwrap_or(O::zero());
 
-        let node_len = graph.node_len(item.node);
+        let node_len = graph.node_length(item.node);
         let node_pos = to_node_pos(item.diag, fr_point.as_usize());
 
         if node_pos == node_len - 1 {
@@ -621,7 +621,7 @@ where
                         let pred_len = if *pred == item.node {
                             0
                         } else {
-                            graph.node_len(*pred)
+                            graph.node_length(*pred)
                         };
                         let pred_diag = item.diag - pred_len as isize;
 
@@ -636,7 +636,7 @@ where
 
                 // Check for match on a predecessor node, same score
                 for pred in graph.predecessors(item.node) {
-                    let pred_len = graph.node_len(pred);
+                    let pred_len = graph.node_length(pred);
                     let pred_diag = item.diag - pred_len as isize;
 
                     sources.push(AffineAstarItem::new(
@@ -657,7 +657,7 @@ where
                         let pred_len = if *pred == item.node {
                             0
                         } else {
-                            graph.node_len(*pred)
+                            graph.node_length(*pred)
                         };
                         let pred_diag = item.diag - pred_len as isize + 1isize;
 
@@ -676,7 +676,7 @@ where
                         let pred_len = if *pred == item.node {
                             0
                         } else {
-                            graph.node_len(*pred)
+                            graph.node_length(*pred)
                         };
                         let pred_diag = item.diag - pred_len as isize + 1isize;
 

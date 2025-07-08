@@ -17,7 +17,7 @@ use crate::graph::alignment::AlignmentBlockType;
 
 use super::alignment::{AlignmentBlocks, AlignmentClassification, POANodePos};
 use super::io::fasta::MSANodeCover;
-use super::traits::{GraphBase, GraphWithStartEnd};
+use super::traits::{GraphBase, GraphWithNodeLengths, GraphWithStartEnd};
 
 pub(crate) mod graph_impl {
     use petgraph::graph::IndexType;
@@ -1499,10 +1499,20 @@ where
     }
 }
 
+impl<Ix> GraphWithNodeLengths for POASeqGraph<Ix>
+where 
+    Ix: IndexType,
+{
+    fn node_length(&self, node: Self::NodeType) -> usize {
+        self.node_seq(node).len()
+    }
+}
+
 impl<Ix> AlignableGraph for POASeqGraph<Ix> 
 where
     Ix: IndexType,
 {
+    type Node = POANodeIndex<Ix>;
     type NodePosType = POANodePos<Ix>;
     
     fn node_seq(&self, node: POANodeIndex<Ix>) -> &[u8] {
@@ -1553,10 +1563,20 @@ where
     }
 }
 
+impl<'a, Ix> GraphWithNodeLengths for &'a POASeqGraph<Ix>
+where 
+    Ix: IndexType,
+{
+    fn node_length(&self, node: Self::NodeType) -> usize {
+        self.node_seq(node).len()
+    }
+}
+
 impl<'a, Ix> AlignableGraph for &'a POASeqGraph<Ix> 
 where
     Ix: IndexType,
 {
+    type Node = POANodeIndex<Ix>;
     type NodePosType = POANodePos<Ix>;
     
     fn node_seq(&self, node: POANodeIndex<Ix>) -> &[u8] {

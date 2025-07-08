@@ -4,6 +4,7 @@ use std::io::Write;
 use petgraph::graph::IndexType;
 use petgraph::visit::{IntoEdgeReferences, EdgeRef};
 
+use crate::graph::traits::GraphWithNodeLengths;
 use crate::aligner::traits::AlignableGraph;
 use crate::errors::PoastaIOError;
 use crate::graph::poa::POASeqGraph;
@@ -120,7 +121,7 @@ where
             writer,
             "{}:{} -> {}:0 [weight={}; penwidth={}; label={}; class=\"{}\"]",
             e.source().index(),
-            graph.node_len(e.source()) - 1,
+            graph.node_length(e.source()) - 1,
             e.target().index(),
             scaled_weight,
             scaled_penwidth,

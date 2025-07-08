@@ -31,7 +31,7 @@ where
     O: PosType,
 {
     let node_seq = graph.node_seq(node);
-    let node_len = graph.node_len(node);
+    let node_len = graph.node_length(node);
     let node_pos = to_node_pos(diag, offset.as_usize());
     
     debug!("Checking on node {node:?}, length: {node_len}, current pos: {node_pos}, query offset: {offset:?}");
