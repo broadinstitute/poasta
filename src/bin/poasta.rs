@@ -177,7 +177,7 @@ where
     } else {
         Box::new(File::open(sequences_fname).map(BufReader::new)?)
     };
-    let mut reader = fasta::Reader::new(reader_inner);
+    let mut reader = fasta::io::Reader::new(reader_inner);
 
     for result in reader.records() {
         let record = result?;

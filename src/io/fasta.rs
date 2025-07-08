@@ -128,7 +128,7 @@ where
         }
     }
 
-    let mut writer = fasta::Writer::new(output);
+    let mut writer = fasta::io::Writer::new(output);
 
     for (seq_id, seq) in graph.sequences.iter().enumerate() {
         let header = Definition::new(seq.name().as_bytes(), None);

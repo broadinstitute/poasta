@@ -143,7 +143,7 @@ fn read_fastq(
     tx: crossbeam_channel::Sender<SequenceRecord>,
     reader_inner: impl BufRead + Send,
 ) -> Result<()> {
-    let mut reader = fastq::Reader::new(reader_inner);
+    let mut reader = fastq::io::Reader::new(reader_inner);
     
     for record in reader.records() {
         match record {
@@ -164,7 +164,7 @@ fn read_fasta(
     tx: crossbeam_channel::Sender<SequenceRecord>,
     reader_inner: impl BufRead + Send,
 ) -> Result<()> {
-    let mut reader = fasta::Reader::new(reader_inner);
+    let mut reader = fasta::io::Reader::new(reader_inner);
     
     for record in reader.records() {
         match record {

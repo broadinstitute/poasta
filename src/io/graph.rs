@@ -47,7 +47,7 @@ pub fn load_graph_from_fasta_msa(path: impl AsRef<Path>) -> Result<POAGraphWithI
     } else {
         Box::new(File::open(p).map(BufReader::new)?)
     };
-    let mut reader = fasta::Reader::new(reader_inner);
+    let mut reader = fasta::io::Reader::new(reader_inner);
 
     let mut graph = POAGraph::<u32>::new();
     let mut nodes_per_col: Vec<Vec<POANodeIndex<u32>>> = Vec::new();
