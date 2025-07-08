@@ -2119,7 +2119,7 @@ mod tests {
         
         let mut reader = File::open("../tests/test2_from_abpoa.fa")
             .map(BufReader::new)
-            .map(fasta::Reader::new)
+            .map(fasta::io::Reader::new)
             .unwrap();
         
         for (seq_id, record) in reader.records().enumerate() {
