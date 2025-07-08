@@ -7,6 +7,18 @@ POASTA is a fast and optimal partial order aligner that supports gap-affine alig
 a recent [algorithm for pairwise alignment](https://github.com/smarco/WFA2-lib), it can exploit exact matches
 between the query and the graph, greatly speeding up the alignment process.
 
+POASTA accelerates alignment using three key techniques: 1) An A* heuristic prioritizing alignment states with
+low minimum remaining gap cost, 2) A depth-first extension strategy that exploits exact matches between the query
+and the graph, and 3) a graph-topology informed technique to prune suboptimal alignment states.
+
+<img src="doc/algo_intro.jpeg" width="600">
+    
+POASTA is [published in Oxford Bioinformatics](https://academic.oup.com/bioinformatics/article/41/1/btae757/7942505) 
+and can be cited as:
+
+> van Dijk, L. R., Manson, A. L., Earl, A. M., Garimella, K. V., & Abeel, T. (2025). Fast and exact gap-affine partial 
+> order alignment with POASTA. _Bioinformatics_, 41(1), btae757.
+
 ## Installation
 
 ### Conda
