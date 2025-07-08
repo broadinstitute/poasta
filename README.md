@@ -3,7 +3,7 @@
 
 <p>&nbsp;</p>
 
-POASTA is a fast and optimal partial order aligner that supports gap-affine alignment penalties. Inspired by 
+POASTA is a fast and optimal partial order aligner that supports gap-affine alignment penalties. Inspired by
 a recent [algorithm for pairwise alignment](https://github.com/smarco/WFA2-lib), it can exploit exact matches
 between the query and the graph, greatly speeding up the alignment process.
 
@@ -11,12 +11,12 @@ POASTA accelerates alignment using three key techniques: 1) An A* heuristic prio
 low minimum remaining gap cost, 2) A depth-first extension strategy that exploits exact matches between the query
 and the graph, and 3) a graph-topology informed technique to prune suboptimal alignment states.
 
-<img src="doc/algo_intro.jpeg" width="600">
-    
-POASTA is [published in Oxford Bioinformatics](https://academic.oup.com/bioinformatics/article/41/1/btae757/7942505) 
+<img src="doc/algo_intro.jpeg" width="800">
+
+POASTA is [published in Oxford Bioinformatics](https://academic.oup.com/bioinformatics/article/41/1/btae757/7942505)
 and can be cited as:
 
-> van Dijk, L. R., Manson, A. L., Earl, A. M., Garimella, K. V., & Abeel, T. (2025). Fast and exact gap-affine partial 
+> van Dijk, L. R., Manson, A. L., Earl, A. M., Garimella, K. V., & Abeel, T. (2025). Fast and exact gap-affine partial
 > order alignment with POASTA. _Bioinformatics_, 41(1), btae757.
 
 ## Installation
@@ -29,7 +29,7 @@ and can be cited as:
 
 #### Rust compiler
 
-POASTA is written in Rust, and to build and install it, you'll need a recent version of the Rust compiler. The 
+POASTA is written in Rust, and to build and install it, you'll need a recent version of the Rust compiler. The
 minimum supported Rust version is 1.70.
 
 1. Download and install `rustup`: https://rustup.rs/
@@ -62,25 +62,25 @@ This command installs the executables `lasagna` and `poasta` that you can access
 
 Alternatively, you can clone the repository and build `POASTA` that way.
 
-1. Clone the repository. 
-    
+1. Clone the repository.
+
    ```bash
    git clone https://github.com/broadinstitute/poasta
    ```
- 
-2. Move into the directory. 
+
+2. Move into the directory.
 
    ```bash
    cd poasta
    ```
- 
-3. Build using `cargo`. We enable a flag to ensure the compiler uses all features of your machine's CPU. 
+
+3. Build using `cargo`. We enable a flag to ensure the compiler uses all features of your machine's CPU.
    To maximize portability of the binary, however, remove the `RUSTFLAGS="..."` part.
-    
+
    ```bash
    RUSTFLAGS="-C target-cpu=native" cargo build --release
    ```
- 
+
 4. The built `poasta` executable will be available in the directory `target/release/`
 
 
@@ -88,7 +88,7 @@ Alternatively, you can clone the repository and build `POASTA` that way.
 
 ### Creating an alignment from scratch
 
-To create a multiple sequence alignment from scratch, simply give it a FASTA. The FASTA file can be compressed 
+To create a multiple sequence alignment from scratch, simply give it a FASTA. The FASTA file can be compressed
 with gzip (filename should have a `.gz` extension).
 
 ```bash
@@ -100,7 +100,7 @@ additional sequences to it.
 
 ### Re-using an earlier alignment
 
-To align additional sequences to an earlier created partial order graph, specify the existing graph using the 
+To align additional sequences to an earlier created partial order graph, specify the existing graph using the
 `-g` option.
 
 ```bash
@@ -112,7 +112,7 @@ this graph, and outputs the updated graph to `graph_updated.poasta`.
 
 ### Importing an existing multiple sequence alignment in FASTA format
 
-POASTA can import an existing multiple sequence alignment stored in columnar FASTA format (e.g., those 
+POASTA can import an existing multiple sequence alignment stored in columnar FASTA format (e.g., those
 created by other tools like `mafft` or `spoa`), create the equivalent partial order graph from the existing alignment,
 and then align new sequences to it. To achieve this, specify the FASTA MSA with extension .fa, .fna, or .fasta with
 the `-g` option (file is also allowed to be compressed with gzip if it has a `.gz` suffix).
@@ -198,7 +198,7 @@ The first values (8,2) apply to short gaps, while the second values (24,1) apply
 
 POASTA supports different alignment modes:
 - `global`: End-to-end alignment (default)
-- `semi-global`: Query aligned globally, but graph gaps are free at ends  
+- `semi-global`: Query aligned globally, but graph gaps are free at ends
 - `ends-free`: Free gaps at sequence beginnings/ends for both query and graph
 
 ```bash
