@@ -138,6 +138,31 @@ where
     where
         V: AstarVisited<G::NodeIndex, O>,
     {
+        // Special handling for ends-free alignment starting at offset 0
+        if self.stack.len() == 1 && !self.seq.is_empty() {
+            let initial_node = *self.stack[0].aln_graph_node();
+            if initial_node.offset().as_usize() == 0 {
+                if self.ref_graph.is_symbol_equal(initial_node.node(), self.seq[0]) {
+                    let match_node = AlignmentGraphNode::new(initial_node.node(), initial_node.offset().increase_one());
+                    if astar_visited.update_score_if_lower(&match_node, AlignState::Match, &initial_node, AlignState::Match, self.score) {
+                        let child_succ = self.ref_graph.successors(match_node.node());
+                        self.stack[0] = StackNode::new(match_node, child_succ);
+                        astar_visited.dfa_match(self.score, &initial_node, &match_node);
+                        self.num_visited += 1;
+                        
+                        
+                        // If we've consumed the entire query, this might be an end state
+                        // Create a special "end" result to signal completion
+                        if match_node.offset().as_usize() == self.seq.len() {
+                            // Create a virtual end node transition
+                            let end_node = AlignmentGraphNode::new(match_node.node(), match_node.offset());
+                            return Some(ExtendResult::RefGraphEnd(initial_node, end_node));
+                        }
+                    }
+                }
+            }
+        }
+        
         while !self.stack.is_empty() {
             let parent = self.stack.last().unwrap();
 
@@ -189,7 +214,6 @@ where
         V: AstarVisited<G::NodeIndex, O>,
     {
         while let Some(child) = parent.children_iter().next() {
-            // eprintln!("DFA: succ: {child:?}, offset: {:?}", parent.offset().increase_one());
 
             if child == self.ref_graph.end_node() {
                 let aln_termination = AlignmentGraphNode::new(child, parent.offset());

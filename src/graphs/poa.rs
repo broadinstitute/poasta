@@ -181,14 +181,21 @@ where
 
         if alignment_opt.is_none() {
             // No aligned bases, just add unaligned nodes
-            let (nfirst, _) = self
-                .add_nodes_for_sequence(sequence, weights, 0, sequence.len())
-                .unwrap();
-            self.sequences
-                .push(Sequence(sequence_name.to_owned(), nfirst));
-            self.post_process()?;
-
-            return Ok(());
+            if sequence.is_empty() {
+                // For empty sequences, just add a sequence pointing to start node
+                self.sequences
+                    .push(Sequence(sequence_name.to_owned(), self.start_node));
+                self.post_process()?;
+                return Ok(());
+            } else {
+                let (nfirst, _) = self
+                    .add_nodes_for_sequence(sequence, weights, 0, sequence.len())
+                    .unwrap();
+                self.sequences
+                    .push(Sequence(sequence_name.to_owned(), nfirst));
+                self.post_process()?;
+                return Ok(());
+            }
         }
 
         let alignment = alignment_opt.unwrap();
@@ -201,6 +208,18 @@ where
             .collect();
 
         if valid_ix.is_empty() {
+            // For empty sequences, this is valid - just return success
+            if sequence.is_empty() {
+                self.sequences.push(Sequence(sequence_name.to_owned(), self.start_node));
+                self.post_process()?;
+                return Ok(());
+            }
+            // Debug: print alignment details for diagnosis
+            eprintln!("DEBUG: Invalid alignment for sequence '{}' (len={})", sequence_name, sequence.len());
+            eprintln!("DEBUG: Alignment length: {}", alignment.len());
+            for (i, aligned_pair) in alignment.iter().enumerate() {
+                eprintln!("DEBUG: Alignment[{}]: rpos={:?}, qpos={:?}", i, aligned_pair.rpos, aligned_pair.qpos);
+            }
             return Err(PoastaError::InvalidAlignment);
         }
 

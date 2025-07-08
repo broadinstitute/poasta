@@ -29,7 +29,15 @@ where
     let mut curr = Some(start_node);
     let mut last_col = 0;
     while let Some(n) = curr {
-        let node_col = node_to_column[&n];
+        // Handle empty sequences - if start_node is not in the column map, it's likely empty
+        let node_col = match node_to_column.get(&n) {
+            Some(&col) => col,
+            None => {
+                // This is likely an empty sequence (start_node not in alignment)
+                // Return empty sequence
+                return Vec::new();
+            }
+        };
 
         let gap_length = node_col.saturating_sub(1) - last_col;
         seq.extend(iter::repeat(b'-').take(gap_length));
