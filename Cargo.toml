@@ -1,5 +1,7 @@
 [package]
 name = "poasta"
+description = "Fast, optimal, gap-affine partial order alignment"
+license = "BSD-3-Clause"
 version = "0.1.0"
 edition = "2021"
 
