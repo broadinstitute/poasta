@@ -454,7 +454,7 @@ where
         let mut graph = Self::new();
         
         let mut msa_nodes_cover = MSANodeCover::new();
-        let mut reader = fasta::Reader::new(ifile);
+        let mut reader = fasta::io::Reader::new(ifile);
         
         let mut last_len = None;
         for record in reader.records() {

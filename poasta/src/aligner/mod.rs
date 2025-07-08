@@ -148,7 +148,7 @@ mod tests {
 
         let mut reader = File::open("../tests/test2_from_abpoa.fa")
             .map(BufReader::new)
-            .map(fasta::Reader::new)
+            .map(fasta::io::Reader::new)
             .unwrap();
 
         let sequences: Vec<_> = reader.records().map(|v| v.unwrap()).collect();
