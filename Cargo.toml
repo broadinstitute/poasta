@@ -3,7 +3,7 @@ members = ["poasta", "poasta_bin"]
 resolver = "2"
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.0-alpha.1"
 authors = ["Lucas van Dijk"]
 description = "Fast genome-scale partial order aligner"
 documentation = "https://github.com/broadinstitute/poasta"

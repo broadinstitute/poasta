@@ -10,7 +10,7 @@ name = "poasta"
 path = "src/main.rs"
 
 [dependencies]
-poasta = { path = "../poasta", version = "0.2.0", default-features = false }
+poasta = { path = "../poasta", version = "0.2.0-alpha.1", default-features = false }
 clap = { version = "4.5.19", features = ["derive"] }
 tracing = { version = "0.1.40" }
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
