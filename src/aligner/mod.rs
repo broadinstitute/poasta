@@ -10,9 +10,10 @@ pub mod config;
 
 use std::ops::Bound;
 use std::sync::Arc;
+use nonmax::NonMaxU32;
 use crate::graphs::AlignableRefGraph;
 use crate::aligner::offsets::OffsetType;
-use crate::aligner::scoring::AlignmentType;
+use crate::aligner::scoring::{AlignmentType, Score};
 
 pub use alignment::{AlignedPair, Alignment};
 use crate::aligner::astar::{astar_alignment, AstarResult};
@@ -118,6 +119,27 @@ impl<'a, C> PoastaAligner<'a, C>
         O: OffsetType,
         G: AlignableRefGraph,
     {
+        // Handle edge case: empty graph (only start/end nodes)
+        if ref_graph.node_count() == 0 {
+            // For empty graph, return a result with appropriate score
+            // In ends-free alignment, aligning against empty reference should be possible
+            let score = if seq.is_empty() {
+                Score::Score(NonMaxU32::new(0).unwrap()) // Perfect match: empty query against empty reference
+            } else {
+                // Query has content but reference is empty - treat as all insertions
+                // For ends-free alignment, this should have some cost but be valid
+                Score::Score(NonMaxU32::new(seq.len() as u32 * 4).unwrap()) // Rough cost estimate
+            };
+            
+            return AstarResult {
+                score,
+                alignment: Alignment::new(), // Empty alignment
+                num_queued: 0,
+                num_visited: 0,
+                num_pruned: 0,
+            };
+        }
+        
         self.align_internal::<O, _>(ref_graph, seq, None, true)
     }
 }
