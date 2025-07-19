@@ -20,13 +20,18 @@ pub trait GraphBase {
     
     fn successors(&self, node: Self::NodeType) -> Self::Successors<'_>;
     fn predecessors(&self, node: Self::NodeType) -> Self::Predecessors<'_>;
+    
+    fn node_capacity(&self) -> usize;
 }
 
 /// Trait for graphs that have dedicated start and end nodes, i.e.,
 /// a start node without any incoming edges and an end node without any outgoing edges.
-pub trait GraphWithStartEnd: GraphBase {
-    fn start_node(&self) -> <Self as GraphBase>::NodeType;
-    fn end_node(&self) -> <Self as GraphBase>::NodeType;
+pub trait GraphWithNodeOrdering: GraphBase {
+    fn start_node(&self) -> Self::NodeType;
+    fn end_node(&self) -> Self::NodeType;
+    
+    fn node_rank(&self, node: Self::NodeType) -> usize;
+    fn rank_to_node(&self, node_rank: usize) -> Self::NodeType;
 }
 
 

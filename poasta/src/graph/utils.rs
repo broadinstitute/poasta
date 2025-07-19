@@ -1,11 +1,11 @@
 use std::cell::RefCell;
     
 use rustc_hash::FxHashSet;
-use super::traits::{GraphBase, GraphWithStartEnd};
+use super::traits::{GraphBase, GraphWithNodeOrdering};
 
 
 pub fn rev_postorder_nodes<G>(graph: &G) -> Vec<G::NodeType>
-    where G: GraphWithStartEnd
+    where G: GraphWithNodeOrdering
 {
     let mut ordered = Vec::with_capacity(graph.node_count());
 

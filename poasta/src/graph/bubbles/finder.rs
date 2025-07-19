@@ -3,7 +3,7 @@ use std::iter::Rev;
 use std::ops::Range;
 use rustc_hash::FxHashMap;
 
-use crate::graph::traits::{GraphNodeId, GraphWithStartEnd};
+use crate::graph::traits::{GraphNodeId, GraphWithNodeOrdering};
 use crate::graph::utils::rev_postorder_nodes;
 
 /// Identify superbubbles in a directed acyclic graph
@@ -15,7 +15,7 @@ use crate::graph::utils::rev_postorder_nodes;
 ///    https://doi.org/10.1186/s13015-018-0134-3.
 pub struct SuperbubbleFinder<'a, G>
 where
-    G: GraphWithStartEnd,
+    G: GraphWithNodeOrdering,
 {
     graph: &'a G,
     rev_postorder: Vec<usize>,
@@ -26,11 +26,11 @@ where
 
 impl<'a, G> SuperbubbleFinder<'a, G>
 where
-    G: GraphWithStartEnd,
+    G: GraphWithNodeOrdering,
 {
     pub fn new(graph: &'a G) -> Self {
         let inv_rev_postorder = rev_postorder_nodes(graph);
-        let mut rev_postorder = vec![0; inv_rev_postorder.len()];
+        let mut rev_postorder = vec![0; graph.node_capacity()];
         for (postorder, node_ix) in inv_rev_postorder.iter().enumerate() {
             rev_postorder[node_ix.index()] = postorder
         }
@@ -82,7 +82,7 @@ where
 
 pub struct SuperbubbleIterator<'a, G>
 where
-    G: GraphWithStartEnd,
+    G: GraphWithNodeOrdering,
 {
     finder: &'a SuperbubbleFinder<'a, G>,
     out_parent_map: FxHashMap<G::NodeType, i64>,
@@ -93,7 +93,7 @@ where
 
 impl<'a, G> SuperbubbleIterator<'a, G>
 where
-    G: GraphWithStartEnd,
+    G: GraphWithNodeOrdering,
 {
     fn new(finder: &'a SuperbubbleFinder<'a, G>) -> Self {
         Self {
@@ -109,7 +109,7 @@ where
 
 impl<'a, G> Iterator for SuperbubbleIterator<'a, G>
 where
-    G: GraphWithStartEnd,
+    G: GraphWithNodeOrdering,
 {
     type Item = (G::NodeType, G::NodeType);
 
@@ -182,7 +182,7 @@ where
 mod tests {
     use rustc_hash::FxHashSet;
     use crate::graph::bubbles::finder::SuperbubbleFinder;
-    use crate::graph::traits::GraphWithStartEnd;
+    use crate::graph::traits::GraphWithNodeOrdering;
     use crate::graph::mock::{create_test_graph1, create_test_graph2};
 
 
@@ -192,7 +192,7 @@ mod tests {
         let finder = SuperbubbleFinder::new(&g1);
         let bubbles1: FxHashSet<_> = finder.iter()
             .filter(|(s, t)| *s != g1.end_node() && *t != g1.end_node())
-            .map(|(n1, n2)| (g1[n1], g1[n2]))
+            .map(|(n1, n2)| (g1[n1].0, g1[n2].0))
             .collect();
 
         assert_eq!(bubbles1, FxHashSet::from_iter([
@@ -207,7 +207,7 @@ mod tests {
         let g2 = create_test_graph2();
         let finder = SuperbubbleFinder::new(&g2);
         let bubbles2: FxHashSet<_> = finder.iter()
-            .map(|(n1, n2)| (g2[n1], g2[n2]))
+            .map(|(n1, n2)| (g2[n1].0, g2[n2].0))
             .collect();
 
         assert_eq!(bubbles2, FxHashSet::from_iter([

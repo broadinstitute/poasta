@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, marker::PhantomData};
 use tracing::{debug, debug_span, span, trace, Level};
 
 use super::AlignmentCostModel;
@@ -13,7 +13,6 @@ use crate::aligner::{
     AlignmentMode,
 };
 use crate::aligner::traits::{AlignableGraph, AlignableGraphNodePos};
-use crate::graph::traits::GraphNodeId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Affine {
@@ -55,7 +54,7 @@ impl AlignmentCostModel for Affine {
         let mut state = AffineAstarState::new(*self, graph, seq, alignment_mode);
         let initial_state = AffineAstarItem::new(
             Score::default(),
-            graph.start_node(),
+            graph.node_rank(graph.start_node()),
             Diag::default(),
             AlignState::Match,
         );
@@ -94,33 +93,33 @@ impl AlignmentCostModel for Affine {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AffineAstarItem<N, D> {
+pub struct AffineAstarItem<D> {
     pub score: Score,
-    pub node: N,
+    pub node_rank: usize,
     pub diag: Diag<D>,
     pub state: AlignState,
 }
 
-impl<N, D> AffineAstarItem<N, D> {
-    pub fn new(score: Score, node: N, diag: Diag<D>, state: AlignState) -> Self {
+impl<D> AffineAstarItem<D> {
+    pub fn new(score: Score, node_rank: usize, diag: Diag<D>, state: AlignState) -> Self {
         Self {
             score,
-            node,
+            node_rank,
             diag,
             state,
         }
     }
 }
 
-impl<N, D> From<(Score, N, Diag<D>)> for AffineAstarItem<N, D> {
-    fn from((score, node, diag): (Score, N, Diag<D>)) -> Self {
-        Self::new(score, node, diag, AlignState::Match)
+impl<D> From<(Score, usize, Diag<D>)> for AffineAstarItem<D> {
+    fn from((score, node_rank, diag): (Score, usize, Diag<D>)) -> Self {
+        Self::new(score, node_rank, diag, AlignState::Match)
     }
 }
 
-impl<N, D> From<(Score, N, Diag<D>, AlignState)> for AffineAstarItem<N, D> {
-    fn from((score, node, diag, state): (Score, N, Diag<D>, AlignState)) -> Self {
-        Self::new(score, node, diag, state)
+impl<D> From<(Score, usize, Diag<D>, AlignState)> for AffineAstarItem<D> {
+    fn from((score, node_rank, diag, state): (Score, usize, Diag<D>, AlignState)) -> Self {
+        Self::new(score, node_rank, diag, state)
     }
 }
 
@@ -136,7 +135,7 @@ where
     D: DiagType,
     O: PosType,
 {
-    fn get_furthest<N>(&self, item: &AffineAstarItem<N, D>) -> Option<O> {
+    fn get_furthest(&self, item: &AffineAstarItem<D>) -> Option<O> {
         match item.state {
             AlignState::Match => self.fr_points_m.get_furthest(item.score, item.diag),
             AlignState::Deletion => self.fr_points_d.get_furthest(item.score, item.diag),
@@ -147,7 +146,7 @@ where
         }
     }
 
-    fn is_further<N>(&self, item: &AffineAstarItem<N, D>, offset: O) -> bool {
+    fn is_further(&self, item: &AffineAstarItem<D>, offset: O) -> bool {
         match item.state {
             AlignState::Match => self.fr_points_m.is_further(item.score, item.diag, offset),
             AlignState::Deletion => self.fr_points_d.is_further(item.score, item.diag, offset),
@@ -158,7 +157,7 @@ where
         }
     }
 
-    fn update_if_further<N>(&mut self, item: &AffineAstarItem<N, D>, offset: O) -> bool {
+    fn update_if_further(&mut self, item: &AffineAstarItem<D>, offset: O) -> bool {
         match item.state {
             AlignState::Match => self
                 .fr_points_m
@@ -175,7 +174,7 @@ where
         }
     }
 
-    fn is_visited<N>(&self, item: &AffineAstarItem<N, D>) -> bool {
+    fn is_visited(&self, item: &AffineAstarItem<D>) -> bool {
         match item.state {
             AlignState::Match => self.fr_points_m.is_visited(item.score, item.diag),
             AlignState::Deletion => self.fr_points_d.is_visited(item.score, item.diag),
@@ -186,7 +185,7 @@ where
         }
     }
 
-    fn set_visited<N>(&mut self, item: &AffineAstarItem<N, D>) {
+    fn set_visited(&mut self, item: &AffineAstarItem<D>) {
         match item.state {
             AlignState::Match => self.fr_points_m.set_visited(item.score, item.diag, true),
             AlignState::Deletion => self.fr_points_d.set_visited(item.score, item.diag, true),
@@ -217,7 +216,9 @@ where
     fr_points: Vec<AffineNodeDiagonals<D, O>>,
 
     /// A* queue
-    queue: LayeredQueue<AffineQueueLayer<G::NodeType, D>>,
+    queue: LayeredQueue<AffineQueueLayer<D>>,
+
+    dummy: PhantomData<G>,
 }
 
 impl<G, D, O> AffineAstarState<G, D, O>
@@ -234,6 +235,7 @@ where
             alignment_mode,
             fr_points: vec![AffineNodeDiagonals::default(); node_count],
             queue: LayeredQueue::new(),
+            dummy: PhantomData
         }
     }
 
@@ -241,41 +243,42 @@ where
         &mut self,
         graph: &G,
         seq: &[u8],
-        item: &AffineAstarItem<G::NodeType, D>,
+        item: &AffineAstarItem<D>,
         heuristic: F,
     ) where
-        F: Fn(&AffineAstarItem<G::NodeType, D>) -> usize,
+        F: Fn(&AffineAstarItem<D>) -> usize,
     {
-        if item.node == graph.end_node() {
+        if item.node_rank == graph.node_rank(graph.end_node()) {
             return;
         }
-        
-        let fr_point = self.fr_points[item.node.index()]
+
+        let fr_point = self.fr_points[item.node_rank]
             .get_furthest(item)
             .unwrap_or(O::zero());
         
-        let node_len = graph.node_length(item.node);
+        let node_ix = graph.rank_to_node(item.node_rank);
+        let node_len = graph.node_length(node_ix);
         let node_pos = to_node_pos(item.diag, fr_point.as_usize());
         
-        debug!("Relaxing match, {:?}, length: {node_len}, pos: {node_pos}", item.node);
+        debug!("Relaxing match, node rank: {}, length: {node_len}, pos: {node_pos}", item.node_rank);
 
         if node_pos == node_len - 1 {
-            self.relax_match_at_succ(graph, seq, item, heuristic, fr_point);
+            self.relax_match_at_succ(&graph, seq, item, heuristic, fr_point);
         } else {
             // Not at the node end yet, so queue mismatch, deletion, and insertion states within the node
             if fr_point.as_usize() < self.seq_length {
                 let new_item_mis = AffineAstarItem::new(
                     item.score + self.costs.mismatch(),
-                    item.node,
+                    item.node_rank,
                     item.diag,
                     AlignState::Match,
                 );
-                let extended_offset = extend(graph, seq, item.node, item.diag, fr_point.increase_one());
+                let extended_offset = extend(graph, seq, node_ix, item.diag, fr_point.increase_one());
                 
                 trace!(
                     target: "poasta::aligner::cost_models::affine::extend",
                     score=new_item_mis.score.as_usize(),
-                    node=new_item_mis.node.index(),
+                    node=new_item_mis.node_rank,
                     diag=new_item_mis.diag.as_isize(),
                     offset=fr_point.increase_one().as_usize(),
                     extended_offset=extended_offset.as_usize(),
@@ -290,7 +293,7 @@ where
                 
                 let new_item_ins = AffineAstarItem::new(
                     item.score + self.costs.gap_open() + self.costs.gap_extend(),
-                    item.node,
+                    item.node_rank,
                     item.diag + 1isize,
                     AlignState::Insertion,
                 );
@@ -303,7 +306,7 @@ where
             
             let new_item_del = AffineAstarItem::new(
                 item.score + self.costs.gap_open() + self.costs.gap_extend(),
-                item.node,
+                item.node_rank,
                 item.diag - 1isize,
                 AlignState::Deletion,
             );
@@ -319,18 +322,20 @@ where
         &mut self,
         graph: &G,
         seq: &[u8],
-        item: &AffineAstarItem<G::NodeType, D>,
-        heuristic: impl Fn(&AffineAstarItem<G::NodeType, D>) -> usize,
+        item: &AffineAstarItem<D>,
+        heuristic: impl Fn(&AffineAstarItem<D>) -> usize,
         curr_offset: O,
     ) {
         // At the end of a node, we need to check successors to extend the (mis)match
-        let node_len = graph.node_length(item.node);
+        let node_ix = graph.rank_to_node(item.node_rank);
+        let node_len = graph.node_length(node_ix);
         let mut any_mismatch = false;
         
         debug!("At node end, checking successors.");
         
-        for succ in graph.successors(item.node) {
+        for succ in graph.successors(node_ix) {
             let new_diag = item.diag + node_len;
+            let succ_rank = graph.node_rank(succ);
             let succ_offset = curr_offset.increase_one();
             let succ_node_pos = to_node_pos(new_diag, succ_offset.as_usize());
             let succ_seq = graph.node_seq(succ);
@@ -342,7 +347,7 @@ where
 
                 // We reached the end node, immediately queue with zero cost
                 let new_item =
-                    AffineAstarItem::new(item.score, succ, new_diag, AlignState::Match);
+                    AffineAstarItem::new(item.score, succ_rank, new_diag, AlignState::Match);
 
                 if self
                     .update_if_further(&new_item, curr_offset.increase_one().as_usize())
@@ -362,7 +367,7 @@ where
                 // Beyond the sequence length, but ensure we open deletion on the successor node
                 let new_item_del = AffineAstarItem::new(
                     item.score + self.costs.gap_open() + self.costs.gap_extend(),
-                    succ,
+                    succ_rank,
                     new_diag - 1isize,
                     AlignState::Deletion,
                 );
@@ -372,12 +377,12 @@ where
                     self.queue_item(new_item_del, h);
                 }
             } else if succ_seq[succ_node_pos] != seq[succ_offset.as_usize()-1] {
-                debug!("Mismatch at successor node {succ:?}, pos: {succ_node_pos}, qry offset: {:?}", 
+                debug!("Mismatch at successor node {succ_rank}, pos: {succ_node_pos}, qry offset: {:?}", 
                     succ_offset);
                 
                 let new_item_mis = AffineAstarItem::new(
                     item.score + self.costs.mismatch(),
-                    succ,
+                    succ_rank,
                     new_diag,
                     AlignState::Match,
                 );
@@ -386,7 +391,7 @@ where
                 trace!(
                     target: "poasta::aligner::cost_models::affine::extend",
                     score=new_item_mis.score.as_usize(),
-                    node=new_item_mis.node.index(),
+                    node=new_item_mis.node_rank,
                     diag=new_item_mis.diag.as_isize(),
                     offset=succ_offset.as_usize(),
                     extended_offset=extended_offset.as_usize(),
@@ -401,7 +406,7 @@ where
                 
                 let new_item_del = AffineAstarItem::new(
                     item.score + self.costs.gap_open() + self.costs.gap_extend(),
-                    succ,
+                    succ_rank,
                     new_diag - 1isize,
                     AlignState::Deletion,
                 );
@@ -413,13 +418,13 @@ where
                 
                 any_mismatch = true;
             } else {
-                debug!("Match at successor node {succ:?}, pos: {succ_node_pos}, qry offset: {:?}", 
+                debug!("Match at successor node {succ_rank}, pos: {succ_node_pos}, qry offset: {:?}", 
                     succ_offset);
                 let extended_offset = extend(graph, seq, succ, new_diag, succ_offset);
                 
                 let new_item_match = AffineAstarItem::new(
                     item.score,
-                    succ,
+                    succ_rank,
                     new_diag,
                     AlignState::Match,
                 );
@@ -427,7 +432,7 @@ where
                 trace!(
                     target: "poasta::aligner::cost_models::affine::extend",
                     score=new_item_match.score.as_usize(),
-                    node=new_item_match.node.index(),
+                    node=new_item_match.node_rank,
                     diag=new_item_match.diag.as_isize(),
                     offset=succ_offset.as_usize(),
                     extended_offset=extended_offset.as_usize(),
@@ -447,7 +452,7 @@ where
             if curr_offset.as_usize() < self.seq_length {
                 let new_item_ins = AffineAstarItem::new(
                     item.score + self.costs.gap_open() + self.costs.gap_extend(),
-                    item.node,
+                    item.node_rank,
                     item.diag + 1isize,
                     AlignState::Insertion,
                 );
@@ -464,28 +469,31 @@ where
         &mut self,
         graph: &G,
         seq: &[u8],
-        item: &AffineAstarItem<G::NodeType, D>,
+        item: &AffineAstarItem<D>,
         heuristic: F,
     ) where
-        F: Fn(&AffineAstarItem<G::NodeType, D>) -> usize,
+        F: Fn(&AffineAstarItem<D>) -> usize,
     {
-        let fr_point = self.fr_points[item.node.index()]
+        let fr_point = self.fr_points[item.node_rank]
             .get_furthest(item)
             .unwrap_or(O::zero());
 
-        let node_len = graph.node_length(item.node);
+        let node_ix = graph.rank_to_node(item.node_rank);
+        let node_len = graph.node_length(node_ix);
         let node_pos = to_node_pos(item.diag, fr_point.as_usize());
 
         if node_pos == node_len - 1 {
             // At the end of a node, we need to check successors to extend the deletion
-            for succ in graph.successors(item.node) {
+            for succ in graph.successors(node_ix) {
                 if succ == graph.end_node() {
                     continue;
                 }
+
+                let succ_rank = graph.node_rank(succ);
                 
                 let new_item_del = AffineAstarItem::new(
                     item.score + self.costs.gap_extend(),
-                    succ,
+                    succ_rank,
                     item.diag + node_len - 1isize,
                     AlignState::Deletion,
                 );
@@ -498,7 +506,7 @@ where
         } else {
             let new_item_del = AffineAstarItem::new(
                 item.score + self.costs.gap_extend(),
-                item.node,
+                item.node_rank,
                 item.diag - 1isize,
                 AlignState::Deletion,
             );
@@ -511,13 +519,13 @@ where
 
         // Close deletion if we can
         let new_item_match =
-            AffineAstarItem::new(item.score, item.node, item.diag, AlignState::Match);
-        let extended_offset = extend(graph, seq, item.node, item.diag, fr_point);
+            AffineAstarItem::new(item.score, item.node_rank, item.diag, AlignState::Match);
+        let extended_offset = extend(graph, seq, node_ix, item.diag, fr_point);
         
         trace!(
             target: "poasta::aligner::cost_models::affine::extend",
             score=new_item_match.score.as_usize(),
-            node=new_item_match.node.index(),
+            node=new_item_match.node_rank,
             diag=new_item_match.diag.as_isize(),
             offset=fr_point.as_usize(),
             extended_offset=extended_offset.as_usize(),
@@ -535,19 +543,19 @@ where
         &mut self,
         graph: &G,
         seq: &[u8],
-        item: &AffineAstarItem<G::NodeType, D>,
+        item: &AffineAstarItem<D>,
         heuristic: F,
     ) where
-        F: Fn(&AffineAstarItem<G::NodeType, D>) -> usize,
+        F: Fn(&AffineAstarItem<D>) -> usize,
     {
-        let fr_point = self.fr_points[item.node.index()]
+        let fr_point = self.fr_points[item.node_rank]
             .get_furthest(item)
             .unwrap_or(O::zero());
 
         if fr_point.as_usize() < self.seq_length {
             let new_item_ins = AffineAstarItem::new(
                 item.score + self.costs.gap_extend(),
-                item.node,
+                item.node_rank,
                 item.diag + 1isize,
                 AlignState::Insertion,
             );
@@ -559,14 +567,15 @@ where
         }
 
         // Close insertion if we can
+        let node_ix = graph.rank_to_node(item.node_rank);
         let new_item_match =
-            AffineAstarItem::new(item.score, item.node, item.diag, AlignState::Match);
-        let extended_offset = extend(graph, seq, item.node, item.diag, fr_point);
+            AffineAstarItem::new(item.score, item.node_rank, item.diag, AlignState::Match);
+        let extended_offset = extend(graph, seq, node_ix, item.diag, fr_point);
         
         trace!(
             target: "poasta::aligner::cost_models::affine::extend",
             score=new_item_match.score.as_usize(),
-            node=new_item_match.node.index(),
+            node=new_item_match.node_rank,
             diag=new_item_match.diag.as_isize(),
             offset=fr_point.as_usize(),
             extended_offset=extended_offset.as_usize(),
@@ -583,9 +592,9 @@ where
     fn get_prev(
         &self,
         graph: &G,
-        item: &AffineAstarItem<G::NodeType, D>,
+        item: &AffineAstarItem<D>,
         curr_offset: O,
-    ) -> Option<(AffineAstarItem<G::NodeType, D>, O)> {
+    ) -> Option<(AffineAstarItem<D>, O)> {
         let span = debug_span!("get_prev");
         let _enter = span.enter();
         let mut sources = Vec::new();
@@ -598,7 +607,7 @@ where
                 // Check for closed insertions
                 sources.push(AffineAstarItem::new(
                     item.score,
-                    item.node,
+                    item.node_rank,
                     item.diag,
                     AlignState::Insertion,
                 ));
@@ -606,22 +615,25 @@ where
                 // Check for closed insertions
                 sources.push(AffineAstarItem::new(
                     item.score,
-                    item.node,
+                    item.node_rank,
                     item.diag,
                     AlignState::Deletion,
                 ));
 
                 // Check for deletions that could have been the source, both on the current node as well as predecessors
-                let mut possible_pred = vec![item.node];
-                possible_pred.extend(graph.predecessors(item.node));
+                let node_ix = graph.rank_to_node(item.node_rank);
+                let mut possible_pred = vec![item.node_rank];
+                possible_pred.extend(graph.predecessors(node_ix)
+                    .map(|v| graph.node_rank(v)));
 
                 // Check for mismatches, same diagonal, but potentially on a predecessor node
                 if item.score >= s_mism {
                     for pred in &possible_pred {
-                        let pred_len = if *pred == item.node {
+                        let pred_len = if *pred == item.node_rank {
                             0
                         } else {
-                            graph.node_length(*pred)
+                            let pred_ix = graph.rank_to_node(*pred);
+                            graph.node_length(pred_ix)
                         };
                         let pred_diag = item.diag - pred_len as isize;
 
@@ -635,29 +647,33 @@ where
                 }
 
                 // Check for match on a predecessor node, same score
-                for pred in graph.predecessors(item.node) {
+                for pred in graph.predecessors(node_ix) {
                     let pred_len = graph.node_length(pred);
                     let pred_diag = item.diag - pred_len as isize;
+                    let pred_rank = graph.node_rank(pred);
 
                     sources.push(AffineAstarItem::new(
                         item.score,
-                        pred,
+                        pred_rank,
                         pred_diag,
                         AlignState::Match,
                     ));
                 }
             }
             AlignState::Deletion => {
-                let mut possible_pred = vec![item.node];
-                possible_pred.extend(graph.predecessors(item.node));
+                let node_ix = graph.rank_to_node(item.node_rank);
+                let mut possible_pred = vec![item.node_rank];
+                possible_pred.extend(graph.predecessors(node_ix)
+                    .map(|v| graph.node_rank(v)));
 
                 // Check for extended deletions
                 if item.score >= s_gap_extend {
                     for pred in &possible_pred {
-                        let pred_len = if *pred == item.node {
+                        let pred_len = if *pred == item.node_rank {
                             0
                         } else {
-                            graph.node_length(*pred)
+                            let pred_ix = graph.rank_to_node(*pred);
+                            graph.node_length(pred_ix)
                         };
                         let pred_diag = item.diag - pred_len as isize + 1isize;
 
@@ -673,10 +689,11 @@ where
                 // Check for opened deletions
                 if item.score >= s_gap_open {
                     for pred in &possible_pred {
-                        let pred_len = if *pred == item.node {
+                        let pred_len = if *pred == item.node_rank {
                             0
                         } else {
-                            graph.node_length(*pred)
+                            let pred_ix = graph.rank_to_node(*pred);
+                            graph.node_length(pred_ix)
                         };
                         let pred_diag = item.diag - pred_len as isize + 1isize;
 
@@ -695,7 +712,7 @@ where
                     if item.score >= s_gap_extend {
                         sources.push(AffineAstarItem::new(
                             item.score - s_gap_extend,
-                            item.node,
+                            item.node_rank,
                             pred_diag,
                             AlignState::Insertion,
                         ));
@@ -704,7 +721,7 @@ where
                     if item.score >= s_gap_open {
                         sources.push(AffineAstarItem::new(
                             item.score - s_gap_open,
-                            item.node,
+                            item.node_rank,
                             pred_diag,
                             AlignState::Match,
                         ));
@@ -720,16 +737,16 @@ where
         // so we ordered the above code to prioritize matches > mismatches > deletions > insertions.
         sources
             .into_iter()
-            .filter(|s| self.fr_points[s.node.index()].is_visited(s))
+            .filter(|s| self.fr_points[s.node_rank].is_visited(s))
             .filter_map(|s| {
-                self.fr_points[s.node.index()]
+                self.fr_points[s.node_rank]
                     .get_furthest(&s)
                     .and_then(|v| if v.value() <= curr_offset.value() { Some((s, v)) } else { None })
             })
             .inspect(|(item, offset)| {
                 debug!(
-                    "Checking source: {:?} [{:?}], offset: {:?}, diag: {:?}, node: {:?}",
-                    item.state, item.score, offset.as_usize(), item.diag, item.node
+                    "Checking source: {:?} [{:?}], offset: {:?}, diag: {:?}, node rank: {:?}",
+                    item.state, item.score, offset.as_usize(), item.diag, item.node_rank
                 )
             })
             .max_by_key(|(_, offset)| offset.as_usize())
@@ -742,18 +759,18 @@ where
     D: DiagType,
     O: PosType,
 {
-    type AstarItem = AffineAstarItem<G::NodeType, D>;
+    type AstarItem = AffineAstarItem<D>;
 
     fn pop_front(&mut self) -> Option<Self::AstarItem> {
         self.queue.pop()
     }
 
     fn is_further(&self, item: &Self::AstarItem, offset: usize) -> bool {
-        self.fr_points[item.node.index()].is_further(item, O::new(offset))
+        self.fr_points[item.node_rank].is_further(item, O::new(offset))
     }
 
     fn is_end(&self, graph: &G, item: &Self::AstarItem) -> bool {
-        if item.node != graph.end_node() {
+        if graph.rank_to_node(item.node_rank) != graph.end_node() {
             return false;
         }
 
@@ -776,14 +793,14 @@ where
     }
 
     fn get_offset(&self, item: &Self::AstarItem) -> usize {
-        self.fr_points[item.node.index()]
+        self.fr_points[item.node_rank]
             .get_furthest(item)
             .map(|v| v.as_usize())
             .unwrap_or(0)
     }
 
     fn is_visited(&self, item: &Self::AstarItem) -> bool {
-        self.fr_points[item.node.index()].is_visited(item)
+        self.fr_points[item.node_rank].is_visited(item)
     }
 
     fn set_visited(&mut self, item: &Self::AstarItem) {
@@ -791,16 +808,16 @@ where
         trace!(
             target: "poasta::aligner::cost_models::affine::set_visited",
             score=item.score.as_usize(),
-            node=item.node.index(),
+            node=item.node_rank,
             diag=item.diag.as_isize(),
             offset=offset,
             state=tracing::field::debug(&item.state)
         );
-        self.fr_points[item.node.index()].set_visited(item)
+        self.fr_points[item.node_rank].set_visited(item)
     }
 
     fn update_if_further(&mut self, item: &Self::AstarItem, offset: usize) -> bool {
-        self.fr_points[item.node.index()].update_if_further(item, O::new(offset))
+        self.fr_points[item.node_rank].update_if_further(item, O::new(offset))
     }
 
     fn queue_item(&mut self, item: Self::AstarItem, heuristic: usize) {
@@ -810,7 +827,7 @@ where
         trace!(
             target: "poasta::aligner::cost_models::affine::queue_item",
             score=item.score.as_usize(),
-            node=item.node.index(),
+            node=item.node_rank,
             diag=item.diag.as_isize(),
             offset=offset,
             priority=priority,
@@ -848,7 +865,7 @@ where
             debug!(curr = ?curr, curr_offset = ?curr_offset);
             debug!(prev = ?prev, prev_offset = ?prev_offset);
 
-            if curr.node == graph.end_node() {
+            if graph.rank_to_node(curr.node_rank) == graph.end_node() {
                 curr = prev;
                 curr_offset = prev_offset;
                 continue;
@@ -862,7 +879,7 @@ where
 
                         alignment.push(AlignedPair::new(
                             Some(<G::NodePosType as AlignableGraphNodePos>::new(
-                                curr.node, node_pos,
+                                graph.rank_to_node(curr.node_rank), node_pos,
                             )),
                             Some(query_offset - 1),
                         ));
@@ -872,7 +889,7 @@ where
                     let node_pos = to_node_pos(curr.diag, curr_offset.as_usize());
                     alignment.push(AlignedPair::new(
                         Some(<G::NodePosType as AlignableGraphNodePos>::new(
-                            curr.node, node_pos,
+                            graph.rank_to_node(curr.node_rank), node_pos,
                         )),
                         None,
                     ));
@@ -955,31 +972,30 @@ where
 /// matches, then deletions, and then insertions. This reduces branch prediction misses
 /// in the main A* loop as compared to a single queue with all states mixed.
 #[derive(Clone)]
-pub struct AffineQueueLayer<N, D> {
-    queued_states_m: Vec<(Score, N, Diag<D>)>,
-    queued_states_i: Vec<(Score, N, Diag<D>)>,
-    queued_states_d: Vec<(Score, N, Diag<D>)>,
+pub struct AffineQueueLayer<D> {
+    queued_states_m: Vec<(Score, usize, Diag<D>)>,
+    queued_states_i: Vec<(Score, usize, Diag<D>)>,
+    queued_states_d: Vec<(Score, usize, Diag<D>)>,
 }
 
-impl<N, D> QueueLayer for AffineQueueLayer<N, D>
+impl<D> QueueLayer for AffineQueueLayer<D>
 where
-    N: Clone + fmt::Debug,
     D: DiagType,
 {
-    type QueueItem = AffineAstarItem<N, D>;
+    type QueueItem = AffineAstarItem<D>;
 
     fn queue(&mut self, item: Self::QueueItem) {
         // Since we have separate queues for each alignment state, we don't store the enum value to save memory
         match item.state {
             AlignState::Match => self
                 .queued_states_m
-                .push((item.score, item.node, item.diag)),
+                .push((item.score, item.node_rank, item.diag)),
             AlignState::Deletion => self
                 .queued_states_d
-                .push((item.score, item.node, item.diag)),
+                .push((item.score, item.node_rank, item.diag)),
             AlignState::Insertion => self
                 .queued_states_i
-                .push((item.score, item.node, item.diag)),
+                .push((item.score, item.node_rank, item.diag)),
             AlignState::Insertion2 | AlignState::Deletion2 => {
                 panic!("Invalid gap-affine state {:?}", item.state)
             }
@@ -1022,7 +1038,7 @@ where
     }
 }
 
-impl<N, D> Default for AffineQueueLayer<N, D>
+impl<D> Default for AffineQueueLayer<D>
 where
     D: DiagType,
 {

@@ -20,4 +20,4 @@ tracing-subscriber = { version = "0.3.18" }
 
 [features]
 default = ["optimize_logging"]
-optimize_logging = ["tracing/release_max_level_info"]
+optimize_logging = ["tracing/release_max_level_warn"]

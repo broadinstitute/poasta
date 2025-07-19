@@ -1,5 +1,5 @@
 use std::fmt;
-use crate::graph::traits::{GraphNodeId, GraphWithNodeLengths, GraphWithStartEnd};
+use crate::graph::traits::{GraphNodeId, GraphWithNodeLengths, GraphWithNodeOrdering};
 
 pub trait AlignableGraphNodePos: fmt::Debug + Clone + Copy + PartialEq + Eq {
     type NodeType: GraphNodeId;
@@ -10,7 +10,7 @@ pub trait AlignableGraphNodePos: fmt::Debug + Clone + Copy + PartialEq + Eq {
 }
 
 pub trait AlignableGraph: 
-    GraphWithStartEnd<NodeType = Self::Node> 
+    GraphWithNodeOrdering<NodeType = Self::Node> 
     + GraphWithNodeLengths<NodeType = Self::Node>
 {
     type Node: GraphNodeId; // Mostly here to constrain subtrait associated types

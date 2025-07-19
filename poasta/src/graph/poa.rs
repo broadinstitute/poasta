@@ -1,7 +1,6 @@
 use std::io::BufRead;
 use std::ops::{Bound, Range, RangeBounds};
 
-use petgraph::algo::toposort;
 pub use petgraph::graph::IndexType;
 use petgraph::stable_graph::{Neighbors, NodeIndices};
 use petgraph::visit::EdgeRef;
@@ -17,7 +16,8 @@ use crate::graph::alignment::AlignmentBlockType;
 
 use super::alignment::{AlignmentBlocks, AlignmentClassification, POANodePos};
 use super::io::fasta::MSANodeCover;
-use super::traits::{GraphBase, GraphWithNodeLengths, GraphWithStartEnd};
+use super::traits::{GraphBase, GraphWithNodeLengths, GraphWithNodeOrdering};
+use super::utils::rev_postorder_nodes;
 
 pub(crate) mod graph_impl {
     use petgraph::graph::IndexType;
@@ -1279,9 +1279,8 @@ where
             debug!("Adding edge {:?}", e);
             self.graph.add_edge(e.0, e.1, POAEdgeData::new_with_seq_ids(e.2));
         }
-        
-        self.toposorted.clear();
-        self.toposorted = toposort(&self.graph, None)?;
+
+        self.toposorted = rev_postorder_nodes(self);
         
         for (rank, n) in self.toposorted.iter().enumerate() {
             self.graph.node_weight_mut(*n).unwrap().rank = Ix::new(rank);
@@ -1484,18 +1483,36 @@ where
     fn predecessors(&self, node: Self::NodeType) -> Self::Predecessors<'_> {
         self.graph.neighbors_directed(node, Incoming)
     }
+    
+    fn node_capacity(&self) -> usize {
+        let (capacity, _) = self.graph.capacity();
+        
+        capacity
+    }
 }
 
-impl<Ix> GraphWithStartEnd for POASeqGraph<Ix>
+impl<Ix> GraphWithNodeOrdering for POASeqGraph<Ix>
 where 
     Ix: IndexType,
 {
+    #[inline(always)]
     fn start_node(&self) -> Self::NodeType {
         self.start_node
     }
     
+    #[inline(always)]
     fn end_node(&self) -> Self::NodeType {
         self.end_node
+    }
+
+    #[inline(always)]
+    fn node_rank(&self, node: Self::NodeType) -> usize {
+        self.graph[node].rank.index()
+    }
+
+    #[inline(always)]
+    fn rank_to_node(&self, node_rank: usize) -> Self::NodeType {
+        self.toposorted[node_rank]
     }
 }
 
@@ -1547,19 +1564,37 @@ where
     fn predecessors(&self, node: Self::NodeType) -> Self::Predecessors<'_> {
         self.graph.neighbors_directed(node, Incoming)
     }
+    
+    fn node_capacity(&self) -> usize {
+        let (capacity, _) = self.graph.capacity();
+        
+        capacity
+    }
 }
 
 
-impl<'a, Ix> GraphWithStartEnd for &'a POASeqGraph<Ix>
+impl<'a, Ix> GraphWithNodeOrdering for &'a POASeqGraph<Ix>
 where 
     Ix: IndexType,
 {
+    #[inline(always)]
     fn start_node(&self) -> Self::NodeType {
         self.start_node
     }
     
+    #[inline(always)]
     fn end_node(&self) -> Self::NodeType {
         self.end_node
+    }
+
+    #[inline(always)]
+    fn node_rank(&self, node: Self::NodeType) -> usize {
+        self.graph[node].rank.index()
+    }
+
+    #[inline(always)]
+    fn rank_to_node(&self, node_rank: usize) -> Self::NodeType {
+        self.toposorted[node_rank]
     }
 }
 
@@ -1634,7 +1669,7 @@ mod tests {
     use tracing::{span, Level};
     use noodles::fasta;
 
-    use crate::{aligner::utils::AlignedPair, graph::{alignment::POANodePos, poa::{graph_impl::AlignedInterval, SplitTracker}}};
+    use crate::{aligner::utils::AlignedPair, graph::{alignment::POANodePos, io::dot::graph_to_dot, poa::{graph_impl::AlignedInterval, SplitTracker}}};
 
     use super::POASeqGraph;
     
@@ -1743,8 +1778,8 @@ mod tests {
         let seq_truth: Vec<&[u8]> = vec![
             b"#",
             b"GTCTGCTAT",
-            b"ACT",
             b"GGG",
+            b"ACT",
             b"GCGTACGTCGT",
             b"$"
         ];
@@ -1797,12 +1832,12 @@ mod tests {
         let seq_truth: Vec<&[u8]> = vec![
             b"#",
             b"GTCTGCTAT",
+            b"G",
+            b"G",
             b"A",
-            b"G",
-            b"G",
             b"C",
-            b"G",
             b"T",
+            b"G",
             b"GCGTACGTCGT",
             b"$",
         ];
@@ -1810,12 +1845,12 @@ mod tests {
         let w_truth: Vec<&[usize]> = vec![
             &[1],
             &[3, 3, 3, 3, 3, 3, 3, 3, 3],
+            &[2],
+            &[1],
             &[1],
             &[2],
             &[1],
             &[2],
-            &[2],
-            &[1],
             &[3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3],
             &[1],
         ];
@@ -1823,10 +1858,10 @@ mod tests {
         let aln_ival_truth: Vec<Vec<AlignedInterval<usize>>> = vec![
             vec![],
             vec![],
-            vec![AlignedInterval::new(0, 1, graph.toposorted[3], 0)],
-            vec![AlignedInterval::new(0, 1, graph.toposorted[2], 0)],
-            vec![AlignedInterval::new(0, 1, graph.toposorted[5], 0)],
             vec![AlignedInterval::new(0, 1, graph.toposorted[4], 0)],
+            vec![AlignedInterval::new(0, 1, graph.toposorted[5], 0)],
+            vec![AlignedInterval::new(0, 1, graph.toposorted[2], 0)],
+            vec![AlignedInterval::new(0, 1, graph.toposorted[3], 0)],
             vec![AlignedInterval::new(0, 1, graph.toposorted[7], 0)],
             vec![AlignedInterval::new(0, 1, graph.toposorted[6], 0)],
             vec![],
@@ -1835,6 +1870,7 @@ mod tests {
         
         for (rank, n) in graph.toposorted.iter().enumerate() {
             let node_data = graph.node_data(*n);
+            // eprintln!("{rank} {n:?} - {:?} {:?} {:?}", String::from_utf8_lossy(&node_data.sequence), &node_data.weights, &node_data.aligned_intervals);
             assert_eq!(&node_data.sequence, seq_truth[rank]);
             assert_eq!(&node_data.weights, w_truth[rank]);
             assert_eq!(&node_data.aligned_intervals, &aln_ival_truth[rank]);
@@ -1892,9 +1928,9 @@ mod tests {
             AlignedPair::new(Some(POANodePos(graph.toposorted[1], 6)), Some(6)),
             AlignedPair::new(Some(POANodePos(graph.toposorted[1], 7)), Some(7)),
             AlignedPair::new(Some(POANodePos(graph.toposorted[1], 8)), Some(8)),
-            AlignedPair::new(Some(POANodePos(graph.toposorted[3], 0)), Some(9)),
-            AlignedPair::new(Some(POANodePos(graph.toposorted[3], 1)), Some(10)),
-            AlignedPair::new(Some(POANodePos(graph.toposorted[3], 2)), Some(11)),
+            AlignedPair::new(Some(POANodePos(graph.toposorted[2], 0)), Some(9)),
+            AlignedPair::new(Some(POANodePos(graph.toposorted[2], 1)), Some(10)),
+            AlignedPair::new(Some(POANodePos(graph.toposorted[2], 2)), Some(11)),
             AlignedPair::new(Some(POANodePos(graph.toposorted[4], 0)), Some(12)),
             AlignedPair::new(Some(POANodePos(graph.toposorted[4], 1)), Some(13)),
             AlignedPair::new(Some(POANodePos(graph.toposorted[4], 2)), Some(14)),
@@ -1913,11 +1949,11 @@ mod tests {
         let seq_truth: Vec<&[u8]> = vec![
             b"#",
             b"GTCTGCTAT",
-            b"GG",
-            b"AAAA",
-            b"G",
             b"ACT",
+            b"GG",
+            b"G",
             b"GCG",
+            b"AAAA",
             b"TACGTCGT",
             b"$",
         ];
@@ -1925,11 +1961,11 @@ mod tests {
         let w_truth: Vec<&[usize]> = vec![
             &[1],
             &[3, 3, 3, 3, 3, 3, 3, 3, 3],
-            &[2, 2],
-            &[1, 1, 1, 1],
-            &[1],
             &[1, 1, 1],
+            &[2, 2],
+            &[1],
             &[2, 2, 2],
+            &[1, 1, 1, 1],
             &[3, 3, 3, 3, 3, 3, 3, 3],
             &[1],
         ];
@@ -1937,22 +1973,22 @@ mod tests {
         let aln_ival_truth: Vec<Vec<AlignedInterval<usize>>> = vec![
             vec![],
             vec![],
-            vec![AlignedInterval::new(0, 2, graph.toposorted[5], 0)],
+            vec![
+                AlignedInterval::new(0, 2, graph.toposorted[3], 0),
+                AlignedInterval::new(2, 1, graph.toposorted[4], 0),
+                AlignedInterval::new(2, 1, graph.toposorted[6], 0),
+            ],
+            vec![AlignedInterval::new(0, 2, graph.toposorted[2], 0)],
+            vec![
+                AlignedInterval::new(0, 1, graph.toposorted[2], 2),
+                AlignedInterval::new(0, 1, graph.toposorted[6], 0),
+            ],
+            vec![AlignedInterval::new(0, 3, graph.toposorted[6], 1)],
             vec![
                 AlignedInterval::new(0, 1, graph.toposorted[4], 0),
-                AlignedInterval::new(1, 3, graph.toposorted[6], 0),
-                AlignedInterval::new(0, 1, graph.toposorted[5], 2),
+                AlignedInterval::new(1, 3, graph.toposorted[5], 0),
+                AlignedInterval::new(0, 1, graph.toposorted[2], 2),
             ],
-            vec![
-                AlignedInterval::new(0, 1, graph.toposorted[5], 2),
-                AlignedInterval::new(0, 1, graph.toposorted[3], 0),
-            ],
-            vec![
-                AlignedInterval::new(0, 2, graph.toposorted[2], 0),
-                AlignedInterval::new(2, 1, graph.toposorted[4], 0),
-                AlignedInterval::new(2, 1, graph.toposorted[3], 0),
-            ],
-            vec![AlignedInterval::new(0, 3, graph.toposorted[3], 1)],
             vec![],
             vec![],
         ];
