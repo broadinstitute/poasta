@@ -32,7 +32,7 @@ where
         node=?node,
         nlength=node_len,
         curr_pos=node_pos,
-        qry_pos=?offset.value(),
+        qry_pos=?offset,
         "Checking for extension"
     );
 

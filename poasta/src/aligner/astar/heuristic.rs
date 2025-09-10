@@ -1,4 +1,4 @@
-use tracing::{debug, span, trace, Level};
+use tracing::{debug, span, Level};
 
 use crate::aligner::cost_models::affine::{Affine, AffineAstarItem, AffineAstarState};
 use crate::aligner::cost_models::AlignmentCostModel;

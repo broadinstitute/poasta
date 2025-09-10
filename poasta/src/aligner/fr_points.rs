@@ -3,8 +3,6 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::ops::{Add, AddAssign, BitAnd, Not, Shr, Sub, SubAssign};
 
-use tracing::debug;
-
 use num::traits::{SaturatingAdd, SaturatingSub};
 use num::{Bounded, FromPrimitive, One, Signed, Unsigned};
 
@@ -46,11 +44,8 @@ impl NumOperations for i64 {}
 ///
 /// The most significant bit is used as a `visited` flag.
 pub trait PosType: NumOperations + Unsigned {
-    /// Create a new offset from a usize, saturating to the maximum value if the input is too large
+    /// Create a new offset from a usize
     fn new(value: usize) -> Self;
-
-    /// Return the value without the `visited` bit
-    fn value(&self) -> Self;
 
     /// Get the value as usize
     fn as_usize(&self) -> usize;
@@ -58,14 +53,8 @@ pub trait PosType: NumOperations + Unsigned {
     /// Get the value as isize
     fn as_isize(&self) -> isize;
 
-    /// Increase the offset by one, resets the `visited` bit
+    /// Increase the offset by one
     fn increase_one(&self) -> Self;
-
-    /// Check if the `visited` bit is set
-    fn is_visited(&self) -> bool;
-
-    /// Set the `visited` bit
-    fn set_visited(&mut self, visited: bool);
 
     fn max() -> Self;
 }
@@ -73,216 +62,108 @@ pub trait PosType: NumOperations + Unsigned {
 impl PosType for u8 {
     #[inline(always)]
     fn new(value: usize) -> Self {
-        (value as Self) & (Self::MAX >> 1)
-    }
-
-    #[inline(always)]
-    fn value(&self) -> Self {
-        *self & (Self::MAX >> 1)
+        value as Self
     }
 
     #[inline(always)]
     fn as_usize(&self) -> usize {
-        let value = *self & (Self::MAX >> 1);
-        value as usize
+        *self as usize
     }
 
     #[inline(always)]
     fn as_isize(&self) -> isize {
-        let value = *self & (Self::MAX >> 1);
-        value as isize
+        *self as isize
     }
 
-    /// Increase the offset by one, resets the `visited` bit
     #[inline(always)]
     fn increase_one(&self) -> Self {
-        let value = *self & (Self::MAX >> 1);
-        if value > <Self as PosType>::max() {
-            panic!("Overflow in increase_one");
-        }
-
-        value + Self::one()
-    }
-
-    #[inline(always)]
-    fn is_visited(&self) -> bool {
-        *self & (1 << (Self::BITS - 1)) != 0
-    }
-
-    #[inline(always)]
-    fn set_visited(&mut self, visited: bool) {
-        if visited {
-            *self |= 1 << (Self::BITS - 1);
-        } else {
-            *self &= !(1 << (Self::BITS - 1));
-        }
+        *self + Self::one()
     }
 
     #[inline(always)]
     fn max() -> Self {
-        Self::MAX >> 1
+        Self::MAX
     }
 }
 
 impl PosType for u16 {
     #[inline(always)]
     fn new(value: usize) -> Self {
-        (value as Self) & (Self::MAX >> 1)
-    }
-
-    #[inline(always)]
-    fn value(&self) -> Self {
-        *self & (Self::MAX >> 1)
+        value as Self
     }
 
     #[inline(always)]
     fn as_usize(&self) -> usize {
-        let value = *self & (Self::MAX >> 1);
-        value as usize
+        *self as usize
     }
 
     #[inline(always)]
     fn as_isize(&self) -> isize {
-        let value = *self & (Self::MAX >> 1);
-        value as isize
+        *self as isize
     }
 
-    /// Increase the offset by one, resets the `visited` bit
     #[inline(always)]
     fn increase_one(&self) -> Self {
-        let value = *self & (Self::MAX >> 1);
-        if value > <Self as PosType>::max() {
-            panic!("Overflow in increase_one");
-        }
-
-        value + Self::one()
-    }
-
-    #[inline(always)]
-    fn is_visited(&self) -> bool {
-        *self & (1 << (Self::BITS - 1)) != 0
-    }
-
-    #[inline(always)]
-    fn set_visited(&mut self, visited: bool) {
-        if visited {
-            *self |= 1 << (Self::BITS - 1);
-        } else {
-            *self &= !(1 << (Self::BITS - 1));
-        }
+        *self + Self::one()
     }
 
     #[inline(always)]
     fn max() -> Self {
-        Self::MAX >> 1
+        Self::MAX
     }
 }
 
 impl PosType for u32 {
     #[inline(always)]
     fn new(value: usize) -> Self {
-        (value as Self) & (Self::MAX >> 1)
-    }
-
-    #[inline(always)]
-    fn value(&self) -> Self {
-        *self & (Self::MAX >> 1)
+        value as Self
     }
 
     #[inline(always)]
     fn as_usize(&self) -> usize {
-        let value = *self & (Self::MAX >> 1);
-        value as usize
+        *self as usize
     }
 
     #[inline(always)]
     fn as_isize(&self) -> isize {
-        let value = *self & (Self::MAX >> 1);
-        value as isize
+        *self as isize
     }
 
-    /// Increase the offset by one, resets the `visited` bit
     #[inline(always)]
     fn increase_one(&self) -> Self {
-        let value = *self & (Self::MAX >> 1);
-        if value > <Self as PosType>::max() {
-            panic!("Overflow in increase_one");
-        }
-
-        value + Self::one()
-    }
-
-    #[inline(always)]
-    fn is_visited(&self) -> bool {
-        *self & (1 << (Self::BITS - 1)) != 0
-    }
-
-    #[inline(always)]
-    fn set_visited(&mut self, visited: bool) {
-        if visited {
-            *self |= 1 << (Self::BITS - 1);
-        } else {
-            *self &= !(1 << (Self::BITS - 1));
-        }
+        *self + Self::one()
     }
 
     #[inline(always)]
     fn max() -> Self {
-        Self::MAX >> 1
+        Self::MAX
     }
 }
 
 impl PosType for u64 {
     #[inline(always)]
     fn new(value: usize) -> Self {
-        (value as Self) & (Self::MAX >> 1)
-    }
-
-    #[inline(always)]
-    fn value(&self) -> Self {
-        *self & (Self::MAX >> 1)
+        value as Self
     }
 
     #[inline(always)]
     fn as_usize(&self) -> usize {
-        let value = *self & (Self::MAX >> 1);
-        value as usize
+        *self as usize
     }
 
     #[inline(always)]
     fn as_isize(&self) -> isize {
-        let value = *self & (Self::MAX >> 1);
-        value as isize
+        *self as isize
     }
 
-    /// Increase the offset by one, resets the `visited` bit
     #[inline(always)]
     fn increase_one(&self) -> Self {
-        let value = *self & (Self::MAX >> 1);
-        if value > <Self as PosType>::max() {
-            panic!("Overflow in increase_one");
-        }
-
-        value + Self::one()
-    }
-
-    #[inline(always)]
-    fn is_visited(&self) -> bool {
-        *self & (1 << (Self::BITS - 1)) != 0
-    }
-
-    #[inline(always)]
-    fn set_visited(&mut self, visited: bool) {
-        if visited {
-            *self |= 1 << (Self::BITS - 1);
-        } else {
-            *self &= !(1 << (Self::BITS - 1));
-        }
+        *self + Self::one()
     }
 
     #[inline(always)]
     fn max() -> Self {
-        Self::MAX >> 1
+        Self::MAX
     }
 }
 
@@ -651,7 +532,7 @@ where
     pub fn get_furthest(&self, diag: Diag<D>) -> Option<O> {
         let ix = (diag - self.kmin).as_usize();
 
-        self.diagonals.get(ix).map(|v| v.value())
+        self.diagonals.get(ix).copied()
     }
 
     pub fn is_further(&self, diag: Diag<D>, offset: O) -> bool {
@@ -660,40 +541,20 @@ where
         }
 
         let ix = (diag - self.kmin).as_usize();
-        self.diagonals
-            .get(ix)
-            .map(|&o| o.value() < offset.value())
-            .unwrap_or(true)
+        self.diagonals.get(ix).map(|&o| o < offset).unwrap_or(true)
     }
 
     pub fn update_if_further(&mut self, diag: Diag<D>, offset: O) -> bool {
         self.ensure_space(diag);
 
         let ix = (diag - self.kmin).as_usize();
-        debug!(offset=?self.diagonals[ix].value(), " - curr");
 
-        if self.diagonals[ix].value() < offset {
+        if self.diagonals[ix] < offset {
             self.diagonals[ix] = offset;
             true
         } else {
             false
         }
-    }
-
-    pub fn is_visited(&self, diag: Diag<D>) -> bool {
-        if diag < self.kmin || diag >= self.kmin + self.len() {
-            return false;
-        }
-
-        let ix = (diag - self.kmin).as_usize();
-        self.diagonals[ix].is_visited()
-    }
-
-    pub fn set_visited(&mut self, diag: Diag<D>, visited: bool) {
-        self.ensure_space(diag);
-
-        let ix = (diag - self.kmin).as_usize();
-        self.diagonals[ix].set_visited(visited);
     }
 }
 
@@ -772,29 +633,6 @@ where
             .get(ix)
             .map(|v| v.is_further(diag, offset))
             .unwrap_or(true)
-    }
-
-    pub fn is_visited(&self, score: Score, diag: Diag<D>) -> bool {
-        if self.is_empty() {
-            return false;
-        }
-
-        if score < self.score_min {
-            return false;
-        }
-
-        let ix = (score - self.score_min).as_usize();
-        self.fr_points
-            .get(ix)
-            .map(|v| v.is_visited(diag))
-            .unwrap_or(false)
-    }
-
-    pub fn set_visited(&mut self, score: Score, diag: Diag<D>, visited: bool) {
-        self.ensure_space(score);
-
-        let ix = (score - self.score_min).as_usize();
-        self.fr_points[ix].set_visited(diag, visited);
     }
 }
 

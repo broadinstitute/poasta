@@ -86,19 +86,12 @@ where
             };
             
             if runnable.is_end(graph, &front) {
-                runnable.set_visited(&front);
                 break (runnable.get_score(&front), front);
-            }
-            
-            if runnable.is_visited(&front) {
-                continue;
             }
             
             debug!("--- FRONT {:?}", front);
             
-            runnable.set_visited(&front);
             result.num_visited += 1;
-            
             runnable.relax(graph, seq, &front);
         };
         

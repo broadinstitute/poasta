@@ -31,9 +31,6 @@ where
     fn get_score(&self, item: &Item) -> Score;
     fn get_offset(&self, item: &Item) -> usize;
     
-    fn is_visited(&self, item: &Item) -> bool;
-    fn set_visited(&mut self, item: &Item);
-
     fn update_if_further(&mut self, item: &Item, offset: usize) -> bool;
 
     fn queue_item(&mut self, item: Item, heuristic: usize);

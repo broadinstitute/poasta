@@ -56,14 +56,6 @@ where
         self.state.get_score(item)
     }
     
-    pub fn is_visited(&self, item: &C::Item) -> bool {
-        self.state.is_visited(item)
-    }
-    
-    pub fn set_visited(&mut self, item: &C::Item) {
-        self.state.set_visited(item);
-    }
-    
     pub fn relax(&mut self, graph: &G, seq: &[u8], item: &C::Item) {
         self.state.relax(graph, seq, item, |state, e| {
             (self.heuristic_func)(state, e)

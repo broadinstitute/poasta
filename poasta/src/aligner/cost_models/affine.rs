@@ -220,28 +220,6 @@ where
             }
         }
     }
-
-    fn is_visited(&self, item: &AffineAstarItem<D>) -> bool {
-        match item.state {
-            AlignState::Match => self.fr_points_m.is_visited(item.score, item.diag),
-            AlignState::Deletion => self.fr_points_d.is_visited(item.score, item.diag),
-            AlignState::Insertion => self.fr_points_i.is_visited(item.score, item.diag),
-            AlignState::Deletion2 | AlignState::Insertion2 => {
-                panic!("Invalid gap-affine state {:?}", item.state)
-            }
-        }
-    }
-
-    fn set_visited(&mut self, item: &AffineAstarItem<D>) {
-        match item.state {
-            AlignState::Match => self.fr_points_m.set_visited(item.score, item.diag, true),
-            AlignState::Deletion => self.fr_points_d.set_visited(item.score, item.diag, true),
-            AlignState::Insertion => self.fr_points_i.set_visited(item.score, item.diag, true),
-            AlignState::Deletion2 | AlignState::Insertion2 => {
-                panic!("Invalid gap-affine state {:?}", item.state)
-            }
-        }
-    }
 }
 
 /// Holds all A* state information (reached points, queued points, ...) for
@@ -746,7 +724,7 @@ where
                 }
             }
             AlignState::Insertion => {
-                if curr_offset.value() > O::zero() {
+                if curr_offset > O::zero() {
                     let pred_diag = item.diag - 1isize;
                     if item.score >= s_gap_extend {
                         sources.push(AffineAstarItem::new(
@@ -776,10 +754,9 @@ where
         // so we ordered the above code to prioritize matches > mismatches > deletions > insertions.
         sources
             .into_iter()
-            .filter(|s| self.fr_points[s.node_rank].is_visited(s))
             .filter_map(|s| {
                 self.fr_points[s.node_rank].get_furthest(&s).and_then(|v| {
-                    if v.value() <= curr_offset.value() {
+                    if v <= curr_offset {
                         Some((s, v))
                     } else {
                         None
@@ -844,23 +821,6 @@ where
             .unwrap_or(0)
     }
 
-    fn is_visited(&self, item: &AffineAstarItem<D>) -> bool {
-        self.fr_points[item.node_rank].is_visited(item)
-    }
-
-    fn set_visited(&mut self, item: &AffineAstarItem<D>) {
-        let offset = self.get_offset(item);
-        trace!(
-            target: "poasta::aligner::cost_models::affine::set_visited",
-            score=item.score.as_usize(),
-            node=item.node_rank,
-            diag=item.diag.as_isize(),
-            offset=offset,
-            state=tracing::field::debug(&item.state)
-        );
-        self.fr_points[item.node_rank].set_visited(item)
-    }
-
     fn update_if_further(&mut self, item: &AffineAstarItem<D>, offset: usize) -> bool {
         self.fr_points[item.node_rank].update_if_further(item, O::new(offset))
     }
@@ -903,7 +863,6 @@ where
 
         let mut curr = end.clone();
         let mut curr_offset = O::new(self.seq_length + 1);
-        curr_offset.set_visited(true);
         let mut alignment = Vec::new();
 
         while let Some((prev, prev_offset)) = self.get_prev(graph, &curr, curr_offset) {
