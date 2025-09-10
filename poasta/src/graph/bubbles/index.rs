@@ -125,7 +125,7 @@ where
             dist_to_end[n_rank] = (min_dist, max_dist);
 
             // Compute all possible distances to super bubble exits
-            // First create seperate, non-overlapping slices of the node_bubble_map vector
+            // First create separate, non-overlapping slices of the node_bubble_map vector
             // to satisfy the Rust borrow checker.
             // Namely, we are reading node_bubble_map[succ], while writing node_bubble_map[n].
             // Creating these slices ensures we are not borrowing the entire vector.

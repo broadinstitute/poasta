@@ -1,14 +1,15 @@
 use std::error::Error;
 use std::fs::File;
-use std::path::Path;
-use std::io::{self, IsTerminal, BufReader};
+use std::io::{self, BufReader, IsTerminal};
 #[cfg(feature = "debug_output")]
 use std::io::{BufWriter, Write};
+use std::path::Path;
 
 use clap::Parser;
 use flate2::read::MultiGzDecoder;
 use noodles::fasta;
 
+use poasta::aligner::cost_models::AlignmentCostModel;
 use tracing::Subscriber;
 use tracing::{info, span};
 use tracing::{trace_span, Level};
@@ -16,10 +17,10 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::{EnvFilter, Registry};
 
-use poasta::aligner::astar::heuristic::Dijkstra;
+use poasta::aligner::astar::heuristic::{AstarHeuristic, Dijkstra, MinGapCost};
 use poasta::aligner::cost_models::affine::Affine;
 use poasta::aligner::utils::print_alignment;
-use poasta::aligner::{AlignmentMode, GraphAligner};
+use poasta::aligner::{AlignmentMode, PoastaAligner};
 use poasta::errors::PoastaError;
 #[cfg(feature = "debug_output")]
 use poasta::graph::io::dot::graph_to_dot;
@@ -91,29 +92,32 @@ fn align_subcommand(align_args: &cli::AlignArgs) -> Result<(), Box<dyn Error + '
         .init();
 
     // TODO: separate implementations for edit distance/linear gap penalties
-    let scoring = Affine::new(
+    let scoring = Affine::<i32, u32>::new(
         align_args.cost_mismatch.unwrap_or(4),
         align_args.cost_gap_open.unwrap_or(6),
         align_args.cost_gap_extend.unwrap_or(2),
     );
 
+    let heuristic = MinGapCost::new(scoring);
     let mut graph = poasta::graph::poa::POASeqGraph::<u32>::new();
-    let aligner = poasta::aligner::PoastaAligner::<Dijkstra, i32, u32, _, _>::new(scoring);
+
+    let aligner = PoastaAligner::new(heuristic);
 
     perform_alignment(align_args, &mut graph, &aligner, &align_args.sequences)?;
 
     Ok(())
 }
 
-fn perform_alignment<Ix, A>(
+fn perform_alignment<Ix, H, C>(
     align_args: &cli::AlignArgs,
     graph: &mut POASeqGraph<Ix>,
-    aligner: &A,
+    aligner: &PoastaAligner<H, C, POASeqGraph<Ix>>,
     sequences_fname: &Path,
 ) -> Result<(), Box<dyn Error + 'static>>
 where
     Ix: IndexType,
-    A: GraphAligner<POASeqGraph<Ix>>,
+    H: AstarHeuristic<C, POASeqGraph<Ix>>,
+    C: AlignmentCostModel,
 {
     // Let's read the sequences from the given FASTA
     let is_gzipped = sequences_fname

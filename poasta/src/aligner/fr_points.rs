@@ -3,6 +3,8 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::ops::{Add, AddAssign, BitAnd, Not, Shr, Sub, SubAssign};
 
+use tracing::debug;
+
 use num::traits::{SaturatingAdd, SaturatingSub};
 use num::{Bounded, FromPrimitive, One, Signed, Unsigned};
 
@@ -42,29 +44,29 @@ impl NumOperations for i64 {}
 
 /// Position types are integer types to represent a query position
 ///
-/// The most significant bit is used as a `visited` flag. 
+/// The most significant bit is used as a `visited` flag.
 pub trait PosType: NumOperations + Unsigned {
     /// Create a new offset from a usize, saturating to the maximum value if the input is too large
     fn new(value: usize) -> Self;
-    
+
     /// Return the value without the `visited` bit
     fn value(&self) -> Self;
-    
+
     /// Get the value as usize
     fn as_usize(&self) -> usize;
-    
+
     /// Get the value as isize
     fn as_isize(&self) -> isize;
-    
+
     /// Increase the offset by one, resets the `visited` bit
     fn increase_one(&self) -> Self;
-    
+
     /// Check if the `visited` bit is set
-    fn is_visited(&self) -> bool; 
-    
+    fn is_visited(&self) -> bool;
+
     /// Set the `visited` bit
     fn set_visited(&mut self, visited: bool);
-    
+
     fn max() -> Self;
 }
 
@@ -73,7 +75,7 @@ impl PosType for u8 {
     fn new(value: usize) -> Self {
         (value as Self) & (Self::MAX >> 1)
     }
-    
+
     #[inline(always)]
     fn value(&self) -> Self {
         *self & (Self::MAX >> 1)
@@ -98,15 +100,15 @@ impl PosType for u8 {
         if value > <Self as PosType>::max() {
             panic!("Overflow in increase_one");
         }
-        
+
         value + Self::one()
     }
-    
+
     #[inline(always)]
     fn is_visited(&self) -> bool {
         *self & (1 << (Self::BITS - 1)) != 0
     }
-    
+
     #[inline(always)]
     fn set_visited(&mut self, visited: bool) {
         if visited {
@@ -115,7 +117,7 @@ impl PosType for u8 {
             *self &= !(1 << (Self::BITS - 1));
         }
     }
-    
+
     #[inline(always)]
     fn max() -> Self {
         Self::MAX >> 1
@@ -127,7 +129,7 @@ impl PosType for u16 {
     fn new(value: usize) -> Self {
         (value as Self) & (Self::MAX >> 1)
     }
-    
+
     #[inline(always)]
     fn value(&self) -> Self {
         *self & (Self::MAX >> 1)
@@ -152,15 +154,15 @@ impl PosType for u16 {
         if value > <Self as PosType>::max() {
             panic!("Overflow in increase_one");
         }
-        
+
         value + Self::one()
     }
-    
+
     #[inline(always)]
     fn is_visited(&self) -> bool {
         *self & (1 << (Self::BITS - 1)) != 0
     }
-    
+
     #[inline(always)]
     fn set_visited(&mut self, visited: bool) {
         if visited {
@@ -169,7 +171,7 @@ impl PosType for u16 {
             *self &= !(1 << (Self::BITS - 1));
         }
     }
-    
+
     #[inline(always)]
     fn max() -> Self {
         Self::MAX >> 1
@@ -181,7 +183,7 @@ impl PosType for u32 {
     fn new(value: usize) -> Self {
         (value as Self) & (Self::MAX >> 1)
     }
-    
+
     #[inline(always)]
     fn value(&self) -> Self {
         *self & (Self::MAX >> 1)
@@ -206,15 +208,15 @@ impl PosType for u32 {
         if value > <Self as PosType>::max() {
             panic!("Overflow in increase_one");
         }
-        
+
         value + Self::one()
     }
-    
+
     #[inline(always)]
     fn is_visited(&self) -> bool {
         *self & (1 << (Self::BITS - 1)) != 0
     }
-    
+
     #[inline(always)]
     fn set_visited(&mut self, visited: bool) {
         if visited {
@@ -223,7 +225,7 @@ impl PosType for u32 {
             *self &= !(1 << (Self::BITS - 1));
         }
     }
-    
+
     #[inline(always)]
     fn max() -> Self {
         Self::MAX >> 1
@@ -235,7 +237,7 @@ impl PosType for u64 {
     fn new(value: usize) -> Self {
         (value as Self) & (Self::MAX >> 1)
     }
-    
+
     #[inline(always)]
     fn value(&self) -> Self {
         *self & (Self::MAX >> 1)
@@ -260,15 +262,15 @@ impl PosType for u64 {
         if value > <Self as PosType>::max() {
             panic!("Overflow in increase_one");
         }
-        
+
         value + Self::one()
     }
-    
+
     #[inline(always)]
     fn is_visited(&self) -> bool {
         *self & (1 << (Self::BITS - 1)) != 0
     }
-    
+
     #[inline(always)]
     fn set_visited(&mut self, visited: bool) {
         if visited {
@@ -277,7 +279,7 @@ impl PosType for u64 {
             *self &= !(1 << (Self::BITS - 1));
         }
     }
-    
+
     #[inline(always)]
     fn max() -> Self {
         Self::MAX >> 1
@@ -604,7 +606,7 @@ impl From<u8> for Score {
 pub struct Diagonals<D, O> {
     /// The furthest reached query position for each diagonal.
     diagonals: VecDeque<O>,
-    
+
     /// The smallest reached diagonal. `diagonals[0]` represents this diagonal.
     kmin: Diag<D>,
 }
@@ -614,7 +616,6 @@ where
     D: DiagType,
     O: PosType,
 {
-    
     pub fn len(&self) -> usize {
         self.diagonals.len()
     }
@@ -650,14 +651,7 @@ where
     pub fn get_furthest(&self, diag: Diag<D>) -> Option<O> {
         let ix = (diag - self.kmin).as_usize();
 
-        self.diagonals.get(ix).copied()
-    }
-    
-    pub fn set_furthest(&mut self, diag: Diag<D>, offset: O) {
-        self.ensure_space(diag);
-
-        let ix = (diag - self.kmin).as_usize();
-        self.diagonals[ix] = offset;
+        self.diagonals.get(ix).map(|v| v.value())
     }
 
     pub fn is_further(&self, diag: Diag<D>, offset: O) -> bool {
@@ -666,34 +660,38 @@ where
         }
 
         let ix = (diag - self.kmin).as_usize();
-        self.diagonals.get(ix).map(|&o| o < offset).unwrap_or(true)
+        self.diagonals
+            .get(ix)
+            .map(|&o| o.value() < offset.value())
+            .unwrap_or(true)
     }
 
     pub fn update_if_further(&mut self, diag: Diag<D>, offset: O) -> bool {
         self.ensure_space(diag);
 
         let ix = (diag - self.kmin).as_usize();
+        debug!(offset=?self.diagonals[ix].value(), " - curr");
 
-        if self.diagonals[ix] < offset {
+        if self.diagonals[ix].value() < offset {
             self.diagonals[ix] = offset;
             true
         } else {
             false
         }
     }
-    
+
     pub fn is_visited(&self, diag: Diag<D>) -> bool {
         if diag < self.kmin || diag >= self.kmin + self.len() {
             return false;
         }
-        
+
         let ix = (diag - self.kmin).as_usize();
         self.diagonals[ix].is_visited()
     }
-    
+
     pub fn set_visited(&mut self, diag: Diag<D>, visited: bool) {
         self.ensure_space(diag);
-        
+
         let ix = (diag - self.kmin).as_usize();
         self.diagonals[ix].set_visited(visited);
     }
@@ -722,12 +720,12 @@ where
         if score < self.score_min {
             return None;
         }
-        
+
         let ix = (score - self.score_min).as_usize();
 
         self.fr_points.get(ix).and_then(|v| v.get_furthest(diag))
     }
-    
+
     fn ensure_space(&mut self, score: Score) {
         if self.is_empty() {
             self.fr_points.resize(8, Diagonals::default());
@@ -764,7 +762,7 @@ where
         if self.is_empty() {
             return true;
         }
-        
+
         if score < self.score_min {
             return true;
         }
@@ -775,26 +773,26 @@ where
             .map(|v| v.is_further(diag, offset))
             .unwrap_or(true)
     }
-    
+
     pub fn is_visited(&self, score: Score, diag: Diag<D>) -> bool {
         if self.is_empty() {
             return false;
         }
-        
+
         if score < self.score_min {
             return false;
         }
-        
+
         let ix = (score - self.score_min).as_usize();
         self.fr_points
             .get(ix)
             .map(|v| v.is_visited(diag))
             .unwrap_or(false)
     }
-    
+
     pub fn set_visited(&mut self, score: Score, diag: Diag<D>, visited: bool) {
         self.ensure_space(score);
-        
+
         let ix = (score - self.score_min).as_usize();
         self.fr_points[ix].set_visited(diag, visited);
     }
@@ -817,7 +815,5 @@ pub fn to_node_pos<D>(diag: Diag<D>, query_offset: usize) -> usize
 where
     D: DiagType,
 {
-    query_offset
-        .checked_add_signed(-diag.as_isize())
-        .unwrap()
+    query_offset.checked_add_signed(-diag.as_isize()).unwrap()
 }

@@ -1,6 +1,6 @@
-use tracing::debug;
-use super::traits::AlignableGraph;
 use super::fr_points::{to_node_pos, Diag, DiagType, PosType};
+use super::traits::AlignableGraph;
+use tracing::debug;
 
 /// SIMD-accelerated longest common prefix length calculator
 ///
@@ -18,13 +18,7 @@ fn common_prefix_len(x: &[u8], y: &[u8]) -> usize {
         .count()
 }
 
-pub fn extend<G, D, O>(
-    graph: &G,
-    seq: &[u8],
-    node: G::NodeType,
-    diag: Diag<D>,
-    offset: O,
-) -> O
+pub fn extend<G, D, O>(graph: &G, seq: &[u8], node: G::NodeType, diag: Diag<D>, offset: O) -> O
 where
     G: AlignableGraph,
     D: DiagType,
@@ -33,8 +27,14 @@ where
     let node_seq = graph.node_seq(node);
     let node_len = graph.node_length(node);
     let node_pos = to_node_pos(diag, offset.as_usize());
-    
-    debug!("Checking on node {node:?}, length: {node_len}, current pos: {node_pos}, query offset: {offset:?}");
+
+    debug!(
+        node=?node,
+        nlength=node_len,
+        curr_pos=node_pos,
+        qry_pos=?offset.value(),
+        "Checking for extension"
+    );
 
     if node_pos >= node_len - 1 {
         debug!("- at node end, return {offset:?}");
@@ -46,8 +46,8 @@ where
         return offset;
     }
 
-    let lcp = common_prefix_len(&node_seq[node_pos+1..], &seq[offset.as_usize()..]);
+    let lcp = common_prefix_len(&node_seq[node_pos + 1..], &seq[offset.as_usize()..]);
     let new_offset = offset.as_usize() + lcp;
-    
+
     O::new(new_offset)
 }

@@ -1,9 +1,10 @@
 use std::sync::Arc;
 use std::{marker::PhantomData, ops::Bound};
 
-use astar::{heuristic::AstarHeuristic, Astar, AstarResult, AstarState};
+use tracing::{debug, span, Level};
+
+use astar::{heuristic::AstarHeuristic, AstarResult};
 use cost_models::AlignmentCostModel;
-use fr_points::{DiagType, PosType};
 use traits::AlignableGraph;
 use crate::errors::PoastaError;
 use crate::graph::bubbles::index::BubbleIndex;
@@ -31,98 +32,86 @@ pub enum AlignmentMode {
     },
 }
 
-pub trait GraphAligner<G>
-where
-    G: AlignableGraph,
-{
-    fn align<S>(
-        &self,
-        graph: &G,
-        seq: S,
-        mode: AlignmentMode,
-    ) -> Result<AstarResult<G>, PoastaError>
-    where
-        S: AsRef<[u8]>;
+pub struct PoastaAligner<H, C, G> {
+    heuristic: H,
+    dummy: PhantomData<(C, G)>,
 }
 
-pub struct PoastaAligner<H, D, O, C, G> {
-    cost_model: C,
-    dummy: PhantomData<(H, D, O, G)>,
-}
-
-impl<H, D, O, C, G> PoastaAligner<H, D, O, C, G>
+impl<H, C, G> PoastaAligner<H, C, G>
 where
+    H: AstarHeuristic<C, G>,
     C: AlignmentCostModel,
-    H: AstarHeuristic<
-        G,
-        <<C as AlignmentCostModel>::AstarStateType<G, D, O> as AstarState<G>>::AstarItem,
-    >,
     G: AlignableGraph,
-    D: DiagType,
-    O: PosType,
 {
-    pub fn new(cost_model: C) -> Self {
+    pub fn new(heuristic: H) -> Self {
         Self {
-            cost_model,
+            heuristic,
             dummy: PhantomData,
         }
     }
+    
+    pub fn align(&self, graph: &G, seq: impl AsRef<[u8]>, alignment_mode: AlignmentMode) -> Result<AstarResult<G>, PoastaError> {
+        let bubble_index = Arc::new(BubbleIndex::new(graph));
+        self.align_u8(graph, seq.as_ref(), bubble_index, alignment_mode)
+    }
 
-    pub fn align_with_precomputed_heuristic(
+    pub fn align_with_bubble_index(
         &self,
         graph: &G,
         seq: impl AsRef<[u8]>,
-        alignment_mode: AlignmentMode,
-        heuristic: H,
-    ) -> Result<AstarResult<G>, PoastaError> {
-        self.align_u8(graph, seq.as_ref(), alignment_mode, heuristic)
+        bubble_index: Arc<BubbleIndex<G::NodeType>>,
+        alignment_mode: AlignmentMode
+    ) -> Result<AstarResult<G>, PoastaError>
+    {
+        self.align_u8(graph, seq.as_ref(), bubble_index, alignment_mode)
     }
 
     fn align_u8(
         &self,
         graph: &G,
         seq: &[u8],
+        bubble_index: Arc<BubbleIndex<G::NodeType>>,
         alignment_mode: AlignmentMode,
-        mut heuristic: H,
     ) -> Result<AstarResult<G>, PoastaError> {
-        // TODO: pass bubble index as parameter
-        let bubble_index = Arc::new(BubbleIndex::new(graph));
-        heuristic.init(graph, seq, bubble_index);
+        let mut runnable = self.heuristic.init(graph, seq, bubble_index, alignment_mode);
         
-        let astar_state = self
-            .cost_model
-            .initialize(graph, seq, alignment_mode, |item| heuristic.h(item));
+        let span = span!(Level::INFO, "astar_run");
+        let _enter = span.enter();
+        
+        let mut result = AstarResult::default();
 
-        let mut astar = Astar::new(graph, seq, &heuristic, alignment_mode, astar_state);
+        let (end_score, end_point) = loop {
+            let Some(front) = runnable.pop_front() else {
+                panic!("Empty queue before reaching end!")
+            };
+            
+            if runnable.is_end(graph, &front) {
+                runnable.set_visited(&front);
+                break (runnable.get_score(&front), front);
+            }
+            
+            if runnable.is_visited(&front) {
+                continue;
+            }
+            
+            debug!("--- FRONT {:?}", front);
+            
+            runnable.set_visited(&front);
+            result.num_visited += 1;
+            
+            runnable.relax(graph, seq, &front);
+        };
+        
+        debug!(score = end_score.as_usize(), ?end_point, "END");
+        
+        result.score = end_score;
+        result.alignment = runnable.backtrace(graph, &end_point);
 
-        astar.run()
+        Ok(result)
     }
+    
 }
 
-impl<H, D, O, C, G> GraphAligner<G> for PoastaAligner<H, D, O, C, G>
-where
-    C: AlignmentCostModel,
-    H: AstarHeuristic<
-        G,
-        <<C as AlignmentCostModel>::AstarStateType<G, D, O> as AstarState<G>>::AstarItem,
-    >,
-    G: AlignableGraph,
-    D: DiagType,
-    O: PosType,
-{
-    fn align<S>(
-        &self,
-        graph: &G,
-        seq: S,
-        alignment_mode: AlignmentMode,
-    ) -> Result<AstarResult<G>, PoastaError>
-    where
-        S: AsRef<[u8]>,
-    {
-        let heuristic = H::default();
-        self.align_u8(graph, seq.as_ref(), alignment_mode, heuristic)
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -137,14 +126,15 @@ mod tests {
 
     use super::astar::heuristic::Dijkstra;
     use super::cost_models::affine::Affine;
-    use super::{AlignmentMode, GraphAligner, PoastaAligner};
+    use super::{AlignmentMode, PoastaAligner};
 
     #[test]
     fn test_alignment() {
-        let cost_model = Affine::new(4, 6, 2);
+        let cost_model = Affine::<i32, u32>::new(4, 6, 2);
+        let heuristic = Dijkstra::new(cost_model);
         let mut graph = POASeqGraph::<u32>::new();
 
-        let aligner = PoastaAligner::<Dijkstra, i32, u32, _, _>::new(cost_model);
+        let aligner = PoastaAligner::new(heuristic);
 
         let mut reader = File::open("../tests/test2_from_abpoa.fa")
             .map(BufReader::new)
