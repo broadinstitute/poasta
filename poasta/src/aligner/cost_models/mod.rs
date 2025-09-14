@@ -36,7 +36,7 @@ pub trait AlignmentCostModel {
     fn init_astar<G>(&self, 
         graph: &G, 
         seq: &[u8], 
-        bubble_index: Arc<BubbleIndex<G::NodeType>>, 
+        bubble_index: Arc<BubbleIndex>, 
         mode: AlignmentMode
     ) -> Self::AstarStateType<G>
     where 

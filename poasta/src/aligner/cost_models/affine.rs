@@ -54,7 +54,7 @@ where
         &self,
         graph: &G,
         seq: &[u8],
-        _: Arc<BubbleIndex<G::NodeType>>,
+        _: Arc<BubbleIndex>,
         mode: AlignmentMode,
     ) -> Self::AstarStateType<G>
     where
@@ -324,12 +324,9 @@ where
                     AlignState::Insertion,
                 );
 
-                debug!(new_item_ins=?new_item_ins, "new insertion");
-
                 if self.update_if_further(&new_item_ins, fr_point.increase_one().as_usize()) {
                     let h = heuristic(self, &new_item_ins);
                     self.queue_item(new_item_ins, h);
-                    debug!(" - is_further");
                 }
             }
 
@@ -1002,4 +999,100 @@ where
             queued_states_d: Vec::with_capacity(4),
         }
     }
+}
+
+pub fn can_improve_bubble<G, D, O>(
+    graph: &G,
+    bubble_index: &BubbleIndex,
+    astar_state: &AffineAstarState<G, D, O>,
+    item: &AffineAstarItem<D>,
+) -> bool
+where
+    G: AlignableGraph,
+    D: DiagType,
+    O: PosType,
+{
+    if !bubble_index.node_is_part_of_bubble(item.node_rank) {
+        return true;
+    }
+
+    let span = span!(Level::INFO, "can_improve_bubble");
+    let _enter = span.enter();
+
+    let curr_offset = astar_state.get_offset(item);
+    let node_pos = to_node_pos(item.diag, curr_offset);
+    debug!(curr_offset = curr_offset, node_pos = node_pos);
+
+    if node_pos == graph.node_length(graph.rank_to_node(item.node_rank)) - 1 {
+        // At node end. Since we can't be sure if we're still extending matches
+        // across node boundaries, we will not check whether we can improve over bubble exits
+        // in those cases.
+        debug!("At node end. Will not check bubble exits.");
+
+        return true;
+    }
+
+    for (exit, path_lengths) in bubble_index.get_node_bubbles(item.node_rank) {
+        debug!(exit=exit, path_lengths=?path_lengths, "Checking bubble exit");
+        let diags: Vec<_> = path_lengths.iter().map(|plen| item.diag + *plen).collect();
+
+        debug!(diags=?diags);
+
+        let bubble_exit_diag_offsets: Vec<_> = match item.state {
+            AlignState::Match => diags
+                .iter()
+                .map(|diag| {
+                    astar_state.fr_points[*exit]
+                        .fr_points_m
+                        .get_furthest(item.score, *diag)
+                        .unwrap_or(O::zero())
+                        .as_usize()
+                })
+                .collect(),
+            AlignState::Insertion => diags
+                .iter()
+                .map(|diag| {
+                    astar_state.fr_points[*exit]
+                        .fr_points_m
+                        .get_furthest(item.score, *diag)
+                        .unwrap_or(O::zero())
+                        .as_usize()
+                })
+                .collect(),
+            AlignState::Deletion => diags
+                .iter()
+                .map(|diag| {
+                    astar_state.fr_points[*exit]
+                        .fr_points_m
+                        .get_furthest(item.score, *diag)
+                        .unwrap_or(O::zero())
+                        .as_usize()
+                })
+                .collect(),
+            AlignState::Insertion2 | AlignState::Deletion2 => {
+                panic!("Invalid state {:?}", item.state)
+            }
+        };
+
+        debug!(offsets_to_beat=?bubble_exit_diag_offsets);
+
+        if path_lengths
+            .iter()
+            .zip(bubble_exit_diag_offsets.iter())
+            .inspect(|(plen, exit_offset_to_beat)| {
+                let offset_from_curr = curr_offset + **plen;
+                debug!(
+                    offset_from_curr = offset_from_curr,
+                    to_beat = **exit_offset_to_beat
+                );
+            })
+            .all(|(plen, exit_offset_to_beat)| {
+                *exit_offset_to_beat == 0 || (curr_offset + *plen) > *exit_offset_to_beat
+            })
+        {
+            return true;
+        }
+    }
+
+    false
 }

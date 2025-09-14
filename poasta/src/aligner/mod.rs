@@ -3,17 +3,17 @@ use std::{marker::PhantomData, ops::Bound};
 
 use tracing::{debug, span, Level};
 
+use crate::errors::PoastaError;
+use crate::graph::bubbles::index::BubbleIndex;
 use astar::{heuristic::AstarHeuristic, AstarResult};
 use cost_models::AlignmentCostModel;
 use traits::AlignableGraph;
-use crate::errors::PoastaError;
-use crate::graph::bubbles::index::BubbleIndex;
 
-pub mod traits;
 pub mod astar;
 pub mod cost_models;
 pub(crate) mod extension;
 pub(crate) mod fr_points;
+pub mod traits;
 pub mod utils;
 
 /// Enum representing the kind of alignment to perform
@@ -49,8 +49,13 @@ where
             dummy: PhantomData,
         }
     }
-    
-    pub fn align(&self, graph: &G, seq: impl AsRef<[u8]>, alignment_mode: AlignmentMode) -> Result<AstarResult<G>, PoastaError> {
+
+    pub fn align(
+        &self,
+        graph: &G,
+        seq: impl AsRef<[u8]>,
+        alignment_mode: AlignmentMode,
+    ) -> Result<AstarResult<G>, PoastaError> {
         let bubble_index = Arc::new(BubbleIndex::new(graph));
         self.align_u8(graph, seq.as_ref(), bubble_index, alignment_mode)
     }
@@ -59,10 +64,9 @@ where
         &self,
         graph: &G,
         seq: impl AsRef<[u8]>,
-        bubble_index: Arc<BubbleIndex<G::NodeType>>,
-        alignment_mode: AlignmentMode
-    ) -> Result<AstarResult<G>, PoastaError>
-    {
+        bubble_index: Arc<BubbleIndex>,
+        alignment_mode: AlignmentMode,
+    ) -> Result<AstarResult<G>, PoastaError> {
         self.align_u8(graph, seq.as_ref(), bubble_index, alignment_mode)
     }
 
@@ -70,41 +74,53 @@ where
         &self,
         graph: &G,
         seq: &[u8],
-        bubble_index: Arc<BubbleIndex<G::NodeType>>,
+        bubble_index: Arc<BubbleIndex>,
         alignment_mode: AlignmentMode,
     ) -> Result<AstarResult<G>, PoastaError> {
-        let mut runnable = self.heuristic.init(graph, seq, bubble_index, alignment_mode);
-        
+        let mut runnable = self
+            .heuristic
+            .init(graph, seq, bubble_index, alignment_mode);
+
         let span = span!(Level::INFO, "astar_run");
         let _enter = span.enter();
-        
+
         let mut result = AstarResult::default();
 
         let (end_score, end_point) = loop {
+            debug!("pop");
             let Some(front) = runnable.pop_front() else {
                 panic!("Empty queue before reaching end!")
             };
-            
-            if runnable.is_end(graph, &front) {
-                break (runnable.get_score(&front), front);
+
+            {
+                let visit_span = span!(Level::INFO, "visit");
+                let _visit_enter = visit_span.enter();
+
+                debug!(front=?front);
+
+                if runnable.prune(&front) {
+                    debug!("State pruned.");
+                    continue;
+                }
+
+                if runnable.is_end(graph, &front) {
+                    let score = runnable.get_score(&front);
+                    debug!(score=?score, "Reached end.");
+
+                    break (score, front);
+                }
+
+                result.num_visited += 1;
+                runnable.relax(graph, seq, &front);
             }
-            
-            debug!("--- FRONT {:?}", front);
-            
-            result.num_visited += 1;
-            runnable.relax(graph, seq, &front);
         };
-        
-        debug!(score = end_score.as_usize(), ?end_point, "END");
-        
+
         result.score = end_score;
         result.alignment = runnable.backtrace(graph, &end_point);
 
         Ok(result)
     }
-    
 }
-
 
 #[cfg(test)]
 mod tests {

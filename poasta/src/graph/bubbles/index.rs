@@ -4,18 +4,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::finder::SuperbubbleFinder;
 
 #[derive(Copy, Clone, Debug)]
-enum BubbleNode<N> {
+enum BubbleNode {
     /// Indicates that this node is not a bubble entrance or exit
     None,
 
     /// Represents a bubble entrance, the associated data is the corresponding exit node ID
-    Entrance(N),
+    Entrance(usize),
 
     /// Represents a bubble exit, the associated data is the corresponding entrance node ID
-    Exit(N),
+    Exit(usize),
 }
 
-impl<N> BubbleNode<N> {
+impl BubbleNode {
     #[inline]
     pub fn is_entrance(&self) -> bool {
         matches!(self, BubbleNode::Entrance(_))
@@ -28,27 +28,24 @@ impl<N> BubbleNode<N> {
 }
 
 #[derive(Clone)]
-pub struct BubbleIndex<N> {
+pub struct BubbleIndex {
     /// Vector indicating whether a node is a bubble entrance
-    bubble_entrance: Vec<BubbleNode<N>>,
+    bubble_entrance: Vec<BubbleNode>,
 
     /// Vector indicating whether a node is a bubble exit
-    bubble_exit: Vec<BubbleNode<N>>,
+    bubble_exit: Vec<BubbleNode>,
 
     /// For each node, stores which bubbles it is part of, and the distance to the bubble exit
-    node_bubble_map: Vec<BTreeMap<N, BubbleDistsToExit>>,
+    node_bubble_map: Vec<BTreeMap<usize, BubbleDistsToExit>>,
 
     /// For each node, stores the shortest and longest path length to the POA graph end node
     dist_to_end: Vec<(usize, usize)>,
 }
 
-impl<N> BubbleIndex<N>
-where
-    N: GraphNodeId,
-{
+impl BubbleIndex {
     pub fn new<G>(graph: &G) -> Self
     where
-        G: GraphWithNodeOrdering<NodeType = N> + GraphWithNodeLengths<NodeType = N>,
+        G: GraphWithNodeOrdering + GraphWithNodeLengths,
     {
         // Identify the bubbles in the graph and store entrances and exits
         let finder = SuperbubbleFinder::new(graph);
@@ -58,25 +55,28 @@ where
         let mut bubble_exits = vec![BubbleNode::None; graph.node_count()];
 
         for (entrance, exit) in finder.iter() {
-            bubble_entrances[graph.node_rank(entrance)] = BubbleNode::Entrance(exit);
-            bubble_exits[graph.node_rank(exit)] = BubbleNode::Exit(entrance);
+            let entrance_rank = graph.node_rank(entrance);
+            let exit_rank = graph.node_rank(exit);
+            bubble_entrances[entrance_rank] = BubbleNode::Entrance(exit_rank);
+            bubble_exits[exit_rank] = BubbleNode::Exit(entrance_rank);
         }
 
         // To identify which nodes are part of which bubbles, we run BFS on the graph
         // and track entering and exiting bubbles while visiting nodes.
-        let mut node_bubble_map: Vec<BTreeMap<N, BubbleDistsToExit>> =
+        let mut node_bubble_map: Vec<BTreeMap<usize, BubbleDistsToExit>> =
             vec![BTreeMap::default(); graph.node_count()];
 
         // First, iterate over nodes in reverse post order, determining which nodes
         // are contained in which bubbles.
         for n in finder.inv_rev_postorder().iter() {
+            let n_rank = graph.node_rank(*n);
             let mut to_add = vec![];
 
             for pred in graph.predecessors(*n) {
                 // Find bubbles that contain the predecessor; those bubbles also contain the current node
                 // unless the corresponding bubble exit is the current node itself.
                 for pred_bubble_exit in node_bubble_map[graph.node_rank(pred)].keys() {
-                    if *pred_bubble_exit == *n {
+                    if *pred_bubble_exit == n_rank {
                         continue;
                     }
 
@@ -87,7 +87,7 @@ where
                 // Initialize with default values since we will compute the min and max distance to the exit
                 // later.
                 for bubble_to_add in &to_add {
-                    node_bubble_map[graph.node_rank(*n)]
+                    node_bubble_map[n_rank]
                         .entry(*bubble_to_add)
                         .or_default();
                 }
@@ -98,7 +98,9 @@ where
             // Check if the current node is a bubble entrance, and if so,
             // add the bubble and its corresponding exit to the current node.
             if let BubbleNode::Entrance(bubble_exit) = bubble_entrances[graph.node_rank(*n)] {
-                node_bubble_map[graph.node_rank(*n)].entry(bubble_exit).or_default();
+                node_bubble_map[n_rank]
+                    .entry(bubble_exit)
+                    .or_default();
             }
         }
 
@@ -159,7 +161,8 @@ where
                 .successors(*n)
                 .filter(|succ| bubble_exits[graph.node_rank(*succ)].is_exit())
                 .for_each(|succ| {
-                    node_slice_mut[0].entry(succ).and_modify(|node_dists| {
+                    let succ_rank = graph.node_rank(succ);
+                    node_slice_mut[0].entry(succ_rank).and_modify(|node_dists| {
                         node_dists.insert(node_length);
                     });
                 });
@@ -184,7 +187,7 @@ where
     }
 
     #[inline]
-    pub fn get_node_bubbles(&self, node_rank: usize) -> &BTreeMap<N, BubbleDistsToExit> {
+    pub fn get_node_bubbles(&self, node_rank: usize) -> &BTreeMap<usize, BubbleDistsToExit> {
         &self.node_bubble_map[node_rank]
     }
 
@@ -238,14 +241,14 @@ mod tests {
         let truth1 = [
             vec![(NIx::new(1), BubbleDistsToExit::from([1]))], // node 0
             vec![(NIx::new(2), BubbleDistsToExit::from([1]))], // node 1
-            vec![],                     // node 2
+            vec![],                                            // node 2
             vec![(NIx::new(4), BubbleDistsToExit::from([1]))], // node 3
             vec![(NIx::new(5), BubbleDistsToExit::from([1]))], // node 4
-            vec![],                     // node 5
+            vec![],                                            // node 5
             vec![(NIx::new(7), BubbleDistsToExit::from([1]))], // node 6
             vec![(NIx::new(8), BubbleDistsToExit::from([1]))], // node 7
-            vec![],                     // node 8
-            vec![],                     // node 9
+            vec![],                                            // node 8
+            vec![],                                            // node 9
         ];
 
         assert_eq!(index1.node_bubble_map.len(), truth1.len());
@@ -255,7 +258,7 @@ mod tests {
             let excl_end_node_bubbles = index1.node_bubble_map[i]
                 .iter()
                 .map(|(k, v)| (*k, v.clone()))
-                .filter(|(k, _)| *k != graph1.end_node())
+                .filter(|(k, _)| *k != graph1.node_rank(graph1.end_node()))
                 .collect::<Vec<_>>();
 
             assert_eq!(excl_end_node_bubbles, truth1[i]);
@@ -294,7 +297,7 @@ mod tests {
             vec![(NIx::new(14), BubbleDistsToExit::from([1, 2, 3]))], // node 11
             vec![(NIx::new(14), BubbleDistsToExit::from([1, 2]))], // node 12
             vec![(NIx::new(14), BubbleDistsToExit::from([1]))],   // node 13
-            vec![],                                      // node 14
+            vec![],                                               // node 14
         ];
 
         for n in graph2.node_indices() {

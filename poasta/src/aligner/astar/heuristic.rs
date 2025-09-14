@@ -1,6 +1,6 @@
 use tracing::{debug, span, Level};
 
-use crate::aligner::cost_models::affine::{Affine, AffineAstarItem, AffineAstarState};
+use crate::aligner::cost_models::affine::{self, Affine, AffineAstarItem, AffineAstarState};
 use crate::aligner::cost_models::AlignmentCostModel;
 use crate::aligner::fr_points::{Diag, DiagType, PosType};
 use crate::aligner::traits::AlignableGraph;
@@ -20,9 +20,14 @@ where
         &self,
         graph: &G,
         seq: &[u8],
-        bubble_index: Arc<BubbleIndex<G::NodeType>>,
+        bubble_index: Arc<BubbleIndex>,
         alignment_mode: AlignmentMode,
-    ) -> AstarRunnable<C, G, impl Fn(&C::AstarStateType<G>, &C::Item) -> usize>;
+    ) -> AstarRunnable<
+        C,
+        G,
+        impl Fn(&C::AstarStateType<G>, &C::Item) -> usize,
+        impl Fn(&C::AstarStateType<G>, &C::Item) -> bool,
+    >;
 }
 
 pub struct Dijkstra<C> {
@@ -45,20 +50,23 @@ where
         &self,
         graph: &G,
         seq: &[u8],
-        index: Arc<BubbleIndex<G::NodeType>>,
+        index: Arc<BubbleIndex>,
         mode: AlignmentMode,
     ) -> AstarRunnable<
         Affine<D, O>,
         G,
         impl Fn(&AffineAstarState<G, D, O>, &AffineAstarItem<D>) -> usize,
+        impl Fn(&AffineAstarState<G, D, O>, &AffineAstarItem<D>) -> bool,
     > {
-        let astar_state = self.cost_model.init_astar(graph, seq, index, mode);
+        let astar_state = self.cost_model.init_astar(graph, seq, index.clone(), mode);
+        let index_for_prune = index.clone();
 
         runnable::create(
             astar_state,
             // TODO: other alignment modes (semi-global, ...)
             &[AffineAstarItem::default()],
             |_, _| 0,
+            move |state, item| !affine::can_improve_bubble(graph, &index_for_prune, state, item)
         )
     }
 }
@@ -86,17 +94,20 @@ where
         &self,
         graph: &G,
         seq: &[u8],
-        index: Arc<BubbleIndex<G::NodeType>>,
+        index: Arc<BubbleIndex>,
         mode: AlignmentMode,
     ) -> AstarRunnable<
         Affine<D, O>,
         G,
         impl Fn(&AffineAstarState<G, D, O>, &AffineAstarItem<D>) -> usize,
+        impl Fn(&AffineAstarState<G, D, O>, &AffineAstarItem<D>) -> bool,
     > {
         let astar_state = self.cost_model.init_astar(graph, seq, index.clone(), mode);
 
         let end_diag = Diag::new(seq.len() as isize + 1);
         let cost_model = self.cost_model.clone();
+        let index_for_prune = index.clone();
+
 
         runnable::create(
             astar_state,
@@ -143,6 +154,7 @@ where
 
                 cost_model.gap_cost(aln_state, gap_length)
             },
+            move |state, item| !affine::can_improve_bubble(graph, &index_for_prune, state, item)
         )
     }
 }
