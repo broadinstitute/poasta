@@ -1023,7 +1023,9 @@ where
     let node_pos = to_node_pos(item.diag, curr_offset);
     debug!(curr_offset = curr_offset, node_pos = node_pos);
 
-    if node_pos == graph.node_length(graph.rank_to_node(item.node_rank)) - 1 {
+    if item.state == AlignState::Match
+        && node_pos == graph.node_length(graph.rank_to_node(item.node_rank)) - 1
+    {
         // At node end. Since we can't be sure if we're still extending matches
         // across node boundaries, we will not check whether we can improve over bubble exits
         // in those cases.
