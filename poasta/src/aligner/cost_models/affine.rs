@@ -97,10 +97,7 @@ where
         let gap_open = match current_state {
             AlignState::Insertion | AlignState::Deletion => 0,
             AlignState::Match => self.gap_open,
-            _ => panic!(
-                "Invalid current state {:?} for gap affine scoring model!",
-                current_state
-            ),
+            _ => panic!("Invalid current state {current_state:?} for gap affine scoring model!"),
         };
 
         gap_open as usize + (gap_length * self.gap_extend as usize)
@@ -115,18 +112,7 @@ pub struct AffineAstarItem<D> {
     pub state: AlignState,
 }
 
-impl<D: DiagType> Default for AffineAstarItem<D> {
-    fn default() -> Self {
-        AffineAstarItem {
-            score: Score::default(),
-            node_rank: 0,
-            diag: Diag::default(),
-            state: AlignState::Match,
-        }
-    }
-}
-
-impl<D: DiagType> AstarItem<D> for AffineAstarItem<D> {
+impl<D: DiagType> AffineAstarItem<D> {
     #[inline(always)]
     fn new(score: Score, node_rank: usize, diag: Diag<D>, state: AlignState) -> Self {
         Self {
@@ -136,25 +122,16 @@ impl<D: DiagType> AstarItem<D> for AffineAstarItem<D> {
             state,
         }
     }
+}
 
-    #[inline(always)]
-    fn score(&self) -> Score {
-        self.score
-    }
-
-    #[inline(always)]
-    fn node_rank(&self) -> usize {
-        self.node_rank
-    }
-
-    #[inline(always)]
-    fn node_diag(&self) -> Diag<D> {
-        self.diag
-    }
-
-    #[inline(always)]
-    fn aln_state(&self) -> AlignState {
-        self.state
+impl<D: DiagType> Default for AffineAstarItem<D> {
+    fn default() -> Self {
+        AffineAstarItem {
+            score: Score::default(),
+            node_rank: 0,
+            diag: Diag::default(),
+            state: AlignState::Match,
+        }
     }
 }
 
@@ -288,7 +265,7 @@ where
         );
 
         if node_pos == node_len - 1 {
-            self.relax_match_at_succ(&graph, seq, item, heuristic, fr_point);
+            self.relax_match_at_succ(graph, seq, item, heuristic, fr_point);
         } else {
             // Not at the node end yet, so queue mismatch, deletion, and insertion states within the node
             if fr_point.as_usize() < self.seq_length {
@@ -1036,60 +1013,37 @@ where
 
     for (exit, path_lengths) in bubble_index.get_node_bubbles(item.node_rank) {
         debug!(exit=exit, path_lengths=?path_lengths, "Checking bubble exit");
-        let diags: Vec<_> = path_lengths.iter().map(|plen| item.diag + *plen).collect();
 
-        debug!(diags=?diags);
-
-        let bubble_exit_diag_offsets: Vec<_> = match item.state {
-            AlignState::Match => diags
+        let bubble_exit_diag_offsets =
+            path_lengths
                 .iter()
-                .map(|diag| {
-                    astar_state.fr_points[*exit]
+                .map(|plen| item.diag + *plen)
+                .map(|diag| match item.state {
+                    AlignState::Match => astar_state.fr_points[*exit]
                         .fr_points_m
-                        .get_furthest(item.score, *diag)
+                        .get_furthest(item.score, diag)
                         .unwrap_or(O::zero())
-                        .as_usize()
-                })
-                .collect(),
-            AlignState::Insertion => diags
-                .iter()
-                .map(|diag| {
-                    astar_state.fr_points[*exit]
-                        .fr_points_m
-                        .get_furthest(item.score, *diag)
+                        .as_usize(),
+                    AlignState::Insertion => astar_state.fr_points[*exit]
+                        .fr_points_i
+                        .get_furthest(item.score, diag)
                         .unwrap_or(O::zero())
-                        .as_usize()
-                })
-                .collect(),
-            AlignState::Deletion => diags
-                .iter()
-                .map(|diag| {
-                    astar_state.fr_points[*exit]
-                        .fr_points_m
-                        .get_furthest(item.score, *diag)
+                        .as_usize(),
+                    AlignState::Deletion => astar_state.fr_points[*exit]
+                        .fr_points_d
+                        .get_furthest(item.score, diag)
                         .unwrap_or(O::zero())
-                        .as_usize()
-                })
-                .collect(),
-            AlignState::Insertion2 | AlignState::Deletion2 => {
-                panic!("Invalid state {:?}", item.state)
-            }
-        };
-
-        debug!(offsets_to_beat=?bubble_exit_diag_offsets);
+                        .as_usize(),
+                    AlignState::Insertion2 | AlignState::Deletion2 => {
+                        panic!("Invalid state {:?}", item.state)
+                    }
+                });
 
         if path_lengths
             .iter()
-            .zip(bubble_exit_diag_offsets.iter())
-            .inspect(|(plen, exit_offset_to_beat)| {
-                let offset_from_curr = curr_offset + **plen;
-                debug!(
-                    offset_from_curr = offset_from_curr,
-                    to_beat = **exit_offset_to_beat
-                );
-            })
+            .zip(bubble_exit_diag_offsets)
             .all(|(plen, exit_offset_to_beat)| {
-                *exit_offset_to_beat == 0 || (curr_offset + *plen) > *exit_offset_to_beat
+                exit_offset_to_beat == 0 || (curr_offset + *plen) > exit_offset_to_beat
             })
         {
             return true;
