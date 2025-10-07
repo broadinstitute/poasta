@@ -1,14 +1,30 @@
-[workspace]
-members = ["poasta", "poasta_bin"]
-resolver = "2"
-
-[workspace.package]
+[package]
+name = "poasta"
 version = "0.2.0-alpha.1"
 authors = ["Lucas van Dijk"]
 description = "Fast genome-scale partial order aligner"
 documentation = "https://github.com/broadinstitute/poasta"
 edition = "2021"
 
+[dependencies]
+flate2 = "1.0.34"
+num = { version = "~0.4" }
+petgraph = { version = "~0.8", features = ["serde-1"] }
+tracing = { version = "0.1.40" }
+noodles = { version = "~0.99", features = ["fasta", "fastq"] }
+itertools = "0.14.0"
+rustc-hash = "2.1.1"
+
+# CLI
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"], optional = true }
+clap = { version = "4.5.19", features = ["derive"], optional = true }
+
+
+[features]
+default = ["cli", "optimized"]
+cli = ["dep:tracing-subscriber", "dep:clap"]
+optimized = ["tracing/release_max_level_info"]
+
 [profile.release]
 debug = true
-lto = "thin"
+

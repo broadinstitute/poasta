@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fs::File;
 use std::io::{self, BufReader, IsTerminal};
-#[cfg(feature = "debug_output")]
+#[cfg(not(feature = "optimized"))]
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
@@ -22,15 +22,15 @@ use poasta::aligner::cost_models::affine::Affine;
 use poasta::aligner::utils::print_alignment;
 use poasta::aligner::{AlignmentMode, PoastaAligner};
 use poasta::errors::PoastaError;
-#[cfg(feature = "debug_output")]
+#[cfg(not(feature = "optimized"))]
 use poasta::graph::io::dot::graph_to_dot;
 use poasta::graph::poa::{IndexType, POASeqGraph};
 
-mod cli;
-mod debug_tracing;
+use crate::cli;
+use crate::debug;
 
-use debug_tracing::filter::{align_state_filter, only_align_states};
-use debug_tracing::subscriber::AlignStateLayer;
+use crate::debug::filter::{align_state_filter, only_align_states};
+use crate::debug::subscriber::AlignStateLayer;
 
 /// Any object that supports writing and checking if it is a terminal.
 trait PoastaWrite: io::Write + io::IsTerminal {}
@@ -70,15 +70,15 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
     Ok(())
 }
 
-#[cfg(feature = "debug_output")]
-fn configure_debug_output(align_args: &cli::AlignArgs) -> Option<AlignStateLayer> {
+#[cfg(not(feature = "optimized"))]
+fn configure_debug_output(align_args: &cli::poasta::AlignArgs) -> Option<AlignStateLayer> {
     align_args
         .debug_output
         .as_deref()
         .map(|dir| AlignStateLayer::new(dir))
 }
 
-#[cfg(not(feature = "debug_output"))]
+#[cfg(feature = "optimized")]
 fn configure_debug_output(_: &cli::AlignArgs) -> Option<AlignStateLayer> {
     None
 }
@@ -144,7 +144,7 @@ where
         let seq_name = std::str::from_utf8(record.name()).unwrap();
 
         // When debugging, we want to output the sequence to the visited states output file
-        #[cfg(feature = "debug_output")]
+        #[cfg(not(feature = "optimized"))]
         let seq = if align_args.debug_output.is_some() {
             std::str::from_utf8(record.sequence().as_ref()).unwrap()
         } else {
@@ -160,7 +160,7 @@ where
         } else {
             info!("Aligning #{i} {}... ", seq_name);
 
-            #[cfg(feature = "debug_output")]
+            #[cfg(not(feature = "optimized"))]
             if let Some(debug_dir) = &align_args.debug_output {
                 let fname = debug_dir.join(format!("graph_for_{}.dot", seq_name));
                 let mut file = File::create(&fname).map(BufWriter::new)?;
