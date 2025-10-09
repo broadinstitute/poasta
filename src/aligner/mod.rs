@@ -93,7 +93,7 @@ where
             };
 
             {
-                let visit_span = span!(Level::INFO, "visit");
+                let visit_span = span!(Level::DEBUG, "visit");
                 let _visit_enter = visit_span.enter();
 
                 debug!(front=?front);
@@ -145,7 +145,7 @@ mod tests {
 
         let aligner = PoastaAligner::new(heuristic);
 
-        let mut reader = File::open("../tests/test2_from_abpoa.fa")
+        let mut reader = File::open("tests/test2_from_abpoa.fa")
             .map(BufReader::new)
             .map(fasta::io::Reader::new)
             .unwrap();
@@ -166,7 +166,7 @@ mod tests {
             } else {
                 {
                     let mut writer =
-                        File::create(format!("../tests/output/graph_for_{}.dot", name)).unwrap();
+                        File::create(format!("tests/output/graph_for_{}.dot", name)).unwrap();
                     graph_to_dot(&mut writer, &graph).unwrap();
                 }
 
