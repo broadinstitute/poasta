@@ -105,9 +105,8 @@ where
         let astar_state = self.cost_model.init_astar(graph, seq, index.clone(), mode);
 
         let end_diag = Diag::new(seq.len() as isize + 1);
-        let cost_model = self.cost_model.clone();
+        let cost_model = self.cost_model;
         let index_for_prune = index.clone();
-
 
         runnable::create(
             astar_state,

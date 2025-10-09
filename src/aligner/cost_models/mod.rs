@@ -2,24 +2,12 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use super::astar::{AlignState, AstarState};
-use super::fr_points::{Diag, DiagType, PosType, Score};
+use super::fr_points::{DiagType, PosType};
 use super::AlignmentMode;
 use crate::aligner::traits::AlignableGraph;
 use crate::graph::bubbles::index::BubbleIndex;
 
 pub mod affine;
-
-pub trait AstarItem<D>: Clone + std::fmt::Debug
-where
-    D: DiagType,
-{
-    fn new(score: Score, node_rank: usize, node_diag: Diag<D>, aln_state: AlignState) -> Self;
-
-    fn score(&self) -> Score;
-    fn node_rank(&self) -> usize;
-    fn node_diag(&self) -> Diag<D>;
-    fn aln_state(&self) -> AlignState;
-}
 
 pub trait AlignmentCostModel {
     type DiagType: DiagType;

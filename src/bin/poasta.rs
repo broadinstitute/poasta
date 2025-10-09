@@ -26,8 +26,8 @@ use poasta::errors::PoastaError;
 use poasta::graph::io::dot::graph_to_dot;
 use poasta::graph::poa::{IndexType, POASeqGraph};
 
-use crate::cli;
-use crate::debug;
+use poasta::cli;
+use poasta::debug;
 
 use crate::debug::filter::{align_state_filter, only_align_states};
 use crate::debug::subscriber::AlignStateLayer;
@@ -54,12 +54,12 @@ fn build_base_subscriber() -> impl Subscriber + for<'span> LookupSpan<'span> {
 }
 
 fn main() -> Result<(), Box<dyn Error + 'static>> {
-    let args = cli::CliArgs::parse();
+    let args = cli::poasta::CliArgs::parse();
 
     match &args.command {
-        Some(cli::CliSubcommand::Align(v)) => align_subcommand(v)?,
-        Some(cli::CliSubcommand::View(v)) => (),
-        Some(cli::CliSubcommand::Stats(v)) => (),
+        Some(cli::poasta::CliSubcommand::Align(v)) => align_subcommand(v)?,
+        Some(cli::poasta::CliSubcommand::View(v)) => (),
+        Some(cli::poasta::CliSubcommand::Stats(v)) => (),
         None => {
             eprintln!("No subcommand given!");
 
@@ -79,11 +79,11 @@ fn configure_debug_output(align_args: &cli::poasta::AlignArgs) -> Option<AlignSt
 }
 
 #[cfg(feature = "optimized")]
-fn configure_debug_output(_: &cli::AlignArgs) -> Option<AlignStateLayer> {
+fn configure_debug_output(_: &cli::poasta::AlignArgs) -> Option<AlignStateLayer> {
     None
 }
 
-fn align_subcommand(align_args: &cli::AlignArgs) -> Result<(), Box<dyn Error + 'static>> {
+fn align_subcommand(align_args: &cli::poasta::AlignArgs) -> Result<(), Box<dyn Error + 'static>> {
     let span = span!(Level::INFO, "align_subcommand");
     let _enter = span.enter();
 
@@ -109,7 +109,7 @@ fn align_subcommand(align_args: &cli::AlignArgs) -> Result<(), Box<dyn Error + '
 }
 
 fn perform_alignment<Ix, H, C>(
-    align_args: &cli::AlignArgs,
+    align_args: &cli::poasta::AlignArgs,
     graph: &mut POASeqGraph<Ix>,
     aligner: &PoastaAligner<H, C, POASeqGraph<Ix>>,
     sequences_fname: &Path,
@@ -135,7 +135,7 @@ where
     } else {
         Box::new(File::open(sequences_fname).map(BufReader::new)?)
     };
-    let mut reader = fasta::Reader::new(reader_inner);
+    let mut reader = fasta::io::Reader::new(reader_inner);
 
     let mut i = 1;
     for result in reader.records() {

@@ -19,12 +19,20 @@ rustc-hash = "2.1.1"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"], optional = true }
 clap = { version = "4.5.19", features = ["derive"], optional = true }
 
+# Testing
+spoa_rs = { git = "https://github.com/broadinstitute/spoa-rs", version = "0.1.0", optional = true }
 
 [features]
 default = ["cli", "optimized"]
 cli = ["dep:tracing-subscriber", "dep:clap"]
 optimized = ["tracing/release_max_level_info"]
+test = ["dep:spoa_rs"]
 
 [profile.release]
 debug = true
+
+[[bin]]
+name = "poasta_vs_spoa"
+path = "src/bin/poasta_vs_spoa.rs"
+required-features = ["test"]
 

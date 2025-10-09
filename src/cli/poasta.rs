@@ -81,7 +81,7 @@ pub struct AlignArgs {
 
     /// Output debug information (intermediate graphs, aligner state)
     /// and write files to the given directory
-    #[cfg(feature = "debug_output")]
+    #[cfg(not(feature = "optimized"))]
     #[arg(short, long)]
     #[clap(help_heading = "Outputs")]
     pub debug_output: Option<PathBuf>,

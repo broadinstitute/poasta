@@ -1,7 +1,7 @@
 use std::{fmt::Debug, marker::PhantomData, sync::Arc};
 use tracing::{debug, debug_span, span, trace, Level};
 
-use super::{AlignmentCostModel, AstarItem};
+use super::AlignmentCostModel;
 use crate::aligner::traits::{AlignableGraph, AlignableGraphNodePos};
 use crate::{
     aligner::{
@@ -148,18 +148,17 @@ impl<D: DiagType> From<(Score, usize, Diag<D>, AlignState)> for AffineAstarItem<
 }
 
 #[derive(Clone, Debug, Default)]
-struct AffineNodeDiagonals<D, O> {
-    fr_points_m: NodeFrPoints<D, O>,
-    fr_points_i: NodeFrPoints<D, O>,
-    fr_points_d: NodeFrPoints<D, O>,
+struct AffineNodeDiagonals<O> {
+    fr_points_m: NodeFrPoints<O>,
+    fr_points_i: NodeFrPoints<O>,
+    fr_points_d: NodeFrPoints<O>,
 }
 
-impl<D, O> AffineNodeDiagonals<D, O>
+impl<O> AffineNodeDiagonals<O>
 where
-    D: DiagType,
     O: PosType,
 {
-    fn get_furthest(&self, item: &AffineAstarItem<D>) -> Option<O> {
+    fn get_furthest<D: DiagType>(&self, item: &AffineAstarItem<D>) -> Option<O> {
         match item.state {
             AlignState::Match => self.fr_points_m.get_furthest(item.score, item.diag),
             AlignState::Deletion => self.fr_points_d.get_furthest(item.score, item.diag),
@@ -170,7 +169,7 @@ where
         }
     }
 
-    fn is_further(&self, item: &AffineAstarItem<D>, offset: O) -> bool {
+    fn is_further<D: DiagType>(&self, item: &AffineAstarItem<D>, offset: O) -> bool {
         match item.state {
             AlignState::Match => self.fr_points_m.is_further(item.score, item.diag, offset),
             AlignState::Deletion => self.fr_points_d.is_further(item.score, item.diag, offset),
@@ -181,7 +180,7 @@ where
         }
     }
 
-    fn update_if_further(&mut self, item: &AffineAstarItem<D>, offset: O) -> bool {
+    fn update_if_further<D: DiagType>(&mut self, item: &AffineAstarItem<D>, offset: O) -> bool {
         match item.state {
             AlignState::Match => self
                 .fr_points_m
@@ -217,7 +216,7 @@ where
     alignment_mode: AlignmentMode,
 
     /// For each node in the POA graph, we store the maximum reached query offsets per diagonal
-    fr_points: Vec<AffineNodeDiagonals<D, O>>,
+    fr_points: Vec<AffineNodeDiagonals<O>>,
 
     /// A* queue
     queue: LayeredQueue<AffineQueueLayer<D>>,
@@ -978,6 +977,7 @@ where
     }
 }
 
+#[inline(never)]
 pub fn can_improve_bubble<G, D, O>(
     graph: &G,
     bubble_index: &BubbleIndex,

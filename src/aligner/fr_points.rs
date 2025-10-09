@@ -5,6 +5,7 @@ use std::ops::{Add, AddAssign, BitAnd, Not, Shr, Sub, SubAssign};
 
 use num::traits::{SaturatingAdd, SaturatingSub};
 use num::{Bounded, FromPrimitive, One, Signed, Unsigned};
+use rustc_hash::FxHashMap;
 
 pub trait NumOperations:
     FromPrimitive
@@ -483,74 +484,74 @@ impl From<u8> for Score {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct Diagonals<D, O> {
-    /// The furthest reached query position for each diagonal.
-    diagonals: VecDeque<O>,
 
-    /// The smallest reached diagonal. `diagonals[0]` represents this diagonal.
-    kmin: Diag<D>,
+#[derive(Debug, Clone, Default)]
+pub struct Diagonals<O, const B: usize = 16> {
+    /// The furthest reached query position for each diagonal.
+    ///
+    /// Diagonals are allocated in blocks of size B (default: 16).
+    diagonals: FxHashMap<isize, [O; B]>,
 }
 
-impl<D, O> Diagonals<D, O>
+impl<O, const B: usize> Diagonals<O, B>
 where
-    D: DiagType,
     O: PosType,
 {
+    pub fn new() -> Self {
+        if B & (B-1) != 0 {
+            panic!("Block size B should be a power of 2!");
+        }
+        
+        Self {
+            diagonals: FxHashMap::default(),
+        }
+    }
+
+    fn calc_block_ix<D: DiagType>(&self, diag: Diag<D>) -> (isize, usize) {
+        let shifted_diag = diag.as_isize() + (B as isize / 2isize);
+        let diag_block = shifted_diag >> B.ilog2();
+
+        let within_block_ix = (shifted_diag & (B as isize - 1)) as usize;
+
+        (diag_block, within_block_ix)
+    }
+
+
     pub fn len(&self) -> usize {
-        self.diagonals.len()
+        self.diagonals.len() * B
     }
 
     pub fn is_empty(&self) -> bool {
         self.diagonals.is_empty()
     }
 
-    fn ensure_space(&mut self, diag: Diag<D>) {
-        if self.is_empty() {
-            self.diagonals.resize(8, O::default());
-            self.kmin = diag;
-            return;
-        }
+    pub fn get_furthest<D: DiagType>(&self, diag: Diag<D>) -> Option<O> {
+        let (block_ix, within_block_ix) = self.calc_block_ix(diag);
 
-        let kmax = self.kmin + self.len() - 1usize;
-        if diag < self.kmin {
-            let extra = (self.kmin - diag).as_usize();
-            self.diagonals.reserve(extra);
-            for _ in 0..extra {
-                self.diagonals.push_front(O::default());
-            }
-            self.kmin = diag;
-        } else if diag > kmax {
-            let extra = (diag - kmax).as_usize();
-            self.diagonals.reserve(extra);
-            for _ in 0..extra {
-                self.diagonals.push_back(O::default());
-            }
-        }
+        self.diagonals.get(&block_ix)
+            .map(|v| v[within_block_ix])
     }
 
-    pub fn get_furthest(&self, diag: Diag<D>) -> Option<O> {
-        let ix = (diag - self.kmin).as_usize();
-
-        self.diagonals.get(ix).copied()
-    }
-
-    pub fn is_further(&self, diag: Diag<D>, offset: O) -> bool {
+    pub fn is_further<D: DiagType>(&self, diag: Diag<D>, offset: O) -> bool {
         if self.is_empty() {
             return true;
         }
 
-        let ix = (diag - self.kmin).as_usize();
-        self.diagonals.get(ix).map(|&o| o < offset).unwrap_or(true)
+        let (block_ix, within_block_ix) = self.calc_block_ix(diag);
+        self.diagonals.get(&block_ix)
+            .map(|v| v[within_block_ix] < offset)
+            .unwrap_or(true)
     }
 
-    pub fn update_if_further(&mut self, diag: Diag<D>, offset: O) -> bool {
-        self.ensure_space(diag);
+    pub fn update_if_further<D: DiagType>(&mut self, diag: Diag<D>, offset: O) -> bool {
+        let (block_ix, within_block_ix) = self.calc_block_ix(diag);
 
-        let ix = (diag - self.kmin).as_usize();
+        let block = self.diagonals
+            .entry(block_ix)
+            .or_insert_with(|| [O::default(); B]);
 
-        if self.diagonals[ix] < offset {
-            self.diagonals[ix] = offset;
+        if block[within_block_ix] < offset {
+            block[within_block_ix] = offset;
             true
         } else {
             false
@@ -560,24 +561,23 @@ where
 
 /// Holds reached query positions for node diagonals.
 #[derive(Debug, Clone)]
-pub struct NodeFrPoints<D, O> {
+pub struct NodeFrPoints<O> {
     /// Per score, the furthest reached query position for each diagonal.
-    fr_points: VecDeque<Diagonals<D, O>>,
+    fr_points: VecDeque<Diagonals<O>>,
 
     /// The lowest score reached in this node. fr_points[0] refers to furthest reached points at this score.
     score_min: Score,
 }
 
-impl<D, O> NodeFrPoints<D, O>
+impl<O> NodeFrPoints<O>
 where
-    D: DiagType,
     O: PosType,
 {
     pub fn is_empty(&self) -> bool {
         self.fr_points.is_empty()
     }
 
-    pub fn get_furthest(&self, score: Score, diag: Diag<D>) -> Option<O> {
+    pub fn get_furthest<D: DiagType>(&self, score: Score, diag: Diag<D>) -> Option<O> {
         if score < self.score_min {
             return None;
         }
@@ -599,19 +599,19 @@ where
             let extra = (self.score_min - score).as_usize();
             self.fr_points.reserve(extra);
             for _ in 0..extra {
-                self.fr_points.push_front(Diagonals::default());
+                self.fr_points.push_front(Diagonals::new());
             }
             self.score_min = score;
         } else if score > score_max {
             let extra = (score - score_max).as_usize();
             self.fr_points.reserve(extra);
             for _ in 0..extra {
-                self.fr_points.push_back(Diagonals::default());
+                self.fr_points.push_back(Diagonals::new());
             }
         }
     }
 
-    pub fn update_if_further(&mut self, score: Score, diag: Diag<D>, offset: O) -> bool {
+    pub fn update_if_further<D: DiagType>(&mut self, score: Score, diag: Diag<D>, offset: O) -> bool {
         self.ensure_space(score);
         let ix = (score - self.score_min).as_usize();
 
@@ -619,7 +619,7 @@ where
     }
 
     /// Is a given query position further than any currently reached points for a specific diagonal?
-    pub fn is_further(&self, score: Score, diag: Diag<D>, offset: O) -> bool {
+    pub fn is_further<D: DiagType>(&self, score: Score, diag: Diag<D>, offset: O) -> bool {
         if self.is_empty() {
             return true;
         }
@@ -636,10 +636,7 @@ where
     }
 }
 
-impl<D, O> Default for NodeFrPoints<D, O>
-where
-    D: Default,
-{
+impl<O> Default for NodeFrPoints<O> {
     fn default() -> Self {
         Self {
             fr_points: VecDeque::default(),
