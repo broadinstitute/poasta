@@ -2358,14 +2358,14 @@ mod tests {
 
         span!(Level::DEBUG, "test_from_msa");
 
-        let mut file = File::open("../tests/test2_from_abpoa.truth.fa")
+        let mut file = File::open("tests/test2_from_abpoa.truth.fa")
             .map(BufReader::new)
             .unwrap();
 
         let graph = POASeqGraph::<u32>::try_from_fasta_msa(&mut file).unwrap();
         drop(file);
 
-        let mut reader = File::open("../tests/test2_from_abpoa.fa")
+        let mut reader = File::open("tests/test2_from_abpoa.fa")
             .map(BufReader::new)
             .map(fasta::io::Reader::new)
             .unwrap();
