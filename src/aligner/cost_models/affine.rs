@@ -612,7 +612,8 @@ where
                     AlignState::Deletion,
                 ));
 
-                // Check for deletions that could have been the source, both on the current node as well as predecessors
+                // Check for deletions that could have been the source, both on the
+                // current node as well as predecessors
                 let node_ix = graph.rank_to_node(item.node_rank);
                 let mut possible_pred = vec![item.node_rank];
                 possible_pred.extend(graph.predecessors(node_ix).map(|v| graph.node_rank(v)));
@@ -993,7 +994,7 @@ where
         return true;
     }
 
-    let span = span!(Level::INFO, "can_improve_bubble");
+    let span = span!(Level::DEBUG, "can_improve_bubble");
     let _enter = span.enter();
 
     let curr_offset = astar_state.get_offset(item);
@@ -1051,4 +1052,84 @@ where
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs::File, io::BufReader};
+
+    use noodles::fasta;
+
+    use crate::{
+        aligner::{astar::heuristic, traits::AlignableGraph, PoastaAligner},
+        graph::poa::POASeqGraph,
+    };
+
+    use super::Affine;
+
+    #[test]
+    fn test_backtrace() {
+        let cost_model = Affine::<i32, u32>::new(4, 6, 2);
+        let h = heuristic::MinGapCost::new(cost_model);
+        let aligner = PoastaAligner::new(h);
+
+        let mut graph_ifile = File::open("tests/dnaG/graph_seq.msa.fna")
+            .map(BufReader::new)
+            .unwrap();
+
+        let graph = POASeqGraph::<u32>::try_from_fasta_msa(&mut graph_ifile).unwrap();
+
+        let mut record_ifile = File::open("tests/dnaG/align_seq.fna")
+            .map(BufReader::new)
+            .map(fasta::io::Reader::new)
+            .unwrap();
+
+        for r in record_ifile.records() {
+            let r = r.unwrap();
+
+            let result = aligner
+                .align(
+                    &graph,
+                    r.sequence().as_ref(),
+                    crate::aligner::AlignmentMode::Global,
+                )
+                .unwrap();
+
+            let mut num_mis = 0;
+            let mut num_gap = 0;
+            let mut gap_len = 0;
+
+            let seq = r.sequence().as_ref();
+            let mut in_gap = false;
+            for pair in &result.alignment {
+                if pair.is_aligned() {
+                    if graph.get_node_symbol(pair.node_pos().unwrap())
+                        != seq[pair.query_pos().unwrap()]
+                    {
+                        num_mis += 1;
+                    }
+
+                    in_gap = false;
+                } else {
+                    if !in_gap {
+                        num_gap += 1;
+                    }
+
+                    gap_len += 1;
+                    in_gap = true;
+                }
+            }
+
+            let expected_score = num_mis * cost_model.mismatch as usize
+                + num_gap * cost_model.gap_open as usize
+                + gap_len * cost_model.gap_extend as usize;
+
+            assert_eq!(
+                expected_score,
+                result.score.as_usize(),
+                "Backtrace alignment incorrect for {}",
+                str::from_utf8(r.name()).unwrap()
+            );
+        }
+    }
 }
