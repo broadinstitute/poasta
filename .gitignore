@@ -9,8 +9,8 @@ output/
 *.dot
 *.poasta
 /*.png
-debug_test/
-debug_presentation/
+*.trace/
+flamegraph.svg
 debug/
 __pycache__
 _old
