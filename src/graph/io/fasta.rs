@@ -7,7 +7,7 @@ use std::ops::Range;
 use petgraph::graph::IndexType;
 use rustc_hash::FxHashMap;
 
-use crate::aligner::traits::{AlignableGraph, AlignableGraphNodePos};
+use crate::align::traits::{AlignableGraph, AlignableGraphNodePos};
 use crate::errors::PoastaError;
 use crate::graph::alignment::POANodePos;
 use crate::graph::poa::{AlignedInterval, POANodeIndex, POASeqGraph};

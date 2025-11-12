@@ -80,10 +80,12 @@ impl GraphBase for MockGraph {
         self.neighbors(node)
     }
     
-    fn node_capacity(&self) -> usize {
-        let (capacity, _) = self.0.capacity();
-        
-        capacity
+    fn in_degree(&self, node: Self::NodeType) -> usize {
+        self.neighbors_directed(node, Incoming).count()
+    }
+    
+    fn out_degree(&self, node: Self::NodeType) -> usize {
+        self.neighbors(node).count()
     }
 }
 

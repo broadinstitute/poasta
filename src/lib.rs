@@ -6,4 +6,4 @@ pub mod errors;
 pub mod graph;
 
 // pub mod bubbles;
-pub mod aligner;
+pub mod align;

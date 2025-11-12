@@ -5,7 +5,7 @@ pub mod heuristic;
 pub mod queue;
 pub mod runnable;
 
-use crate::aligner::traits::AlignableGraph;
+use crate::align::traits::AlignableGraph;
 
 /// Enum representing the alignment state of a particular cell in the alignment matrix
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

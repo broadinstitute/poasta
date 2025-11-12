@@ -2,9 +2,9 @@ use std::{fmt::Debug, marker::PhantomData, sync::Arc};
 use tracing::{debug, debug_span, span, trace, Level};
 
 use super::AlignmentCostModel;
-use crate::aligner::traits::{AlignableGraph, AlignableGraphNodePos};
+use crate::align::traits::{AlignableGraph, AlignableGraphNodePos};
 use crate::{
-    aligner::{
+    align::{
         astar::{
             queue::{LayeredQueue, QueueLayer},
             AlignState, AstarState,
@@ -1061,7 +1061,7 @@ mod tests {
     use noodles::fasta;
 
     use crate::{
-        aligner::{astar::heuristic, traits::AlignableGraph, PoastaAligner},
+        align::{astar::heuristic, traits::AlignableGraph, PoastaAligner},
         graph::poa::POASeqGraph,
     };
 
@@ -1091,7 +1091,7 @@ mod tests {
                 .align(
                     &graph,
                     r.sequence().as_ref(),
-                    crate::aligner::AlignmentMode::Global,
+                    crate::align::AlignmentMode::Global,
                 )
                 .unwrap();
 

@@ -5,7 +5,7 @@ use petgraph::graph::IndexType;
 use petgraph::visit::{IntoEdgeReferences, EdgeRef};
 
 use crate::graph::traits::GraphWithNodeLengths;
-use crate::aligner::traits::AlignableGraph;
+use crate::align::traits::AlignableGraph;
 use crate::errors::PoastaIOError;
 use crate::graph::poa::POASeqGraph;
 

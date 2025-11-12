@@ -21,7 +21,8 @@ pub trait GraphBase {
     fn successors(&self, node: Self::NodeType) -> Self::Successors<'_>;
     fn predecessors(&self, node: Self::NodeType) -> Self::Predecessors<'_>;
     
-    fn node_capacity(&self) -> usize;
+    fn out_degree(&self, node: Self::NodeType) -> usize;
+    fn in_degree(&self, node: Self::NodeType) -> usize;
 }
 
 /// Trait for graphs that have dedicated start and end nodes, i.e.,

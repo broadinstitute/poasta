@@ -5,14 +5,11 @@ use tracing::{debug, span, Level};
 
 use crate::errors::PoastaError;
 use crate::graph::bubbles::index::BubbleIndex;
-use astar::{heuristic::AstarHeuristic, AstarResult};
 use cost_models::AlignmentCostModel;
 use traits::AlignableGraph;
 
-pub mod astar;
 pub mod cost_models;
-pub(crate) mod extension;
-pub(crate) mod fr_points;
+pub mod engine;
 pub mod traits;
 pub mod utils;
 
@@ -129,7 +126,7 @@ mod tests {
 
     use noodles::fasta;
 
-    use crate::aligner::utils::print_alignment;
+    use crate::align::utils::print_alignment;
     use crate::graph::io::dot::graph_to_dot;
     use crate::graph::poa::POASeqGraph;
 

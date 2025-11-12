@@ -1,4 +1,4 @@
-use crate::aligner::traits::{AlignableGraph, AlignableGraphNodePos};
+use crate::align::traits::{AlignableGraph, AlignableGraphNodePos};
 /// An aligned pair of residues. The first element represent
 /// the position with a node of the graph, and the second element
 /// represents the query sequence position.

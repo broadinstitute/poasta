@@ -4,7 +4,7 @@ use std::sync::Arc;
 use super::astar::{AlignState, AstarState};
 use super::fr_points::{DiagType, PosType};
 use super::AlignmentMode;
-use crate::aligner::traits::AlignableGraph;
+use crate::align::traits::AlignableGraph;
 use crate::graph::bubbles::index::BubbleIndex;
 
 pub mod affine;
