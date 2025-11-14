@@ -13,7 +13,7 @@ pub mod engine;
 pub mod traits;
 pub mod utils;
 
-/// Enum representing the kind of alignment to perform
+/// Represents the kind of alignment to perform
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlignmentMode {
     /// Perform global alignment of the query sequence to the graph
@@ -28,6 +28,19 @@ pub enum AlignmentMode {
         graph_free_end: Bound<usize>,
     },
 }
+
+ 
+/// Represents the alignment state of a particular cell in the alignment matrix
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum AlignState {
+    Match,
+    Deletion,
+    Insertion,
+    Deletion2, // For two-piece gap model
+    Insertion2,
+}
+
 
 pub struct PoastaAligner<H, C, G> {
     heuristic: H,
