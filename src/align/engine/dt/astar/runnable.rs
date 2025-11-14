@@ -1,10 +1,10 @@
 use std::marker::PhantomData;
 
 use super::AstarState;
-use crate::aligner::cost_models::AlignmentCostModel;
-use crate::aligner::fr_points::Score;
-use crate::aligner::traits::AlignableGraph;
-use crate::aligner::utils::AlignedPair;
+use crate::align::cost_models::AlignmentCostModel;
+use crate::align::fr_points::Score;
+use crate::align::traits::AlignableGraph;
+use crate::align::utils::AlignedPair;
 
 pub fn create<C, G, F, P>(
     mut astar_state: C::AstarStateType<G>,

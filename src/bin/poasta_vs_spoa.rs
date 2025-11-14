@@ -7,9 +7,9 @@ use flate2::read::MultiGzDecoder;
 use noodles::fasta::record::Sequence;
 use noodles::fasta::{self, Record};
 
-use poasta::aligner::astar::heuristic::{self, MinGapCost};
-use poasta::aligner::cost_models::affine::Affine;
-use poasta::aligner::PoastaAligner;
+use poasta::align::astar::heuristic::{self, MinGapCost};
+use poasta::align::cost_models::affine::Affine;
+use poasta::align::PoastaAligner;
 use poasta::cli::poasta_vs_spoa::PoastaVsSpoaArgs;
 use poasta::graph::poa::POASeqGraph;
 
@@ -114,7 +114,7 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
         let poasta_aln = aligner.align(
             &poasta_graph,
             r.sequence().as_ref(),
-            poasta::aligner::AlignmentMode::Global,
+            poasta::align::AlignmentMode::Global,
         )?;
 
         let seq = str::from_utf8(r.sequence().as_ref())?;

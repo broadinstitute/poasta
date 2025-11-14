@@ -9,7 +9,7 @@ use clap::Parser;
 use flate2::read::MultiGzDecoder;
 use noodles::fasta;
 
-use poasta::aligner::cost_models::AlignmentCostModel;
+use poasta::align::cost_models::AlignmentCostModel;
 use tracing::Subscriber;
 use tracing::{info, span};
 use tracing::{trace_span, Level};
@@ -17,10 +17,10 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::{EnvFilter, Registry};
 
-use poasta::aligner::astar::heuristic::{AstarHeuristic, Dijkstra, MinGapCost};
-use poasta::aligner::cost_models::affine::Affine;
-use poasta::aligner::utils::print_alignment;
-use poasta::aligner::{AlignmentMode, PoastaAligner};
+use poasta::align::astar::heuristic::{AstarHeuristic, Dijkstra, MinGapCost};
+use poasta::align::cost_models::affine::Affine;
+use poasta::align::utils::print_alignment;
+use poasta::align::{AlignmentMode, PoastaAligner};
 use poasta::errors::PoastaError;
 #[cfg(not(feature = "optimized"))]
 use poasta::graph::io::dot::graph_to_dot;

@@ -22,6 +22,9 @@ where
     
     /// Error when a required alignment is not present
     EmptyAlignment,
+    
+    /// Error when the weights are not equal to the alignment length
+    WeightsUnequal
 }
 
 impl<Ix> From<Cycle<POANodeIndex<Ix>>> for GraphError<Ix> 
@@ -106,7 +109,13 @@ impl From<std::str::Utf8Error> for PoastaIOError {
 }
 
 #[derive(Debug)]
-pub enum PoastaError {
+pub enum PoastaError<Ix>
+where 
+    Ix: IndexType,
+{
+    /// Something went wrong with the graph
+    GraphError(GraphError<Ix>),
+    
     /// The size of the weights vector is not equal to the length of the sequence
     WeightsUnequalSize(usize, usize),
 
@@ -123,16 +132,35 @@ pub enum PoastaError {
     Other,
 }
 
-impl Error for PoastaError { }
+impl<Ix> Error for PoastaError<Ix> 
+where 
+    Ix: IndexType,
+{ }
 
 
-impl From<std::fmt::Error> for PoastaError {
+impl<Ix> From<std::fmt::Error> for PoastaError<Ix>
+where
+    Ix: IndexType,
+{
     fn from(value: std::fmt::Error) -> Self {
         Self::FormatError(value)
     }
 }
 
-impl Display for PoastaError {
+impl<Ix> From<GraphError<Ix>> for PoastaError<Ix>
+where 
+    Ix: IndexType,
+{
+    fn from(value: GraphError<Ix>) -> Self {
+        Self::GraphError(value)
+    }
+}
+
+impl<Ix> Display for PoastaError<Ix> 
+where
+    Ix: IndexType
+{
+    
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match *self {
             Self::WeightsUnequalSize(seq_len, weights_len) =>

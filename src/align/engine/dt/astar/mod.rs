@@ -5,17 +5,7 @@ pub mod heuristic;
 pub mod queue;
 pub mod runnable;
 
-use crate::aligner::traits::AlignableGraph;
-
-/// Enum representing the alignment state of a particular cell in the alignment matrix
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum AlignState {
-    Match,
-    Deletion,
-    Insertion,
-    Deletion2, // For two-piece gap model
-    Insertion2,
-}
+use crate::align::traits::AlignableGraph;
 
 pub trait AstarState<G, Item>
 where

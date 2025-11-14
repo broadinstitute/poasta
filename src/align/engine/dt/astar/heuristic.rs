@@ -1,10 +1,10 @@
 use tracing::{debug, span, Level};
 
-use crate::aligner::cost_models::affine::{self, Affine, AffineAstarItem, AffineAstarState};
-use crate::aligner::cost_models::AlignmentCostModel;
-use crate::aligner::fr_points::{Diag, DiagType, PosType};
-use crate::aligner::traits::AlignableGraph;
-use crate::aligner::AlignmentMode;
+use crate::align::cost_models::affine::{self, Affine, AffineAstarItem, AffineAstarState};
+use crate::align::cost_models::AlignmentCostModel;
+use crate::align::fr_points::{Diag, DiagType, PosType};
+use crate::align::traits::AlignableGraph;
+use crate::align::AlignmentMode;
 use crate::graph::bubbles::index::BubbleIndex;
 use std::sync::Arc;
 

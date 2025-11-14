@@ -5,18 +5,15 @@ use tracing::{debug, span, Level};
 
 use crate::errors::PoastaError;
 use crate::graph::bubbles::index::BubbleIndex;
-use astar::{heuristic::AstarHeuristic, AstarResult};
 use cost_models::AlignmentCostModel;
 use traits::AlignableGraph;
 
-pub mod astar;
 pub mod cost_models;
-pub(crate) mod extension;
-pub(crate) mod fr_points;
+pub mod engine;
 pub mod traits;
 pub mod utils;
 
-/// Enum representing the kind of alignment to perform
+/// Represents the kind of alignment to perform
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlignmentMode {
     /// Perform global alignment of the query sequence to the graph
@@ -31,6 +28,19 @@ pub enum AlignmentMode {
         graph_free_end: Bound<usize>,
     },
 }
+
+ 
+/// Represents the alignment state of a particular cell in the alignment matrix
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum AlignState {
+    Match,
+    Deletion,
+    Insertion,
+    Deletion2, // For two-piece gap model
+    Insertion2,
+}
+
 
 pub struct PoastaAligner<H, C, G> {
     heuristic: H,
@@ -129,7 +139,7 @@ mod tests {
 
     use noodles::fasta;
 
-    use crate::aligner::utils::print_alignment;
+    use crate::align::utils::print_alignment;
     use crate::graph::io::dot::graph_to_dot;
     use crate::graph::poa::POASeqGraph;
 

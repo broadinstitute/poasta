@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::fmt;
 use crate::graph::traits::{GraphNodeId, GraphWithNodeLengths, GraphWithNodeOrdering};
 
@@ -21,4 +22,17 @@ pub trait AlignableGraph:
     fn get_node_symbol(&self, p: Self::NodePosType) -> u8 {
         self.node_seq(p.node())[p.pos()]
     }
+}
+
+pub trait AlignmentEngine<ToAlign> {
+    type Graph: AlignableGraph;
+    type Success;
+    type Error: Error;
+    
+    fn align(&self, graph: &Self::Graph, to_align: &ToAlign) -> Result<Self::Success, Self::Error>;
+}
+
+
+trait MSAEngine<ToAlign> {
+    
 }
