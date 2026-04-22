@@ -1,8 +1,9 @@
 extern crate core;
 
-pub mod errors;
-pub mod io;
+pub mod cli;
 pub mod debug;
-pub mod graphs;
-pub mod bubbles;
-pub mod aligner;
+pub mod errors;
+pub mod graph;
+
+// pub mod bubbles;
+pub mod align;
