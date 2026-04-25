@@ -3,7 +3,7 @@ use petgraph::stable_graph::{Neighbors, NodeIndices};
 use petgraph::visit::EdgeRef;
 use petgraph::{Incoming, Outgoing};
 
-use crate::align::engine::{AlignResult, AlignedPair};
+use crate::align::engine::{AlignOutput, AlignedPair};
 use crate::errors::PoastaError;
 use crate::graph::alignment::AddAlignment;
 
@@ -469,7 +469,7 @@ where
 }
 
 /// Update the graph with an aligned sequence to the graph
-impl<Ix> AddAlignment<AlignResult<POAGraph<Ix>>> for POAGraph<Ix>
+impl<Ix> AddAlignment<AlignOutput<POAGraph<Ix>>> for POAGraph<Ix>
 where
     Ix: IndexType,
 {
@@ -479,7 +479,7 @@ where
         &mut self,
         sequence_name: &str,
         sequence: &[u8],
-        alignment_opt: Option<&AlignResult<POAGraph<Ix>>>,
+        alignment_opt: Option<&AlignOutput<POAGraph<Ix>>>,
         weights: &[usize],
     ) -> Result<(), PoastaError<Ix>> {
         if sequence.len() != weights.len() {

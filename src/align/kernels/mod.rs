@@ -16,6 +16,11 @@ pub enum BacktraceOp {
     /// Stay at same graph node, consume one query position (insertion).
     /// Transition within the same node to the given state.
     Insert { next_state: u8 },
+    /// Stay at the same cell (same graph node, same query position); only
+    /// switch to the given state. Used when the current state's value came
+    /// from another state at the same cell — e.g. `M[v][q]` came from
+    /// `D[v][q]` (closing a deletion) or `I[v][q]` (closing an insertion).
+    SwitchState { next_state: u8 },
     /// Alignment is complete (reached origin).
     Done,
 }
@@ -29,6 +34,10 @@ pub trait DPKernel: Sized + 'static {
     /// Number of DP state arrays allocated per band.
     /// 1 for linear, 3 for affine, 5 for two-piece affine.
     const STATES: usize;
+
+    /// Human-readable names for each state slot, in data-layout order.
+    /// Length must equal `STATES`. Used to write debug cell TSV headers.
+    const STATE_NAMES: &'static [&'static str];
 
     /// The cost model type this kernel is paired with.
     type Costs: AlignmentCostModel;

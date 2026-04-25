@@ -167,7 +167,11 @@ where
         }
     }
 
-    tracing::debug!(columns = n_cols, sequences = graph.sequences.len(), "writing FASTA MSA");
+    tracing::debug!(
+        columns = n_cols,
+        sequences = graph.sequences.len(),
+        "writing FASTA MSA"
+    );
 
     for (seq_idx, seq) in graph.sequences.iter().enumerate() {
         let mut row = vec![b'-'; n_cols];

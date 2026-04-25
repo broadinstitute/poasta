@@ -1,5 +1,5 @@
 use std::error::Error;
-use std::fs::{create_dir_all, File};
+use std::fs::{File, create_dir_all};
 use std::io::{BufReader, BufWriter};
 use std::path::Path;
 
@@ -11,8 +11,8 @@ use noodles::fasta::{self, Record};
 use poasta::align::cost_models::affine::Affine;
 use poasta::align::cost_models::linear::Linear;
 use poasta::align::cost_models::two_piece::TwoPieceAffine;
+use poasta::align::engine::AlignOutput;
 use poasta::align::engine::band_doubling::BandDoublingEngineScalar;
-use poasta::align::engine::AlignResult;
 use poasta::align::traits::AlignmentEngine;
 use poasta::cli::poasta::CostModelKind;
 use poasta::cli::poasta_vs_spoa::PoastaVsSpoaArgs;
@@ -113,30 +113,37 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
 
     // Import SPOA MSA into POASTA
     eprintln!("Reading POASTA graph...");
-    let poasta_graph = load_graph_from_fasta_msa::<u32, _>(
-        File::open(graph_fname).map(BufReader::new)?,
-    )?;
+    let poasta_graph =
+        load_graph_from_fasta_msa::<u32, _>(File::open(graph_fname).map(BufReader::new)?)?;
 
     // Align remaining sequences with both engines and compare scores
     let (total_tested, total_incorrect) = match args.cost_model {
         CostModelKind::Affine => {
-            let costs = Affine::new(
-                args.cost_match,
-                args.cost_mismatch,
-                args.cost_gap_open,
-                args.cost_gap_extend,
-            );
+            let costs = Affine::new(args.cost_mismatch, args.cost_gap_open, args.cost_gap_extend);
             let engine = BandDoublingEngineScalar::<Affine, u32>::new(costs);
-            run_comparison(&engine, &poasta_graph, &mut records, &mut spoa_engine, &spoa_graph, &error_output_dir)?
+            run_comparison(
+                &engine,
+                &poasta_graph,
+                &mut records,
+                &mut spoa_engine,
+                &spoa_graph,
+                &error_output_dir,
+            )?
         }
         CostModelKind::Linear => {
-            let costs = Linear::new(args.cost_match, args.cost_mismatch, args.cost_gap_extend);
+            let costs = Linear::new(args.cost_mismatch, args.cost_gap_extend);
             let engine = BandDoublingEngineScalar::<Linear, u32>::new(costs);
-            run_comparison(&engine, &poasta_graph, &mut records, &mut spoa_engine, &spoa_graph, &error_output_dir)?
+            run_comparison(
+                &engine,
+                &poasta_graph,
+                &mut records,
+                &mut spoa_engine,
+                &spoa_graph,
+                &error_output_dir,
+            )?
         }
         CostModelKind::TwoPiece => {
             let costs = TwoPieceAffine::new(
-                args.cost_match,
                 args.cost_mismatch,
                 args.cost_gap_open,
                 args.cost_gap_extend,
@@ -144,7 +151,14 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
                 args.cost_gap_extend2,
             );
             let engine = BandDoublingEngineScalar::<TwoPieceAffine, u32>::new(costs);
-            run_comparison(&engine, &poasta_graph, &mut records, &mut spoa_engine, &spoa_graph, &error_output_dir)?
+            run_comparison(
+                &engine,
+                &poasta_graph,
+                &mut records,
+                &mut spoa_engine,
+                &spoa_graph,
+                &error_output_dir,
+            )?
         }
     };
 
@@ -163,7 +177,11 @@ fn run_comparison<E>(
     error_output_dir: &Path,
 ) -> Result<(usize, usize), Box<dyn Error>>
 where
-    E: for<'s> AlignmentEngine<&'s [u8], Graph = POAGraph<u32>, Success = AlignResult<POAGraph<u32>>>,
+    E: for<'s> AlignmentEngine<
+            &'s [u8],
+            Graph = POAGraph<u32>,
+            Success = AlignOutput<POAGraph<u32>>,
+        >,
     for<'s> <E as AlignmentEngine<&'s [u8]>>::Error: std::fmt::Display,
 {
     let mut total_tested = 0;
@@ -186,8 +204,7 @@ where
         if spoa_penalty != poasta_aln.score {
             eprintln!(
                 "POASTA score {} != SPOA score: {}",
-                poasta_aln.score,
-                spoa_penalty,
+                poasta_aln.score, spoa_penalty,
             );
 
             let seq_name = String::from_utf8(r.name().to_owned())?;

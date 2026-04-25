@@ -1,8 +1,12 @@
-use crate::align::traits::AlignableGraph;
+use crate::align::traits::{AlignResult, AlignableGraph};
 use crate::graph::traits::GraphNodeId;
 
 pub mod band_doubling;
 pub mod dp;
+
+// Re-export so existing code in engine sub-modules can keep using `AlignmentStats`
+// from this module path.
+pub use crate::align::traits::AlignmentStats;
 
 /// An aligned pair of residues. The first element represent
 /// the position with a node of the graph, and the second element
@@ -35,21 +39,18 @@ where
     }
 }
 
-/// Per-alignment counters emitted by the alignment engines.
-///
-/// `cells_computed` counts each DP state as one cell. The canonical DP
-/// touches `(m + 1) * n_real * n_states` cells, so
-/// `fraction_of_full_matrix = cells_computed / ((m+1) * n_real * n_states)`
-/// (1.0 ⇒ equivalent to the full DP).
-#[derive(Debug, Clone, Copy, Default)]
-pub struct AlignmentStats {
-    pub max_bandwidth: usize,
-    pub cells_computed: usize,
-    pub fraction_of_full_matrix: f64,
-}
-
-pub struct AlignResult<G: AlignableGraph> {
+pub struct AlignOutput<G: AlignableGraph> {
     pub score: u32,
     pub alignment: Vec<AlignedPair<G::Node>>,
     pub stats: AlignmentStats,
+}
+
+impl<G: AlignableGraph> AlignResult for AlignOutput<G> {
+    fn alignment_score(&self) -> u32 {
+        self.score
+    }
+
+    fn alignment_stats(&self) -> AlignmentStats {
+        self.stats
+    }
 }

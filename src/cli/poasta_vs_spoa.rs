@@ -27,11 +27,6 @@ pub struct PoastaVsSpoaArgs {
     #[clap(help_heading = "Alignment configuration")]
     pub cost_model: CostModelKind,
 
-    /// Cost for a matching base (the 'equal' parameter).
-    #[arg(short = 'M', long, default_value_t = 0)]
-    #[clap(help_heading = "Alignment configuration")]
-    pub cost_match: u8,
-
     /// Penalty for mismatching bases.
     #[arg(short = 'n', long, default_value_t = 4)]
     #[clap(help_heading = "Alignment configuration")]

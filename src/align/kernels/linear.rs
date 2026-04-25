@@ -83,7 +83,7 @@
 
 use super::{BacktraceOp, DPKernel};
 use crate::align::{
-    cost_models::{linear::Linear, AlignmentCostModel},
+    cost_models::{AlignmentCostModel, linear::Linear},
     engine::dp::sat,
 };
 
@@ -93,6 +93,7 @@ pub struct LinearKernel;
 
 impl DPKernel for LinearKernel {
     const STATES: usize = 1;
+    const STATE_NAMES: &'static [&'static str] = &["M"];
     type Costs = Linear;
 
     /// Seed the start-sentinel band with linear gap costs along the query axis.
@@ -222,7 +223,7 @@ impl DPKernel for LinearKernel {
         costs: &Linear,
     ) {
         let ge = costs.gap_extend() as u32;
-        let eq_cost = costs.equal() as u32;
+        let eq_cost = 0u32;
         let mm_cost = costs.mismatch() as u32;
 
         // Apply substitution to diag_buf in-place
@@ -301,13 +302,13 @@ impl DPKernel for LinearKernel {
 mod tests {
     use crate::align::{
         cost_models::linear::Linear,
-        engine::{band_doubling::BandDoublingEngineScalar, dp::CanonicalDP, AlignResult},
+        engine::{AlignOutput, band_doubling::BandDoublingEngineScalar, dp::CanonicalDP},
         traits::AlignmentEngine,
     };
     use crate::graph::{alignment::AddAlignment, poa::POAGraph};
 
     fn costs() -> Linear {
-        Linear::new(0, 1, 1)
+        Linear::new(1, 1)
     }
 
     fn linear_graph(seq: &[u8]) -> POAGraph<u32> {
@@ -317,11 +318,11 @@ mod tests {
         g
     }
 
-    fn run_canonical(graph: &POAGraph<u32>, query: &[u8]) -> AlignResult<POAGraph<u32>> {
+    fn run_canonical(graph: &POAGraph<u32>, query: &[u8]) -> AlignOutput<POAGraph<u32>> {
         CanonicalDP::new(costs()).align(graph, query).unwrap()
     }
 
-    fn run_banded(graph: &POAGraph<u32>, query: &[u8]) -> AlignResult<POAGraph<u32>> {
+    fn run_banded(graph: &POAGraph<u32>, query: &[u8]) -> AlignOutput<POAGraph<u32>> {
         BandDoublingEngineScalar::<Linear, u32>::new(costs())
             .align(graph, query)
             .unwrap()

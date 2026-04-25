@@ -3,8 +3,8 @@ use std::ops::Bound;
 
 use crate::graph::alignment::AddAlignment;
 
-use self::engine::{AlignResult, AlignmentStats};
-use self::traits::{AlignableGraph, AlignmentEngine};
+use self::engine::AlignmentStats;
+use self::traits::{AlignResult, AlignableGraph, AlignmentEngine};
 
 pub mod cost_models;
 pub mod engine;
@@ -86,7 +86,7 @@ pub struct RunStats {
 }
 
 impl RunStats {
-    pub fn record(&mut self, stats: &AlignmentStats) {
+    fn record(&mut self, stats: &AlignmentStats) {
         self.n_alignments += 1;
         self.sum_max_bandwidth += stats.max_bandwidth as u128;
         self.sum_cells_computed += stats.cells_computed as u128;
@@ -118,19 +118,6 @@ impl RunStats {
         } else {
             self.sum_fraction / self.n_alignments as f64
         }
-    }
-}
-
-/// Trait used by [`PoastaAligner`] to pull per-alignment stats out of an
-/// engine's success value. Implemented for [`AlignResult`] so every engine
-/// that returns one is automatically covered.
-pub trait AlignmentStatsSource {
-    fn alignment_stats(&self) -> AlignmentStats;
-}
-
-impl<G: AlignableGraph> AlignmentStatsSource for AlignResult<G> {
-    fn alignment_stats(&self) -> AlignmentStats {
-        self.stats
     }
 }
 
@@ -178,7 +165,7 @@ where
         I: IntoIterator<Item = &'s [u8]>,
         E: AlignmentEngine<&'s [u8], Graph = G>,
         G: AddAlignment<<E as AlignmentEngine<&'s [u8]>>::Success>,
-        <E as AlignmentEngine<&'s [u8]>>::Success: AlignmentStatsSource,
+        <E as AlignmentEngine<&'s [u8]>>::Success: AlignResult,
     {
         for (i, seq) in sequences.into_iter().enumerate() {
             let name = format!("seq_{i}");
@@ -197,7 +184,7 @@ where
         I: IntoIterator<Item = (&'s str, &'s [u8])>,
         E: AlignmentEngine<&'s [u8], Graph = G>,
         G: AddAlignment<<E as AlignmentEngine<&'s [u8]>>::Success>,
-        <E as AlignmentEngine<&'s [u8]>>::Success: AlignmentStatsSource,
+        <E as AlignmentEngine<&'s [u8]>>::Success: AlignResult,
     {
         for (name, seq) in sequences {
             let weights = vec![1usize; seq.len()];
@@ -216,12 +203,27 @@ where
         I: IntoIterator<Item = (&'s str, &'s [u8], &'s [usize])>,
         E: AlignmentEngine<&'s [u8], Graph = G>,
         G: AddAlignment<<E as AlignmentEngine<&'s [u8]>>::Success>,
-        <E as AlignmentEngine<&'s [u8]>>::Success: AlignmentStatsSource,
+        <E as AlignmentEngine<&'s [u8]>>::Success: AlignResult,
     {
         for (name, seq, weights) in sequences {
             self.align_one(name, seq, weights)?;
         }
         Ok(())
+    }
+
+    /// Align one named sequence using a weight of 1 for every base.
+    pub fn align_one_named<'s>(
+        &mut self,
+        name: &str,
+        seq: &'s [u8],
+    ) -> Result<(), PoastaAlignerError<<E as AlignmentEngine<&'s [u8]>>::Error, G::Error>>
+    where
+        E: AlignmentEngine<&'s [u8], Graph = G>,
+        G: AddAlignment<<E as AlignmentEngine<&'s [u8]>>::Success>,
+        <E as AlignmentEngine<&'s [u8]>>::Success: AlignResult,
+    {
+        let weights = vec![1usize; seq.len()];
+        self.align_one(name, seq, &weights)
     }
 
     fn align_one<'s>(
@@ -233,7 +235,7 @@ where
     where
         E: AlignmentEngine<&'s [u8], Graph = G>,
         G: AddAlignment<<E as AlignmentEngine<&'s [u8]>>::Success>,
-        <E as AlignmentEngine<&'s [u8]>>::Success: AlignmentStatsSource,
+        <E as AlignmentEngine<&'s [u8]>>::Success: AlignResult,
     {
         let span = tracing::info_span!("align_seq");
         let _enter = span.enter();
@@ -254,6 +256,7 @@ where
                 .align(&self.graph, seq)
                 .map_err(PoastaAlignerError::Engine)?;
             self.run_stats.record(&result.alignment_stats());
+            tracing::info!(score = result.alignment_score(), "Alignment complete");
 
             tracing::debug!("Updating graph...");
             self.graph
@@ -275,7 +278,7 @@ mod tests {
     #[test]
     fn align_all_builds_graph_from_empty() {
         let graph = POAGraph::<u32>::new();
-        let engine = BandDoublingEngineScalar::<Affine, u32>::new(Affine::new(0, 1, 2, 1));
+        let engine = BandDoublingEngineScalar::<Affine, u32>::new(Affine::new(1, 2, 1));
         let mut aligner = PoastaAligner::new(engine, graph);
 
         let seqs: &[&[u8]] = &[b"ACGT", b"ACCT", b"ACGG"];
@@ -290,7 +293,7 @@ mod tests {
     #[test]
     fn align_all_with_weights_accepts_custom_weights() {
         let graph = POAGraph::<u32>::new();
-        let engine = BandDoublingEngineScalar::<Affine, u32>::new(Affine::new(0, 1, 2, 1));
+        let engine = BandDoublingEngineScalar::<Affine, u32>::new(Affine::new(1, 2, 1));
         let mut aligner = PoastaAligner::new(engine, graph);
 
         let s0: &[u8] = b"ACGT";

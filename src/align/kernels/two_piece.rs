@@ -59,8 +59,8 @@
 
 use super::{BacktraceOp, DPKernel};
 use crate::align::{
-    cost_models::{two_piece::TwoPieceAffine, AlignmentCostModel},
-    engine::dp::{min3, sat, INF},
+    cost_models::{AlignmentCostModel, two_piece::TwoPieceAffine},
+    engine::dp::{INF, min3, sat},
 };
 
 /// 5-state two-piece affine kernel: states 0=M, 1=D1, 2=D2, 3=I1, 4=I2.
@@ -71,6 +71,7 @@ pub struct TwoPieceAffineKernel;
 
 impl DPKernel for TwoPieceAffineKernel {
     const STATES: usize = 5;
+    const STATE_NAMES: &'static [&'static str] = &["M", "D1", "D2", "I1", "I2"];
     type Costs = TwoPieceAffine;
 
     /// Seed the start-sentinel band with both insertion tracks.
@@ -256,7 +257,7 @@ impl DPKernel for TwoPieceAffineKernel {
         let go2 = costs.gap_open2() as u32;
         let ge2 = costs.gap_extend2() as u32;
         let go_ge2 = go2 + ge2;
-        let eq_cost = costs.equal() as u32;
+        let eq_cost = 0u32;
         let mm_cost = costs.mismatch() as u32;
 
         // Apply substitution cost in-place to diag_buf
@@ -336,19 +337,33 @@ impl DPKernel for TwoPieceAffineKernel {
 
         match state {
             0 => {
-                // M: diagonal
+                // M can arrive from diagonal, or from closing a D1/D2/I1/I2 gap
+                // at the same cell. Closing emits SwitchState (no move) so the
+                // next iteration walks the gap backwards via Delete/Insert.
+                // At q=0 only D closures are reachable.
+                let d_best = col[1].min(col[2]);
+                let i_best = col[3].min(col[4]);
                 if col_prev.is_none() {
-                    BacktraceOp::Diagonal { next_state: 1 } // redirect to D1
-                } else {
-                    let d_best = col[1].min(col[2]);
-                    let i_best = col[3].min(col[4]);
-                    if col[0] == d_best {
-                        BacktraceOp::Diagonal { next_state: 1 }
-                    } else if col[0] == i_best {
-                        BacktraceOp::Diagonal { next_state: 3 }
+                    let d_state = if col[0] == col[1] || col[1] <= col[2] {
+                        1
                     } else {
-                        BacktraceOp::Diagonal { next_state: 0 }
+                        2
+                    };
+                    BacktraceOp::SwitchState {
+                        next_state: d_state,
                     }
+                } else if col[0] == d_best {
+                    let d_state = if col[1] <= col[2] { 1 } else { 2 };
+                    BacktraceOp::SwitchState {
+                        next_state: d_state,
+                    }
+                } else if col[0] == i_best {
+                    let i_state = if col[3] <= col[4] { 3 } else { 4 };
+                    BacktraceOp::SwitchState {
+                        next_state: i_state,
+                    }
+                } else {
+                    BacktraceOp::Diagonal { next_state: 0 }
                 }
             }
             1 => BacktraceOp::Delete { next_state: 0xff }, // D1: resolve pred in caller
@@ -416,7 +431,7 @@ mod tests {
     use super::*;
     use crate::align::{
         cost_models::two_piece::TwoPieceAffine,
-        engine::{band_doubling::BandDoublingEngineScalar, dp::CanonicalDP, AlignResult},
+        engine::{AlignOutput, band_doubling::BandDoublingEngineScalar, dp::CanonicalDP},
         traits::AlignmentEngine,
     };
     use crate::graph::{alignment::AddAlignment, poa::POAGraph};
@@ -425,7 +440,7 @@ mod tests {
     /// For a gap of length k, cost = min(2+k, 3k).
     /// k=1: min(3, 3)=3, k=2: min(4, 6)=4, k=3: min(5, 9)=5
     fn costs() -> TwoPieceAffine {
-        TwoPieceAffine::new(0, 1, 2, 1, 0, 3)
+        TwoPieceAffine::new(1, 2, 1, 0, 3)
     }
 
     fn linear_graph(seq: &[u8]) -> POAGraph<u32> {
@@ -435,7 +450,7 @@ mod tests {
         g
     }
 
-    fn run_canonical(graph: &POAGraph<u32>, query: &[u8]) -> AlignResult<POAGraph<u32>> {
+    fn run_canonical(graph: &POAGraph<u32>, query: &[u8]) -> AlignOutput<POAGraph<u32>> {
         let engine: CanonicalDP<TwoPieceAffine, POAGraph<u32>> = CanonicalDP::new(costs());
         engine.align(graph, query).unwrap()
     }

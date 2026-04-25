@@ -7,7 +7,7 @@ use std::marker::PhantomData;
 
 use crate::align::{
     cost_models::AlignmentCostModel,
-    engine::{AlignResult, AlignedPair, AlignmentStats},
+    engine::{AlignOutput, AlignedPair, AlignmentStats},
     kernels::{BacktraceOp, DPKernel},
     traits::{AlignableGraph, AlignmentEngine},
 };
@@ -102,10 +102,10 @@ where
     G: AlignableGraph,
 {
     type Graph = G;
-    type Success = AlignResult<G>;
+    type Success = AlignOutput<G>;
     type Error = Infallible;
 
-    fn align(&self, graph: &G, query: &[u8]) -> Result<AlignResult<G>, Infallible> {
+    fn align(&self, graph: &G, query: &[u8]) -> Result<AlignOutput<G>, Infallible> {
         Ok(align_dp::<C::Kernel, G>(&self.costs, graph, query))
     }
 }
@@ -116,7 +116,7 @@ fn align_dp<K: DPKernel, G: AlignableGraph>(
     costs: &K::Costs,
     graph: &G,
     query: &[u8],
-) -> AlignResult<G> {
+) -> AlignOutput<G> {
     let m = query.len();
     let n = graph.node_count();
     let n_states = K::STATES;
@@ -301,7 +301,7 @@ fn align_dp<K: DPKernel, G: AlignableGraph>(
         cells_computed as f64 / full_matrix_cells as f64
     };
 
-    AlignResult {
+    AlignOutput {
         score: best_score,
         alignment,
         stats: AlignmentStats {
@@ -359,12 +359,8 @@ pub(crate) fn backtrace_generic<K: DPKernel, G: AlignableGraph>(
                 q -= 1;
                 state = next_state;
             }
-            BacktraceOp::Diagonal { next_state } => {
-                if q == 0 {
-                    // At q=0 in M/Diagonal state, redirect to deletion path
-                    state = next_state;
-                    continue;
-                }
+            BacktraceOp::Diagonal { next_state: _ } => {
+                debug_assert!(q > 0, "q=0 in Diagonal state; expected SwitchState");
                 pairs.push(AlignedPair::new(Some(v), Some(q - 1)));
                 q -= 1;
                 match find_best_pred_generic::<K, G>(graph, get_node_col, init_data, v, q, costs) {
@@ -384,6 +380,9 @@ pub(crate) fn backtrace_generic<K: DPKernel, G: AlignableGraph>(
                         state = ps;
                     }
                 }
+            }
+            BacktraceOp::SwitchState { next_state } => {
+                state = next_state;
             }
             BacktraceOp::Done => break,
         }
@@ -436,11 +435,7 @@ fn find_best_pred_generic<K: DPKernel, G: AlignableGraph>(
         }
     }
 
-    if best_is_start {
-        None
-    } else {
-        best
-    }
+    if best_is_start { None } else { best }
 }
 
 /// Find the predecessor of `v` that minimises the deletion transition cost at
@@ -506,7 +501,7 @@ mod tests {
 
     fn costs() -> Affine {
         // match=0, mismatch=1, gap_open=2, gap_extend=1
-        Affine::new(0, 1, 2, 1)
+        Affine::new(1, 2, 1)
     }
 
     fn linear_graph(seq: &[u8]) -> POAGraph<u32> {
@@ -525,7 +520,7 @@ mod tests {
         g
     }
 
-    fn run(graph: &POAGraph<u32>, query: &[u8]) -> AlignResult<POAGraph<u32>> {
+    fn run(graph: &POAGraph<u32>, query: &[u8]) -> AlignOutput<POAGraph<u32>> {
         let engine: CanonicalDP<Affine, POAGraph<u32>> = CanonicalDP::new(costs());
         engine.align(graph, query).unwrap()
     }
@@ -594,6 +589,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_alignment_consistent_with_score_deletion() {
+        // Expose backtrace bug: optimal is "del G" (score 3), but the emitted
+        // alignment pairs must re-score to 3 as well.
+        let g = linear_graph(b"ACGT");
+        let query = b"ACT";
+        let r = run(&g, query);
+        assert_eq!(r.score, 3);
+        let recomputed = score_from_alignment(&g, query, &r.alignment, &costs());
+        assert_eq!(
+            r.score, recomputed,
+            "deletion alignment pairs must re-score to {}, got {} (pairs: {:?})",
+            r.score, recomputed, r.alignment
+        );
+    }
+
+    #[test]
+    fn test_alignment_consistent_with_score_insertion() {
+        let g = linear_graph(b"ACT");
+        let query = b"ACGT";
+        let r = run(&g, query);
+        assert_eq!(r.score, 3);
+        let recomputed = score_from_alignment(&g, query, &r.alignment, &costs());
+        assert_eq!(
+            r.score, recomputed,
+            "insertion alignment pairs must re-score to {}, got {} (pairs: {:?})",
+            r.score, recomputed, r.alignment
+        );
+    }
+
     fn score_from_alignment(
         graph: &POAGraph<u32>,
         query: &[u8],
@@ -613,7 +638,7 @@ mod tests {
                     score = sat(
                         score,
                         if gsym == qsym {
-                            costs.equal() as u32
+                            0u32
                         } else {
                             costs.mismatch() as u32
                         },

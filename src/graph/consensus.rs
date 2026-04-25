@@ -5,9 +5,9 @@
 //! across its incoming edges. Backtracking from the end sentinel yields the consensus
 //! path. Ties are broken by smaller predecessor rank for determinism.
 
+use petgraph::Incoming;
 use petgraph::graph::IndexType;
 use petgraph::visit::EdgeRef;
-use petgraph::Incoming;
 
 use crate::graph::poa::{POAGraph, POANodeIndex};
 use crate::graph::traits::{GraphBase, GraphWithNodeOrdering};
@@ -97,12 +97,7 @@ mod tests {
 
     #[test]
     fn consensus_picks_majority_branch() {
-        let graph = graph_from_msa(&[
-            "ACGTACGT",
-            "ACGTACGT",
-            "ACGTACGT",
-            "ACTTACGT",
-        ]);
+        let graph = graph_from_msa(&["ACGTACGT", "ACGTACGT", "ACGTACGT", "ACTTACGT"]);
 
         let consensus = heaviest_bundle_consensus(&graph);
         let symbols: Vec<u8> = consensus.iter().map(|&n| graph.node_symbol(n)).collect();

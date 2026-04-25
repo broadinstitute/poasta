@@ -23,22 +23,25 @@
 //! for each band are packed into one contiguous `Vec<u32>` using prefix-sum
 //! offsets.
 
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::convert::Infallible;
 use std::marker::PhantomData;
 use std::ops::Index;
+use std::rc::Rc;
 
 use itertools::kmerge_by;
 
 use crate::align::{
     cost_models::AlignmentCostModel,
     engine::{
-        dp::{backtrace_generic, StateCol, INF},
-        AlignResult, AlignmentStats,
+        AlignOutput, AlignmentStats,
+        dp::{INF, StateCol, backtrace_generic},
     },
     kernels::DPKernel,
     traits::{AlignableGraph, AlignmentEngine},
 };
+use crate::debug::logger::DebugLogger;
 use crate::graph::{
     poa::{IndexType, POAGraph},
     traits::{GraphBase, GraphWithNodeOrdering},
@@ -63,6 +66,7 @@ where
     costs: C,
     /// Starting bandwidth k (≥ 1).
     initial_k: usize,
+    logger: Option<Rc<RefCell<DebugLogger>>>,
     _phantom: PhantomData<Ix>,
 }
 
@@ -75,6 +79,7 @@ where
         Self {
             costs,
             initial_k: 1,
+            logger: None,
             _phantom: PhantomData,
         }
     }
@@ -82,6 +87,12 @@ where
     /// Override the starting bandwidth (default 1).
     pub fn with_initial_k(mut self, k: usize) -> Self {
         self.initial_k = k.max(1);
+        self
+    }
+
+    /// Attach a debug logger; call `DebugLogger::begin_sequence` before each `align` call.
+    pub fn with_debug_logger(mut self, logger: Rc<RefCell<DebugLogger>>) -> Self {
+        self.logger = Some(logger);
         self
     }
 }
@@ -92,14 +103,14 @@ where
     Ix: IndexType,
 {
     type Graph = POAGraph<Ix>;
-    type Success = AlignResult<POAGraph<Ix>>;
+    type Success = AlignOutput<POAGraph<Ix>>;
     type Error = Infallible;
 
     fn align(
         &self,
         graph: &POAGraph<Ix>,
         query: &[u8],
-    ) -> Result<AlignResult<POAGraph<Ix>>, Infallible> {
+    ) -> Result<AlignOutput<POAGraph<Ix>>, Infallible> {
         let m = query.len();
         let l_min = graph.l_min_real();
         let l_max = graph.l_max_real();
@@ -114,11 +125,17 @@ where
             m.saturating_sub(l_max)
         };
 
+        let log_borrow = self.logger.as_ref().map(|rc| rc.borrow());
+        let log: Option<&DebugLogger> = log_borrow.as_deref();
+
         let mut iter_idx = 0usize;
         loop {
             let _k_span = tracing::info_span!("band_iter", iter = iter_idx, k).entered();
-            if let Some(result) = align_banded::<C::Kernel, Ix>(&self.costs, graph, query, k) {
-                // Ukkonen bound: with min_ge > 0, any alignment of score s
+            if let Some(log) = log {
+                log.begin_k_iter(k, C::Kernel::STATE_NAMES);
+            }
+            if let Some(result) = align_banded::<C::Kernel, Ix>(&self.costs, graph, query, k, log) {
+                // Ukkonen bound: with min_ge > 0, any alignment of cost s
                 // contains at most s / min_ge indels, so the optimum deviates
                 // from the main diagonal by at most that much; combined with
                 // the length-forced indels we get required_k.
@@ -150,7 +167,10 @@ where
                     k = full_k,
                     "band width saturated; running full-width DP"
                 );
-                let result = align_banded::<C::Kernel, Ix>(&self.costs, graph, query, full_k)
+                if let Some(log) = log {
+                    log.begin_k_iter(full_k, C::Kernel::STATE_NAMES);
+                }
+                let result = align_banded::<C::Kernel, Ix>(&self.costs, graph, query, full_k, log)
                     .expect("full-width band must succeed");
                 log_align_stats(&result.stats);
                 return Ok(result);
@@ -473,11 +493,7 @@ impl DynBandMatrix {
             }
             any = true;
         }
-        if any {
-            Some(col)
-        } else {
-            None
-        }
+        if any { Some(col) } else { None }
     }
 }
 
@@ -534,7 +550,8 @@ impl<'a> Iterator for DynPredIter<'a> {
         // Combined, the predecessor slice [poff, poff + n_states*pw) is entirely
         // disjoint from the current band's mutable slice owned by DynBandSlices.
         unsafe {
-            let slice = std::slice::from_raw_parts(self.data_ptr.add(poff), self.n_states * pw);
+            let slice: &[u32] =
+                std::slice::from_raw_parts(self.data_ptr.add(poff), self.n_states * pw);
             Some((edge, pred_qlo, slice))
         }
     }
@@ -589,7 +606,8 @@ fn align_banded<K: DPKernel, Ix: IndexType>(
     graph: &POAGraph<Ix>,
     query: &[u8],
     k: usize,
-) -> Option<AlignResult<POAGraph<Ix>>>
+    logger: Option<&DebugLogger>,
+) -> Option<AlignOutput<POAGraph<Ix>>>
 where
     K::Costs: AlignmentCostModel,
 {
@@ -605,6 +623,14 @@ where
 
     // 1. Build band structure and allocate flat DP matrix.
     let bands = Bands::for_global_alignment(graph, query, k as isize);
+
+    // Write band debug output (outside the hot DP loop).
+    if let Some(log) = logger {
+        for band in &bands.bands {
+            log.write_band(k, band.node_rank, band.qlo, band.qhi);
+        }
+    }
+
     let mut matrix = DynBandMatrix::new(bands, K::STATES);
 
     // 2. Initialize band 0 (start sentinel) via kernel.
@@ -682,6 +708,18 @@ where
 
         // ── Finalize: apply substitution and sequential M/I states ────────────
         K::finalize(band_slices.data, w, qlo, symbol, query, diag_buf, costs);
+
+        // Write per-cell debug output (streamed via BufWriter).
+        if let Some(log) = logger {
+            let data: &[u32] = band_slices.data;
+            let mut cell_buf = [0i32; 8];
+            for qi in 0..w {
+                for s in 0..K::STATES {
+                    cell_buf[s] = data[s * w + qi] as i32;
+                }
+                log.write_cell(k, node_rank, qlo + qi, &cell_buf[..K::STATES]);
+            }
+        }
 
         tracing::trace!(
             node_rank,
@@ -763,7 +801,7 @@ where
         cells_computed as f64 / full_matrix_cells as f64
     };
 
-    Some(AlignResult {
+    Some(AlignOutput {
         score: best_score,
         alignment,
         stats: AlignmentStats {
@@ -784,9 +822,9 @@ mod tests {
     };
     use crate::graph::{alignment::AddAlignment, poa::POAGraph};
 
-    fn costs() -> Affine {
+    fn scores() -> Affine {
         // match=0, mismatch=1, gap_open=2, gap_extend=1
-        Affine::new(0, 1, 2, 1)
+        Affine::new(1, 2, 1)
     }
 
     fn linear_graph(seq: &[u8]) -> POAGraph<u32> {
@@ -805,14 +843,16 @@ mod tests {
         g
     }
 
-    fn run_banded(graph: &POAGraph<u32>, query: &[u8]) -> AlignResult<POAGraph<u32>> {
-        let engine: BandDoublingEngineScalar<Affine, u32> = BandDoublingEngineScalar::new(costs());
-        engine.align(graph, query).unwrap()
+    fn run_banded(graph: &POAGraph<u32>, query: &[u8]) -> AlignOutput<POAGraph<u32>> {
+        BandDoublingEngineScalar::<Affine, u32>::new(scores())
+            .align(graph, query)
+            .unwrap()
     }
 
-    fn run_canonical(graph: &POAGraph<u32>, query: &[u8]) -> AlignResult<POAGraph<u32>> {
-        let engine: CanonicalDP<Affine, POAGraph<u32>> = CanonicalDP::new(costs());
-        engine.align(graph, query).unwrap()
+    fn run_canonical(graph: &POAGraph<u32>, query: &[u8]) -> AlignOutput<POAGraph<u32>> {
+        CanonicalDP::<Affine, POAGraph<u32>>::new(scores())
+            .align(graph, query)
+            .unwrap()
     }
 
     #[test]
@@ -855,7 +895,7 @@ mod tests {
     fn test_banded_one_mismatch() {
         let g = linear_graph(b"ACGT");
         let r = run_banded(&g, b"ACXT");
-        assert_eq!(r.score, 1, "one mismatch should score 1");
+        assert_eq!(r.score, 1, "one mismatch should cost 1");
     }
 
     #[test]
@@ -957,23 +997,23 @@ mod tests {
 
     #[test]
     fn ukkonen_detects_internal_indels() {
-        // Costs where mismatches are far more expensive than gap pairs, so the
+        // Scores where mismatches are far more costly than gap pairs, so the
         // optimum has off-diagonal indels even though |m − n_real| == 0.
         // Without the Ukkonen termination check, align_banded at k=1 returns
-        // a finite-but-suboptimal score (all mismatches on the diagonal) and
-        // the old loop would accept it. With the check, required_k grows
-        // with the returned score and forces doubling until the optimum is
+        // a non-INF but suboptimal score (all mismatches on the diagonal)
+        // and the old loop would accept it. With the check, required_k grows
+        // with the score gap and forces doubling until the optimum is
         // provably inside the band.
-        let costs = Affine::new(0, 100, 1, 1);
+        let sc = Affine::new(100, 1, 1);
         let mut g: POAGraph<u32> = POAGraph::new();
         g.add_alignment("s0", b"AAAACCCC", None, &[1; 8]).unwrap();
         let query = b"CCCCAAAA";
 
         let engine: BandDoublingEngineScalar<Affine, u32> =
-            BandDoublingEngineScalar::new(costs).with_initial_k(1);
+            BandDoublingEngineScalar::new(sc).with_initial_k(1);
         let banded = engine.align(&g, query).unwrap();
 
-        let canonical: CanonicalDP<Affine, POAGraph<u32>> = CanonicalDP::new(costs);
+        let canonical: CanonicalDP<Affine, POAGraph<u32>> = CanonicalDP::new(sc);
         let expected = canonical.align(&g, query).unwrap();
 
         assert_eq!(
@@ -989,7 +1029,7 @@ mod tests {
         let g = linear_graph(b"ACGTACGT");
         let query = b"ACGTACGT";
         let engine: BandDoublingEngineScalar<Affine, u32> =
-            BandDoublingEngineScalar::new(costs()).with_initial_k(1);
+            BandDoublingEngineScalar::new(scores()).with_initial_k(1);
         let result = engine.align(&g, query).unwrap();
         assert_eq!(result.score, 0);
         assert!(

@@ -2,9 +2,9 @@
 
 use std::io::Write;
 
+use petgraph::Incoming;
 use petgraph::graph::IndexType;
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
-use petgraph::Incoming;
 
 use crate::errors::PoastaIOError;
 use crate::graph::consensus::heaviest_bundle_consensus;
@@ -54,14 +54,8 @@ where
             .map(|e| e.weight().weight)
             .sum();
 
-        writeln!(
-            out,
-            "S\tn{}\t{}\tRC:i:{}",
-            node.index(),
-            symbol,
-            in_weight
-        )
-        .map_err(|source| PoastaIOError::FileWriteError { source })?;
+        writeln!(out, "S\tn{}\t{}\tRC:i:{}", node.index(), symbol, in_weight)
+            .map_err(|source| PoastaIOError::FileWriteError { source })?;
         n_segments += 1;
     }
 
@@ -72,13 +66,8 @@ where
         if src == start || src == end || tgt == start || tgt == end {
             continue;
         }
-        writeln!(
-            out,
-            "L\tn{}\t+\tn{}\t+\t0M",
-            src.index(),
-            tgt.index()
-        )
-        .map_err(|source| PoastaIOError::FileWriteError { source })?;
+        writeln!(out, "L\tn{}\t+\tn{}\t+\t0M", src.index(), tgt.index())
+            .map_err(|source| PoastaIOError::FileWriteError { source })?;
         n_links += 1;
     }
 
@@ -110,13 +99,8 @@ where
                 .iter()
                 .map(|n| format!("n{}+", n.index()))
                 .collect();
-            writeln!(
-                out,
-                "P\t{}\t{}\t*",
-                CONSENSUS_NAME,
-                segments.join(",")
-            )
-            .map_err(|source| PoastaIOError::FileWriteError { source })?;
+            writeln!(out, "P\t{}\t{}\t*", CONSENSUS_NAME, segments.join(","))
+                .map_err(|source| PoastaIOError::FileWriteError { source })?;
             consensus_emitted = true;
         }
     }

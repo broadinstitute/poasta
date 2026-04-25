@@ -5,18 +5,17 @@ use petgraph::graph::IndexType;
 
 use super::poa::POANodeIndex;
 
-
 pub trait AddAlignment<T> {
     type Error: Error;
-    
-    fn add_alignment(&mut self, 
-        sequence_name: &str, 
-        sequence: &[u8], 
-        alignment: Option<&T>, 
-        weights: &[usize]
+
+    fn add_alignment(
+        &mut self,
+        sequence_name: &str,
+        sequence: &[u8],
+        alignment: Option<&T>,
+        weights: &[usize],
     ) -> Result<(), Self::Error>;
 }
-
 
 /// Represents an alignment pairing between a node in the graph and a symbol
 /// in the aligned sequence.

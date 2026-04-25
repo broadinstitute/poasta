@@ -7,7 +7,6 @@ use crate::align::kernels::DPKernel;
 pub trait AlignmentCostModel {
     type Kernel: DPKernel<Costs = Self>;
 
-    fn equal(&self) -> u8;
     fn mismatch(&self) -> u8;
 
     fn gap_open(&self) -> u8;

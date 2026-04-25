@@ -2,8 +2,8 @@ use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::io;
 
-use petgraph::graph::IndexType;
 use petgraph::algo::Cycle;
+use petgraph::graph::IndexType;
 
 use crate::graph::poa::POANodeIndex;
 
@@ -11,23 +11,23 @@ use crate::graph::poa::POANodeIndex;
 
 #[derive(Debug)]
 pub enum GraphError<Ix>
-where 
+where
     Ix: IndexType,
 {
     /// Error variant when the graph contains a cycle
     CycleError(Cycle<POANodeIndex<Ix>>),
-    
+
     /// Path contains an invalid edge
     InvalidEdge(POANodeIndex<Ix>, POANodeIndex<Ix>),
-    
+
     /// Error when a required alignment is not present
     EmptyAlignment,
-    
+
     /// Error when the weights are not equal to the alignment length
-    WeightsUnequal
+    WeightsUnequal,
 }
 
-impl<Ix> From<Cycle<POANodeIndex<Ix>>> for GraphError<Ix> 
+impl<Ix> From<Cycle<POANodeIndex<Ix>>> for GraphError<Ix>
 where
     Ix: IndexType,
 {
@@ -36,21 +36,28 @@ where
     }
 }
 
-impl<Ix> Error for GraphError<Ix>
-where 
-    Ix: IndexType 
-{ }
+impl<Ix> Error for GraphError<Ix> where Ix: IndexType {}
 
-impl<Ix> Display for GraphError<Ix> 
-where 
+impl<Ix> Display for GraphError<Ix>
+where
     Ix: IndexType,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::CycleError(cycle) => write!(f, "The graph contains a cycle: {:?} visited twice.", cycle.node_id()),
+            Self::CycleError(cycle) => write!(
+                f,
+                "The graph contains a cycle: {:?} visited twice.",
+                cycle.node_id()
+            ),
             Self::InvalidEdge(u, v) => write!(f, "Invalid edge between nodes {:?} and {:?}.", u, v),
-            Self::EmptyAlignment => write!(f, "Alignment required when adding a sequence to a non-empty graph."),
-            Self::WeightsUnequal => write!(f, "The length of the weights vector does not match the length of the sequence!"),
+            Self::EmptyAlignment => write!(
+                f,
+                "Alignment required when adding a sequence to a non-empty graph."
+            ),
+            Self::WeightsUnequal => write!(
+                f,
+                "The length of the weights vector does not match the length of the sequence!"
+            ),
         }
     }
 }
@@ -71,7 +78,7 @@ impl Error for PoastaIOError {
             Self::FileWriteError { ref source } => Some(source),
             Self::OtherError { ref source } => Some(source),
             Self::InvalidFormat => None,
-            Self::InvalidUtf8 { ref source } => Some(source)
+            Self::InvalidUtf8 { ref source } => Some(source),
         }
     }
 }
@@ -94,7 +101,7 @@ impl From<io::Error> for PoastaIOError {
     }
 }
 
-impl<Ix> From<GraphError<Ix>> for PoastaIOError 
+impl<Ix> From<GraphError<Ix>> for PoastaIOError
 where
     Ix: IndexType,
 {
@@ -111,12 +118,12 @@ impl From<std::str::Utf8Error> for PoastaIOError {
 
 #[derive(Debug)]
 pub enum PoastaError<Ix>
-where 
+where
     Ix: IndexType,
 {
     /// Something went wrong with the graph
     GraphError(GraphError<Ix>),
-    
+
     /// The size of the weights vector is not equal to the length of the sequence
     WeightsUnequalSize(usize, usize),
 
@@ -133,11 +140,7 @@ where
     Other,
 }
 
-impl<Ix> Error for PoastaError<Ix> 
-where 
-    Ix: IndexType,
-{ }
-
+impl<Ix> Error for PoastaError<Ix> where Ix: IndexType {}
 
 impl<Ix> From<std::fmt::Error> for PoastaError<Ix>
 where
@@ -149,7 +152,7 @@ where
 }
 
 impl<Ix> From<GraphError<Ix>> for PoastaError<Ix>
-where 
+where
     Ix: IndexType,
 {
     fn from(value: GraphError<Ix>) -> Self {
@@ -157,27 +160,26 @@ where
     }
 }
 
-impl<Ix> Display for PoastaError<Ix> 
+impl<Ix> Display for PoastaError<Ix>
 where
-    Ix: IndexType
+    Ix: IndexType,
 {
-    
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match *self {
-            Self::WeightsUnequalSize(seq_len, weights_len) =>
-                write!(f, "The length of the weights vector ({weights_len}) does not match the length of the sequence ({seq_len})!"),
-            Self::InvalidAlignment =>
-                write!(f, "The specified alignment did not include any valid sequence positions!"),
-            Self::AlignmentError =>
-                write!(f, "Something went wrong with the alignment!"),
-            Self::FormatError(ref err) =>
-                std::fmt::Display::fmt(err, f),
+            Self::WeightsUnequalSize(seq_len, weights_len) => write!(
+                f,
+                "The length of the weights vector ({weights_len}) does not match the length of the sequence ({seq_len})!"
+            ),
+            Self::InvalidAlignment => write!(
+                f,
+                "The specified alignment did not include any valid sequence positions!"
+            ),
+            Self::AlignmentError => write!(f, "Something went wrong with the alignment!"),
+            Self::FormatError(ref err) => std::fmt::Display::fmt(err, f),
             // Self::DebugError { source: _ } =>
             //     write!(f, "Could not log debug data!"),
-            Self::Other =>
-                write!(f, "Poasta error!"),
-            Self::GraphError(ref e) =>
-                write!(f, "Graph error: {}", e),
+            Self::Other => write!(f, "Poasta error!"),
+            Self::GraphError(ref e) => write!(f, "Graph error: {}", e),
         }
     }
 }

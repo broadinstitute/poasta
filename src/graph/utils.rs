@@ -1,28 +1,29 @@
 use std::cell::RefCell;
-    
-use rustc_hash::FxHashSet;
-use super::traits::{GraphBase, GraphWithNodeOrdering};
 
+use super::traits::{GraphBase, GraphWithNodeOrdering};
+use rustc_hash::FxHashSet;
 
 pub fn rev_postorder_nodes<G>(graph: &G) -> Vec<G::NodeType>
-    where G: GraphWithNodeOrdering
+where
+    G: GraphWithNodeOrdering,
 {
     let mut ordered = Vec::with_capacity(graph.node_count());
 
-    let mut stack = vec![
-        (graph.start_node(), RefCell::new(graph.successors(graph.start_node())))
-    ];
+    let mut stack = vec![(
+        graph.start_node(),
+        RefCell::new(graph.successors(graph.start_node())),
+    )];
 
-    let next_valid_child = 
-        |succ_iter: &RefCell<<G as GraphBase>::Successors<'_>>, visited: &FxHashSet<G::NodeType>| {
-            while let Some(child) = succ_iter.borrow_mut().next() {
-                if !visited.contains(&child) {
-                    return Some(child)
-                }
+    let next_valid_child = |succ_iter: &RefCell<<G as GraphBase>::Successors<'_>>,
+                            visited: &FxHashSet<G::NodeType>| {
+        while let Some(child) = succ_iter.borrow_mut().next() {
+            if !visited.contains(&child) {
+                return Some(child);
             }
-    
-            None
-        };
+        }
+
+        None
+    };
 
     let mut visited = FxHashSet::default();
     while !stack.is_empty() {

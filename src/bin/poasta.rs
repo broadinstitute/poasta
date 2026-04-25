@@ -1,29 +1,30 @@
 //! POASTA command-line driver.
 
+use std::cell::RefCell;
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Write};
 use std::path::Path;
 use std::process::ExitCode;
+use std::rc::Rc;
 
 use clap::Parser;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
+use poasta::align::PoastaAligner;
 use poasta::align::cost_models::affine::Affine;
 use poasta::align::cost_models::linear::Linear;
 use poasta::align::cost_models::two_piece::TwoPieceAffine;
+use poasta::align::engine::AlignOutput;
 use poasta::align::engine::band_doubling::BandDoublingEngineScalar;
 use poasta::align::engine::dp::CanonicalDP;
-use poasta::align::engine::AlignResult;
 use poasta::align::traits::AlignmentEngine;
-use poasta::align::PoastaAligner;
 use poasta::cli::poasta::{
     AlignArgs, CliArgs, CliSubcommand, CostModelKind, EngineKind, OutputType,
 };
+use poasta::debug::logger::DebugLogger;
 use poasta::errors::PoastaIOError;
-use poasta::graph::io::fasta::{
-    load_graph_from_fasta_msa, poa_graph_to_fasta, FastaOutputOptions,
-};
-use poasta::graph::io::gfa::{poa_graph_to_gfa, GfaOutputOptions};
+use poasta::graph::io::fasta::{FastaOutputOptions, load_graph_from_fasta_msa, poa_graph_to_fasta};
+use poasta::graph::io::gfa::{GfaOutputOptions, poa_graph_to_gfa};
 use poasta::graph::io::seq::open_sequences;
 use poasta::graph::poa::POAGraph;
 use poasta::graph::traits::GraphBase;
@@ -110,14 +111,18 @@ fn run_align(args: AlignArgs) -> Result<(), CliError> {
         Some(path) => {
             let reader = BufReader::new(open_seed_graph(path)?);
             let g = load_graph_from_fasta_msa::<u32, _>(reader)?;
-            tracing::info!(nodes = g.node_count(), sequences = g.sequences.len(), "loaded seed graph");
+            tracing::info!(
+                nodes = g.node_count(),
+                sequences = g.sequences.len(),
+                "loaded seed graph"
+            );
             g
         }
         None => POAGraph::<u32>::new(),
     };
 
-    let sequences: Vec<(String, Vec<u8>)> = open_sequences(&args.sequences)?
-        .collect::<Result<Vec<_>, _>>()?;
+    let sequences: Vec<(String, Vec<u8>)> =
+        open_sequences(&args.sequences)?.collect::<Result<Vec<_>, _>>()?;
     tracing::info!(count = sequences.len(), "read input sequences");
 
     let graph = dispatch(&args, graph, &sequences)?;
@@ -145,48 +150,60 @@ fn open_seed_graph(path: &Path) -> Result<Box<dyn io::Read>, PoastaIOError> {
     }
 }
 
+fn make_debug_logger(args: &AlignArgs) -> Result<Option<Rc<RefCell<DebugLogger>>>, CliError> {
+    match &args.debug_output_dir {
+        None => Ok(None),
+        Some(dir) => {
+            let logger = DebugLogger::new(dir.clone())?;
+            Ok(Some(Rc::new(RefCell::new(logger))))
+        }
+    }
+}
+
 fn dispatch(
     args: &AlignArgs,
     graph: POAGraph<u32>,
     sequences: &[(String, Vec<u8>)],
 ) -> Result<POAGraph<u32>, CliError> {
+    let debug_logger = make_debug_logger(args)?;
+
     match args.cost_model {
         CostModelKind::Affine => {
-            let costs = Affine::new(
-                args.cost_match,
-                args.cost_mismatch,
-                args.cost_gap_open,
-                args.cost_gap_extend,
-            );
+            let costs = Affine::new(args.cost_mismatch, args.cost_gap_open, args.cost_gap_extend);
             match args.engine {
                 EngineKind::BandDoubling => {
-                    let engine = BandDoublingEngineScalar::<Affine, u32>::new(costs)
+                    let mut engine = BandDoublingEngineScalar::<Affine, u32>::new(costs)
                         .with_initial_k(args.initial_k);
-                    run_with(engine, graph, sequences)
+                    if let Some(ref logger) = debug_logger {
+                        engine = engine.with_debug_logger(logger.clone());
+                    }
+                    run_with(engine, graph, sequences, debug_logger)
                 }
                 EngineKind::CanonicalDp => {
                     let engine = CanonicalDP::<Affine, POAGraph<u32>>::new(costs);
-                    run_with(engine, graph, sequences)
+                    run_with(engine, graph, sequences, None)
                 }
             }
         }
         CostModelKind::Linear => {
-            let costs = Linear::new(args.cost_match, args.cost_mismatch, args.cost_gap_extend);
+            let costs = Linear::new(args.cost_mismatch, args.cost_gap_extend);
             match args.engine {
                 EngineKind::BandDoubling => {
-                    let engine = BandDoublingEngineScalar::<Linear, u32>::new(costs)
+                    let mut engine = BandDoublingEngineScalar::<Linear, u32>::new(costs)
                         .with_initial_k(args.initial_k);
-                    run_with(engine, graph, sequences)
+                    if let Some(ref logger) = debug_logger {
+                        engine = engine.with_debug_logger(logger.clone());
+                    }
+                    run_with(engine, graph, sequences, debug_logger)
                 }
                 EngineKind::CanonicalDp => {
                     let engine = CanonicalDP::<Linear, POAGraph<u32>>::new(costs);
-                    run_with(engine, graph, sequences)
+                    run_with(engine, graph, sequences, None)
                 }
             }
         }
         CostModelKind::TwoPiece => {
             let costs = TwoPieceAffine::new(
-                args.cost_match,
                 args.cost_mismatch,
                 args.cost_gap_open,
                 args.cost_gap_extend,
@@ -195,13 +212,16 @@ fn dispatch(
             );
             match args.engine {
                 EngineKind::BandDoubling => {
-                    let engine = BandDoublingEngineScalar::<TwoPieceAffine, u32>::new(costs)
+                    let mut engine = BandDoublingEngineScalar::<TwoPieceAffine, u32>::new(costs)
                         .with_initial_k(args.initial_k);
-                    run_with(engine, graph, sequences)
+                    if let Some(ref logger) = debug_logger {
+                        engine = engine.with_debug_logger(logger.clone());
+                    }
+                    run_with(engine, graph, sequences, debug_logger)
                 }
                 EngineKind::CanonicalDp => {
                     let engine = CanonicalDP::<TwoPieceAffine, POAGraph<u32>>::new(costs);
-                    run_with(engine, graph, sequences)
+                    run_with(engine, graph, sequences, None)
                 }
             }
         }
@@ -212,18 +232,32 @@ fn run_with<E>(
     engine: E,
     graph: POAGraph<u32>,
     sequences: &[(String, Vec<u8>)],
+    debug_logger: Option<Rc<RefCell<DebugLogger>>>,
 ) -> Result<POAGraph<u32>, CliError>
 where
-    E: for<'s> AlignmentEngine<&'s [u8], Graph = POAGraph<u32>, Success = AlignResult<POAGraph<u32>>>,
+    E: for<'s> AlignmentEngine<
+            &'s [u8],
+            Graph = POAGraph<u32>,
+            Success = AlignOutput<POAGraph<u32>>,
+        >,
     for<'s> <E as AlignmentEngine<&'s [u8]>>::Error: std::fmt::Display,
 {
     let mut aligner = PoastaAligner::new(engine, graph);
-    let iter = sequences
-        .iter()
-        .map(|(n, s)| (n.as_str(), s.as_slice()));
-    aligner
-        .align_all_named(iter)
-        .map_err(|e| CliError::Align(format!("{e}")))?;
+
+    for (name, seq) in sequences {
+        if let Some(ref logger) = debug_logger {
+            logger.borrow().begin_sequence(aligner.graph(), name, seq);
+        }
+
+        aligner
+            .align_one_named(name, seq)
+            .map_err(|e| CliError::Align(format!("{e}")))?;
+
+        if let Some(ref logger) = debug_logger {
+            logger.borrow().end_sequence();
+        }
+    }
+
     let run_stats = aligner.run_stats();
     tracing::info!(
         n_alignments = run_stats.n_alignments,
@@ -278,7 +312,9 @@ fn write_output(args: &AlignArgs, graph: &POAGraph<u32>) -> Result<(), CliError>
         }
     }
 
-    writer.flush().map_err(|source| PoastaIOError::FileWriteError { source })?;
+    writer
+        .flush()
+        .map_err(|source| PoastaIOError::FileWriteError { source })?;
     Ok(())
 }
 
@@ -286,15 +322,18 @@ fn resolve_output_type(args: &AlignArgs) -> OutputType {
     if let Some(t) = args.output_type {
         return t;
     }
+
     if let Some(path) = &args.output {
         let name = path
             .file_name()
             .map(|v| v.to_string_lossy().to_lowercase())
             .unwrap_or_default();
         let stripped = name.strip_suffix(".gz").unwrap_or(&name);
+
         if stripped.ends_with(".gfa") {
             return OutputType::Gfa;
         }
+
         if stripped.ends_with(".fa")
             || stripped.ends_with(".fasta")
             || stripped.ends_with(".fna")

@@ -149,11 +149,6 @@ pub struct AlignArgs {
     #[clap(help_heading = "Cost model")]
     pub cost_model: CostModelKind,
 
-    /// Cost for a matching base (the 'equal' parameter).
-    #[arg(short = 'M', long, default_value_t = 0)]
-    #[clap(help_heading = "Cost model")]
-    pub cost_match: u8,
-
     /// Penalty for mismatching bases.
     #[arg(short = 'n', long, default_value_t = 4)]
     #[clap(help_heading = "Cost model")]
@@ -178,6 +173,13 @@ pub struct AlignArgs {
     #[arg(short = 'E', long, default_value_t = 1)]
     #[clap(help_heading = "Cost model")]
     pub cost_gap_extend2: u8,
+
+    /// Write debug output files (DOT graph, band TSV, cell TSV) to this directory.
+    /// One set of files is produced per aligned sequence. Only supported with the
+    /// band-doubling engine.
+    #[arg(long)]
+    #[clap(help_heading = "Debug")]
+    pub debug_output_dir: Option<PathBuf>,
 }
 
 impl AlignArgs {

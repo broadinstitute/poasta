@@ -52,8 +52,8 @@
 
 use super::{BacktraceOp, DPKernel};
 use crate::align::{
-    cost_models::{affine::Affine, AlignmentCostModel},
-    engine::dp::{min3, sat, INF},
+    cost_models::{AlignmentCostModel, affine::Affine},
+    engine::dp::{INF, min3, sat},
 };
 
 /// 3-state affine gap kernel: states 0=M, 1=D, 2=I.
@@ -62,6 +62,7 @@ pub struct AffineKernel;
 
 impl DPKernel for AffineKernel {
     const STATES: usize = 3;
+    const STATE_NAMES: &'static [&'static str] = &["M", "D", "I"];
     type Costs = Affine;
 
     /// Seed the start-sentinel band.
@@ -215,7 +216,7 @@ impl DPKernel for AffineKernel {
         let go = costs.gap_open() as u32;
         let ge = costs.gap_extend() as u32;
         let go_ge = go + ge;
-        let eq_cost = costs.equal() as u32;
+        let eq_cost = 0u32;
         let mm_cost = costs.mismatch() as u32;
 
         // Apply substitution to diag_buf in-place
@@ -313,19 +314,27 @@ impl DPKernel for AffineKernel {
                 BacktraceOp::Insert { next_state: next }
             }
             0 => {
+                // M can arrive from three places:
+                //   - diagonal (match/mismatch from predecessor at q-1)
+                //   - closing a deletion at same cell: M[v][q] == D[v][q]
+                //   - closing an insertion at same cell: M[v][q] == I[v][q]
+                //
+                // The first emits a Diagonal op (consume node+query, walk to
+                // predecessor); the latter two emit SwitchState (no move, only
+                // flip the state) so the next iteration walks the gap backwards.
+                // At q=0 the diagonal/insertion sources are unreachable, so the
+                // only possibility is closing a deletion.
+                let m_val = col[0];
+                let d_val = col[1];
+                let i_val = col[2];
                 if col_prev.is_none() {
-                    BacktraceOp::Diagonal { next_state: 1 }
+                    BacktraceOp::SwitchState { next_state: 1 }
+                } else if m_val == d_val && d_val <= i_val {
+                    BacktraceOp::SwitchState { next_state: 1 }
+                } else if m_val == i_val && i_val < d_val {
+                    BacktraceOp::SwitchState { next_state: 2 }
                 } else {
-                    let m_val = col[0];
-                    let d_val = col[1];
-                    let i_val = col[2];
-                    if m_val == d_val && d_val <= i_val {
-                        BacktraceOp::Diagonal { next_state: 1 }
-                    } else if m_val == i_val && i_val < d_val {
-                        BacktraceOp::Diagonal { next_state: 2 }
-                    } else {
-                        BacktraceOp::Diagonal { next_state: 0 }
-                    }
+                    BacktraceOp::Diagonal { next_state: 0 }
                 }
             }
             1 => BacktraceOp::Delete { next_state: 0xff },
@@ -354,7 +363,7 @@ mod tests {
     #[test]
     fn affine_kernel_init_start_sets_m_and_i() {
         // w=4, qlo=0: M[0]=0, I[1]=go+ge, I[2]=go+2ge, I[3]=go+3ge; D all INF
-        let costs = Affine::new(0, 1, 2, 1);
+        let costs = Affine::new(1, 2, 1);
         let w = 4;
         let mut data = vec![INF; AffineKernel::STATES * w];
         AffineKernel::init_start(&mut data, w, 0, &costs);
@@ -378,7 +387,7 @@ mod tests {
         // Query band: w_dst=3, dst_qlo=0
         // D[q] = min(sat(M[q].min(I[q]), go_ge), sat(D[q], ge))
         //       = sat(0, 3) = 3 at qi=0
-        let costs = Affine::new(0, 1, 2, 1); // go=2, ge=1, go_ge=3
+        let costs = Affine::new(1, 2, 1); // mismatch=1, go=2, ge=1, go_ge=3
         let w = 3;
         let mut src = vec![INF; AffineKernel::STATES * w];
         src[0] = 0; // M[0] = 0
@@ -393,7 +402,7 @@ mod tests {
         // Single node, w=1, qlo=1, symbol='A', query=b"A"
         // diag_buf=[0] (predecessor score at q=0 was 0)
         // Expect M[0] = 0+0 = 0 (exact match, equal cost = 0)
-        let costs = Affine::new(0, 1, 2, 1);
+        let costs = Affine::new(1, 2, 1);
         let w = 1;
         let mut data = vec![INF; AffineKernel::STATES * w];
         data[w] = INF; // D[0] = INF
@@ -405,7 +414,7 @@ mod tests {
     #[test]
     fn affine_kernel_finalize_mismatch() {
         // Same as above but query='T' != symbol='A': mismatch cost = 1
-        let costs = Affine::new(0, 1, 2, 1);
+        let costs = Affine::new(1, 2, 1);
         let w = 1;
         let mut data = vec![INF; AffineKernel::STATES * w];
         data[w] = INF;
