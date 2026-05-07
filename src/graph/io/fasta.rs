@@ -6,13 +6,14 @@ use noodles::fasta::record::{Definition, Sequence as NoodlesSequence};
 use noodles::fasta::{self, Record};
 use petgraph::graph::IndexType;
 use petgraph::visit::EdgeRef;
-use rustc_hash::FxHashMap;
+
+const NO_COL: u32 = u32::MAX;
 
 use crate::errors::PoastaIOError;
 use crate::graph::consensus::heaviest_bundle_consensus;
+use crate::graph::io::CONSENSUS_NAME;
 use crate::graph::poa::{POAGraph, POANodeIndex, Sequence};
 use crate::graph::traits::{GraphBase, GraphWithNodeOrdering};
-use crate::graph::utils::rev_postorder_nodes;
 
 use super::super::poa::graph_impl::POANodeData;
 
@@ -26,8 +27,6 @@ pub struct FastaOutputOptions {
     /// Takes precedence over `include_consensus`.
     pub consensus_only: bool,
 }
-
-const CONSENSUS_NAME: &str = "consensus";
 
 /// Load a POA graph from a FASTA multiple sequence alignment.
 ///
@@ -147,25 +146,34 @@ where
     // Assign every real node to an MSA column. Nodes in the same `aligned_nodes` cluster share a
     // column. We iterate in topological order so the column counter mirrors the sequence of
     // the underlying DAG.
-    let topo = rev_postorder_nodes(graph);
-    let mut col_of: FxHashMap<POANodeIndex<Ix>, usize> = FxHashMap::default();
-    let mut n_cols = 0usize;
+    //
+    // Indexed by `node.index()` rather than a hash map: petgraph node indices are dense and
+    // bounded, so a Vec lookup is one load instead of a hash + probe.
+    let topo = graph.topological_order();
+    let max_node_idx = graph
+        .all_nodes_iter()
+        .map(|n| n.index())
+        .max()
+        .unwrap_or(0);
+    let mut col_of: Vec<u32> = vec![NO_COL; max_node_idx + 1];
+    let mut n_cols = 0u32;
 
-    for node in &topo {
+    for node in topo {
         if *node == start || *node == end {
             continue;
         }
-        if col_of.contains_key(node) {
+        if col_of[node.index()] != NO_COL {
             continue;
         }
 
         let col = n_cols;
         n_cols += 1;
-        col_of.insert(*node, col);
+        col_of[node.index()] = col;
         for other in &graph.graph[*node].aligned_nodes {
-            col_of.insert(*other, col);
+            col_of[other.index()] = col;
         }
     }
+    let n_cols = n_cols as usize;
 
     tracing::debug!(
         columns = n_cols,
@@ -173,23 +181,29 @@ where
         "writing FASTA MSA"
     );
 
+    // Walk each sequence one at a time, picking the next edge by binary-searching
+    // `seq_idx` in the edge's `sequence_ids`. `POAGraph::add_edge` appends sequence ids in
+    // ingest order, so `sequence_ids` is sorted ascending — binary search is sound.
+    // Peak extra memory is one row buffer instead of the full `O(total_path_length)`
+    // path prebuild we used to do.
     for (seq_idx, seq) in graph.sequences.iter().enumerate() {
         let mut row = vec![b'-'; n_cols];
-        let mut curr = seq.start_node();
-
-        loop {
-            let col = *col_of.get(&curr).ok_or(PoastaIOError::InvalidFormat)?;
-            row[col] = graph.graph[curr].symbol;
+        let mut cur = seq.start_node();
+        while cur != end {
+            let col = col_of[cur.index()];
+            if col == NO_COL {
+                return Err(PoastaIOError::InvalidFormat);
+            }
+            row[col as usize] = graph.graph[cur].symbol;
 
             let next = graph
                 .graph
-                .edges(curr)
-                .find(|e| e.weight().sequence_ids.contains(&seq_idx))
+                .edges(cur)
+                .find(|e| e.weight().sequence_ids.binary_search(&seq_idx).is_ok())
                 .map(|e| e.target());
-
             match next {
-                Some(n) if n != end => curr = n,
-                _ => break,
+                Some(v) => cur = v,
+                None => break,
             }
         }
 
@@ -205,8 +219,11 @@ where
         let consensus = heaviest_bundle_consensus(graph);
         let mut row = vec![b'-'; n_cols];
         for node in &consensus {
-            let col = *col_of.get(node).ok_or(PoastaIOError::InvalidFormat)?;
-            row[col] = graph.graph[*node].symbol;
+            let col = col_of[node.index()];
+            if col == NO_COL {
+                return Err(PoastaIOError::InvalidFormat);
+            }
+            row[col as usize] = graph.graph[*node].symbol;
         }
         let record = Record::new(
             Definition::new(CONSENSUS_NAME.to_owned(), None),

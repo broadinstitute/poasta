@@ -4,13 +4,13 @@
 use std::ops::{Deref, DerefMut};
 
 use petgraph::graph::{DiGraph, Neighbors, NodeIndex, NodeIndices};
+use petgraph::visit::NodeIndexable;
 use petgraph::{Incoming, Outgoing};
 use rustc_hash::FxHashMap;
 
 use crate::graph::traits::{GraphBase, GraphWithNodeOrdering};
 
 use super::traits::GraphWithNodeLengths;
-use super::utils::rev_postorder_nodes;
 
 pub(crate) type NIx = u32;
 
@@ -28,11 +28,52 @@ pub(crate) struct MockGraph(DiGraph<NodeData, (), NIx>, Vec<NodeIndex<NIx>>);
 
 impl MockGraph {
     fn post_process_graph(&mut self) {
-        let rev_postorder = rev_postorder_nodes(self);
+        self.compute_rev_postorder();
 
-        for (rank, node) in rev_postorder.iter().enumerate() {
-            self.0[*node].1 = rank;
+        let MockGraph(graph, topo) = self;
+        for (rank, node) in topo.iter().enumerate() {
+            graph[*node].1 = rank;
         }
+    }
+
+    /// Iterative reverse-postorder DFS from the (assumed unique) source node.
+    /// Writes the order to `self.1`. Mirrors `POAGraph::compute_rev_postorder`
+    /// but allocates a fresh bitmap each call — this is test-only code and not
+    /// in any hot path.
+    fn compute_rev_postorder(&mut self) {
+        let start = self.start_node();
+        let n = self.0.node_bound();
+        let mut visited: Vec<bool> = vec![false; n];
+
+        self.1.clear();
+
+        let graph = &self.0;
+        let topo = &mut self.1;
+
+        visited[start.index()] = true;
+        let mut stack: Vec<(NodeIndex<NIx>, Neighbors<'_, (), NIx>)> =
+            vec![(start, graph.neighbors(start))];
+
+        loop {
+            let next_child = match stack.last_mut() {
+                None => break,
+                Some((_, iter)) => iter.next(),
+            };
+            match next_child {
+                Some(child) => {
+                    if !visited[child.index()] {
+                        visited[child.index()] = true;
+                        stack.push((child, graph.neighbors(child)));
+                    }
+                }
+                None => {
+                    let (node, _) = stack.pop().unwrap();
+                    topo.push(node);
+                }
+            }
+        }
+
+        topo.reverse();
     }
 }
 

@@ -4,20 +4,20 @@ version = "0.2.0-alpha.1"
 authors = ["Lucas van Dijk"]
 description = "Fast genome-scale partial order aligner"
 documentation = "https://github.com/broadinstitute/poasta"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
-flate2 = "1.0.34"
+flate2 = "1.1.9"
 num = { version = "~0.4" }
 petgraph = { version = "~0.8", features = ["serde-1"] }
-tracing = { version = "0.1.40" }
-noodles = { version = "~0.99", features = ["fasta", "fastq"] }
+tracing = { version = "0.1.44" }
+noodles = { version = "~0.109", features = ["fasta", "fastq"] }
 itertools = "0.14.0"
-rustc-hash = "2.1.1"
+rustc-hash = "2.1.2"
 
 # CLI
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"], optional = true }
-clap = { version = "4.5.19", features = ["derive"], optional = true }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"], optional = true }
+clap = { version = "4.6.1", features = ["derive"], optional = true }
 
 # Testing
 spoa_rs = { git = "https://github.com/broadinstitute/spoa-rs", version = "0.1.0", optional = true }
@@ -32,6 +32,7 @@ test = ["dep:spoa_rs"]
 
 [profile.release]
 debug = true
+lto = 'thin'
 
 [[bin]]
 name = "poasta"

@@ -45,9 +45,10 @@
 //! ## Per-band computation pipeline
 //!
 //! ```text
-//!   1. accumulate_gap(u → v)    (per predecessor u)  — fills D column
-//!   2. accumulate_diag(u → v)   (per predecessor u)  — fills diag_buf
-//!   3. finalize                  (once)              — subst + I/M sweep
+//!   1. accumulate_pred(u → v)   (per predecessor u)  — single pass over src:
+//!                                                       fills D column AND folds
+//!                                                       diag minimum into diag_buf
+//!   2. finalize                 (once)               — subst + I/M sweep
 //! ```
 
 use super::{BacktraceOp, DPKernel};
@@ -87,9 +88,17 @@ impl DPKernel for AffineKernel {
         }
     }
 
-    /// Fold D-state contributions from one predecessor band `src` into `dst`.
+    /// Fold one predecessor band into both `dst[D]` (gap state) and `diag_buf`
+    /// (diagonal minimum), in a single pass over `src`.
     ///
-    /// Called once per predecessor; successive calls shrink `dst[D]` via `min`.
+    /// The loop is split into three pieces so each iteration body is
+    /// straight-line: a leading gap-only cell (at most one), the bulk where
+    /// both updates apply, and a trailing diag-only cell (at most one).
+    /// Substitution is NOT added here — it is applied once in `finalize` after
+    /// every predecessor has contributed (so the symbol compare runs once per
+    /// cell, not once per predecessor).
+    ///
+    /// **Gap update** (same `q`, graph step `v ← u`):
     ///
     /// ```text
     ///                     pred band u (same q)
@@ -107,8 +116,22 @@ impl DPKernel for AffineKernel {
     ///
     ///     indices:  pqi = q - src_qlo      qi = q - dst_qlo
     /// ```
-    fn accumulate_gap(
+    ///
+    /// **Diag update** (graph step `v ← u`, query `q ← q-1`):
+    ///
+    /// ```text
+    ///     pred band u at q-1:
+    ///                                ┌──────┬──────┬──────┐
+    ///                                │ M_u  │ D_u  │ I_u  │
+    ///                                └──────┴──────┴──────┘
+    ///                                     \   |   /
+    ///                                      ╲  │  ╱   min3(M_u, D_u, I_u)
+    ///                                       ▼ ▼ ▼
+    ///     diag_buf[qi] ← min(diag_buf[qi], min3(·))
+    /// ```
+    fn accumulate_pred(
         dst: &mut [u32],
+        diag_buf: &mut [u32],
         w_dst: usize,
         dst_qlo: usize,
         src: &[u32],
@@ -120,12 +143,18 @@ impl DPKernel for AffineKernel {
         let ge = costs.gap_extend() as u32;
         let go_ge = go + ge;
 
-        let q_lo = dst_qlo.max(src_qlo);
-        let q_hi = (dst_qlo + w_dst - 1).min(src_qlo + w_src - 1);
-        if q_lo > q_hi {
-            return;
-        }
-        for q in q_lo..=q_hi {
+        // Half-open ranges (exclusive end).
+        // gap update at query q reads src at pqi = q - src_qlo.
+        let gap_q_lo = dst_qlo.max(src_qlo);
+        let gap_q_hi = (dst_qlo + w_dst).min(src_qlo + w_src);
+        // diag update at query q reads src at pqi = q - 1 - src_qlo.
+        let diag_q_lo = dst_qlo.max(src_qlo + 1);
+        let diag_q_hi = (dst_qlo + w_dst).min(src_qlo + w_src + 1);
+
+        // Section A: gap-only prefix (0 or 1 cell, when src_qlo + 1 > dst_qlo
+        // is false but src_qlo == dst_qlo so diag starts one to the right).
+        if gap_q_lo < diag_q_lo && gap_q_lo < gap_q_hi {
+            let q = gap_q_lo;
             let qi = q - dst_qlo;
             let pqi = q - src_qlo;
             let pm = src[pqi];
@@ -133,40 +162,33 @@ impl DPKernel for AffineKernel {
             let pi = src[2 * w_src + pqi];
             dst[w_dst + qi] = dst[w_dst + qi].min(sat(pm.min(pi), go_ge)).min(sat(pd, ge));
         }
-    }
 
-    /// Fold the diagonal-predecessor minimum into `diag_buf`.
-    ///
-    /// Substitution is NOT added here — it is applied once in `finalize` after
-    /// every predecessor has contributed (so the symbol compare runs once per
-    /// cell, not once per predecessor).
-    ///
-    /// ```text
-    ///     pred band u at q-1:
-    ///                                ┌──────┬──────┬──────┐
-    ///                                │ M_u  │ D_u  │ I_u  │
-    ///                                └──────┴──────┴──────┘
-    ///                                     \   |   /
-    ///                                      ╲  │  ╱   min3(M_u, D_u, I_u)
-    ///                                       ▼ ▼ ▼
-    ///     diag_buf[qi] ← min(diag_buf[qi], min3(·))
-    ///
-    ///     (arrives diagonally: graph v ← u, query q ← q-1)
-    /// ```
-    fn accumulate_diag(
-        diag_buf: &mut [u32],
-        w_dst: usize,
-        dst_qlo: usize,
-        src: &[u32],
-        w_src: usize,
-        src_qlo: usize,
-    ) {
-        let q_lo = dst_qlo.max(src_qlo + 1);
-        let q_hi = (dst_qlo + w_dst - 1).min(src_qlo + w_src);
-        if q_lo > q_hi {
-            return;
+        // Section B: both updates apply.
+        let both_lo = diag_q_lo;
+        let both_hi = gap_q_hi.min(diag_q_hi);
+        for q in both_lo..both_hi {
+            let qi = q - dst_qlo;
+            let pqi_g = q - src_qlo;
+            let pqi_d = pqi_g - 1;
+
+            // Gap reads at pqi_g.
+            let pm_g = src[pqi_g];
+            let pd_g = src[w_src + pqi_g];
+            let pi_g = src[2 * w_src + pqi_g];
+            dst[w_dst + qi] = dst[w_dst + qi]
+                .min(sat(pm_g.min(pi_g), go_ge))
+                .min(sat(pd_g, ge));
+
+            // Diag reads at pqi_g - 1.
+            let pm_d = src[pqi_d];
+            let pd_d = src[w_src + pqi_d];
+            let pi_d = src[2 * w_src + pqi_d];
+            diag_buf[qi] = diag_buf[qi].min(min3(pm_d, pd_d, pi_d));
         }
-        for q in q_lo..=q_hi {
+
+        // Section C: diag-only tail (0 or 1 cell, when src extends past gap_q_hi).
+        if gap_q_hi < diag_q_hi {
+            let q = gap_q_hi;
             let qi = q - dst_qlo;
             let pqi = q - 1 - src_qlo;
             let pm = src[pqi];
@@ -197,7 +219,7 @@ impl DPKernel for AffineKernel {
     ///       │                      ▼                         │
     ///       │   I[qi-1]  ───+ge───▶ I[qi]                    │
     ///       │                                                │
-    ///       │   D[qi]  (already filled by accumulate_gap)    │
+    ///       │   D[qi]  (already filled by accumulate_pred)   │
     ///       │                                                │
     ///       │                          \       │             │
     ///       │                           ▼      ▼             │
@@ -216,17 +238,16 @@ impl DPKernel for AffineKernel {
         let go = costs.gap_open() as u32;
         let ge = costs.gap_extend() as u32;
         let go_ge = go + ge;
-        let eq_cost = 0u32;
         let mm_cost = costs.mismatch() as u32;
 
-        // Apply substitution to diag_buf in-place
+        // Apply substitution to diag_buf in-place. The per-cell `if symbol ==
+        // query[..]` is rewritten as a branchless mask so the loop auto-
+        // vectorises without a data-dependent branch on mixed-match queries.
         let subst_start = usize::from(qlo == 0);
         for qi in subst_start..w {
-            let subst = if symbol == query[qlo + qi - 1] {
-                eq_cost
-            } else {
-                mm_cost
-            };
+            let q = query[qlo + qi - 1];
+            let mismatch = (symbol != q) as u32;
+            let subst = mm_cost & mismatch.wrapping_neg();
             diag_buf[qi] = sat(diag_buf[qi], subst);
         }
 
@@ -382,7 +403,7 @@ mod tests {
     }
 
     #[test]
-    fn affine_kernel_accumulate_gap_basic() {
+    fn affine_kernel_accumulate_pred_fills_d() {
         // Predecessor band: w_src=3, src_qlo=0, M=[0,INF,INF], D=[INF,INF,INF], I=[INF,INF,INF]
         // Query band: w_dst=3, dst_qlo=0
         // D[q] = min(sat(M[q].min(I[q]), go_ge), sat(D[q], ge))
@@ -392,7 +413,8 @@ mod tests {
         let mut src = vec![INF; AffineKernel::STATES * w];
         src[0] = 0; // M[0] = 0
         let mut dst = vec![INF; AffineKernel::STATES * w];
-        AffineKernel::accumulate_gap(&mut dst, w, 0, &src, w, 0, &costs);
+        let mut diag_buf = vec![INF; w];
+        AffineKernel::accumulate_pred(&mut dst, &mut diag_buf, w, 0, &src, w, 0, &costs);
         assert_eq!(dst[w], 3, "D[qi=0] = sat(M=0, go_ge=3) = 3");
         assert_eq!(dst[w + 1], INF, "D[qi=1] should remain INF (pred M[1]=INF)");
     }

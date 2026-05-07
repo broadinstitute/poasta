@@ -30,8 +30,6 @@ use std::marker::PhantomData;
 use std::ops::Index;
 use std::rc::Rc;
 
-use itertools::kmerge_by;
-
 use crate::align::{
     cost_models::AlignmentCostModel,
     engine::{
@@ -58,6 +56,17 @@ fn log_align_stats(stats: &AlignmentStats) {
 
 // ─── Engine struct ───────────────────────────────────────────────────────────
 
+/// Reusable scratch buffers for a single `BandDoublingEngineScalar`. All fields
+/// are reset on entry to `align_banded` and grow monotonically across calls so
+/// repeated alignments against the same engine avoid heap churn.
+#[derive(Default)]
+pub(crate) struct Scratch {
+    matrix: BandMatrix,
+    init_data: Vec<u32>,
+    node_to_rank: Vec<usize>,
+    diag_buf: Vec<u32>,
+}
+
 pub struct BandDoublingEngineScalar<C, Ix>
 where
     C: AlignmentCostModel,
@@ -67,6 +76,7 @@ where
     /// Starting bandwidth k (≥ 1).
     initial_k: usize,
     logger: Option<Rc<RefCell<DebugLogger>>>,
+    scratch: RefCell<Scratch>,
     _phantom: PhantomData<Ix>,
 }
 
@@ -80,6 +90,7 @@ where
             costs,
             initial_k: 1,
             logger: None,
+            scratch: RefCell::new(Scratch::default()),
             _phantom: PhantomData,
         }
     }
@@ -125,8 +136,28 @@ where
             m.saturating_sub(l_max)
         };
 
+        // Total DP-cell budget (m+1) * (n_real + 1) * n_states, matching the
+        // single-attempt formula in `align_banded`. Used to convert the
+        // accumulated cell count into a fraction of the full matrix.
+        let n_real = graph.node_count().saturating_sub(2);
+        let full_matrix_cells = (m + 1)
+            .saturating_mul(n_real + 1)
+            .saturating_mul(C::Kernel::STATES);
+        let mut total_cells_computed: usize = 0;
+
         let log_borrow = self.logger.as_ref().map(|rc| rc.borrow());
         let log: Option<&DebugLogger> = log_borrow.as_deref();
+
+        let mut scratch = self.scratch.borrow_mut();
+
+        let finalize_stats = |stats: &mut AlignmentStats, total_cells: usize| {
+            stats.cells_computed = total_cells;
+            stats.fraction_of_full_matrix = if full_matrix_cells == 0 {
+                0.0
+            } else {
+                total_cells as f64 / full_matrix_cells as f64
+            };
+        };
 
         let mut iter_idx = 0usize;
         loop {
@@ -134,7 +165,13 @@ where
             if let Some(log) = log {
                 log.begin_k_iter(k, C::Kernel::STATE_NAMES);
             }
-            if let Some(result) = align_banded::<C::Kernel, Ix>(&self.costs, graph, query, k, log) {
+            let attempt =
+                align_banded::<C::Kernel, Ix>(&self.costs, graph, query, k, log, &mut scratch);
+            // Account for the cells touched by this attempt regardless of
+            // whether it reached the alignment end.
+            total_cells_computed = total_cells_computed.saturating_add(scratch.matrix.data.len());
+
+            if let Some(mut result) = attempt {
                 // Ukkonen bound: with min_ge > 0, any alignment of cost s
                 // contains at most s / min_ge indels, so the optimum deviates
                 // from the main diagonal by at most that much; combined with
@@ -147,6 +184,7 @@ where
 
                 if k >= required_k {
                     tracing::debug!(score = result.score, k, required_k, "alignment optimal");
+                    finalize_stats(&mut result.stats, total_cells_computed);
                     log_align_stats(&result.stats);
                     return Ok(result);
                 }
@@ -170,8 +208,18 @@ where
                 if let Some(log) = log {
                     log.begin_k_iter(full_k, C::Kernel::STATE_NAMES);
                 }
-                let result = align_banded::<C::Kernel, Ix>(&self.costs, graph, query, full_k, log)
-                    .expect("full-width band must succeed");
+                let mut result = align_banded::<C::Kernel, Ix>(
+                    &self.costs,
+                    graph,
+                    query,
+                    full_k,
+                    log,
+                    &mut scratch,
+                )
+                .expect("full-width band must succeed");
+                total_cells_computed =
+                    total_cells_computed.saturating_add(scratch.matrix.data.len());
+                finalize_stats(&mut result.stats, total_cells_computed);
                 log_align_stats(&result.stats);
                 return Ok(result);
             }
@@ -186,7 +234,7 @@ where
 // ─── Bands ────────────────────────────────────────────────────────────────────
 
 /// A contiguous range of query positions associated with one graph node,
-/// including its predecessor edges in the band DAG.
+/// with indices to predecessor edges in the band DAG.
 #[derive(Clone, Debug)]
 pub(crate) struct Band {
     /// Topological rank of the owning node.
@@ -260,13 +308,31 @@ impl PartialEq for Band {
 
 #[derive(Clone, Debug)]
 pub(crate) struct BandEdge {
-    /// Index of the band from which the target originated
+    /// Index of the predecessor band. Set at band-construction time; used by
+    /// `BandMatrix::reset_for_bands` to fill `data_offset`, and retained as a
+    /// debug breadcrumb.
     pred: usize,
+
+    /// Offset into `BandMatrix::data` where the predecessor band's scores
+    /// start. Filled in by `BandMatrix::reset_for_bands` once `n_states` is
+    /// known; left as 0 during band construction.
+    data_offset: usize,
+
+    /// Width (`qhi - qlo`) of the predecessor band.
+    width: usize,
+
+    /// First query position of the predecessor band.
+    qlo: usize,
 }
 
 impl BandEdge {
-    fn new(pred: usize) -> Self {
-        BandEdge { pred }
+    fn new(pred: usize, width: usize, qlo: usize) -> Self {
+        BandEdge {
+            pred,
+            data_offset: 0,
+            width,
+            qlo,
+        }
     }
 }
 
@@ -275,6 +341,7 @@ impl BandEdge {
 /// This struct represents all bands of per-node query positions to compute
 /// as a directed acylic graph, keeping track per band from which predecessor
 /// bands it originated.
+#[derive(Default)]
 pub(crate) struct Bands {
     /// All computed bands
     bands: Vec<Band>,
@@ -291,13 +358,31 @@ pub(crate) struct Bands {
     ///
     /// This vector enables mapping a POA node rank to its list of bands
     node_bands: Vec<(usize, usize)>,
+
+    /// Working buffer for `reset_for_global_alignment`'s per-node band
+    /// construction. Reused across nodes and across calls to avoid allocation.
+    new_bands_tmp: Vec<Band>,
+
+    /// Working buffer for collecting and sorting predecessor band indices
+    /// during `reset_for_global_alignment`. Reused across nodes.
+    pred_bands_tmp: Vec<usize>,
 }
 
 impl Bands {
-    fn for_global_alignment<G: AlignableGraph>(graph: &G, query: &[u8], k: isize) -> Bands {
-        let mut bands = Vec::with_capacity(graph.node_count());
-        let mut band_pred = Vec::with_capacity(graph.node_count());
-        let mut node_bands = Vec::with_capacity(graph.node_count());
+    /// Recompute the band layout for a global alignment, reusing existing
+    /// allocations. Equivalent to constructing a fresh `Bands`, but `Vec`
+    /// capacity is preserved across calls.
+    fn reset_for_global_alignment<G: AlignableGraph>(&mut self, graph: &G, query: &[u8], k: isize) {
+        let bands = &mut self.bands;
+        let band_pred = &mut self.band_pred;
+        let node_bands = &mut self.node_bands;
+        let new_bands = &mut self.new_bands_tmp;
+        let pred_bands = &mut self.pred_bands_tmp;
+
+        bands.clear();
+        band_pred.clear();
+        node_bands.clear();
+
         let query_max = query.len();
 
         // Initial band on start node (half-open [qlo, qhi)).
@@ -306,29 +391,37 @@ impl Bands {
         node_bands.push((0usize, 1usize));
 
         // Process all other nodes in topological order
-        let mut new_bands = Vec::default();
         for rank in 1..graph.node_count() {
             let node = graph.rank_to_node(rank);
             new_bands.clear();
 
             // Compute bands for the current node based on bands on predecessor nodes.
             //
-            // Sort bands across predecessors by query position for easy detection of
-            // overlapping bands.
-            let all_pred_bands = kmerge_by(
-                graph.predecessors(node).map(|pred| {
-                    let pred_rank = graph.node_rank(pred);
-                    let (pred_band_start, pred_band_end) = node_bands[pred_rank];
-
-                    (pred_band_start..pred_band_end).zip(&bands[pred_band_start..pred_band_end])
-                }),
-                |(_, band1): &(usize, &Band), (_, band2): &(usize, &Band)| {
-                    band1.partial_cmp(band2) == Some(Ordering::Less)
-                },
-            );
+            // Each predecessor's bands are already sorted by query position, but we
+            // need a single global sort to detect overlaps across predecessors. For
+            // the typical small fan-in (1-3 predecessors with ≤1 band each), a
+            // collect-and-sort beats a heap-based k-way merge.
+            //
+            // Fan-in == 1 (the common case for chain-like POA regions) is handled
+            // without sorting: the single predecessor's band range is already
+            // qlo-ordered by construction.
+            pred_bands.clear();
+            let mut n_preds = 0usize;
+            for pred in graph.predecessors(node) {
+                n_preds += 1;
+                let pred_rank = graph.node_rank(pred);
+                let (pred_band_start, pred_band_end) = node_bands[pred_rank];
+                pred_bands.extend(pred_band_start..pred_band_end);
+            }
+            if n_preds > 1 {
+                pred_bands.sort_unstable_by(|&a, &b| {
+                    (bands[a].qlo, bands[a].qhi).cmp(&(bands[b].qlo, bands[b].qhi))
+                });
+            }
 
             let mut curr_new_band: Option<Band> = None;
-            for (pred_ix, pred_band) in all_pred_bands {
+            for &pred_ix in pred_bands.iter() {
+                let pred_band = &bands[pred_ix];
                 // Move predecessor band one to the right (half-open [qlo, qhi)).
                 let target_qlo = (pred_band.qlo_signed + 1).min(query_max as isize);
                 let target_qhi = (pred_band.qhi + 1).min(query_max + 1);
@@ -354,14 +447,14 @@ impl Bands {
                         );
 
                         // Add edge
-                        let edge = BandEdge::new(pred_ix);
+                        let edge = BandEdge::new(pred_ix, pred_band.width(), pred_band.qlo);
                         band_pred.push(edge);
                         target.pred_num += 1;
                     } else {
                         // No overlap, create new band
                         let new_band =
                             Band::new_with_pred(rank, target_qlo, target_qhi, band_pred.len());
-                        let edge = BandEdge::new(pred_ix);
+                        let edge = BandEdge::new(pred_ix, pred_band.width(), pred_band.qlo);
                         band_pred.push(edge);
 
                         // Store the band currently in `curr_new_band` in `new_bands`, and replace
@@ -376,7 +469,7 @@ impl Bands {
                         target_qhi,
                         band_pred.len(),
                     ));
-                    let edge = BandEdge::new(pred_ix);
+                    let edge = BandEdge::new(pred_ix, pred_band.width(), pred_band.qlo);
                     band_pred.push(edge);
                 }
             }
@@ -385,7 +478,7 @@ impl Bands {
                 new_bands.push(target);
             }
 
-            bands.append(&mut new_bands);
+            bands.append(&mut *new_bands);
 
             let prev_ix_start = node_bands.last().unwrap().1;
             node_bands.push((prev_ix_start, bands.len()))
@@ -398,16 +491,18 @@ impl Bands {
             n_nodes = node_bands.len(),
             "computed bands for all nodes",
         );
-
-        Bands {
-            bands,
-            band_pred,
-            node_bands,
-        }
     }
 
     fn len(&self) -> usize {
         self.bands.len()
+    }
+
+    /// Return the slice of `BandEdge` describing the predecessor bands of
+    /// the band at index `band_ix`.
+    #[inline]
+    fn pred_for_band(&self, band_ix: usize) -> &[BandEdge] {
+        let band = &self.bands[band_ix];
+        &self.band_pred[band.pred_ix_start..band.pred_ix_start + band.pred_num]
     }
 
     #[inline]
@@ -432,47 +527,82 @@ impl Index<usize> for Bands {
     }
 }
 
-// ─── DynBandMatrix (runtime n_states) ────────────────────────────────────────
+// ─── BandMatrix (runtime n_states) ────────────────────────────────────────
 
 /// Runtime-flexible banded DP matrix (n_states set at construction time).
 /// Used by `align_banded` to support kernels with any number of states.
-pub(crate) struct DynBandMatrix {
+#[derive(Default)]
+pub(crate) struct BandMatrix {
     pub(crate) bands: Bands,
     pub(crate) band_data_offset: Vec<usize>,
     pub(crate) data: Vec<u32>,
     pub(crate) n_states: usize,
 }
 
-impl DynBandMatrix {
-    pub(crate) fn new(bands: Bands, n_states: usize) -> Self {
-        let mut band_data_offset = Vec::with_capacity(bands.len());
+impl BandMatrix {
+    /// Recompute the prefix-sum offset table and resize the score buffer to
+    /// match the bands currently stored in `self.bands`. Reuses existing Vec
+    /// allocations across calls to avoid heap churn.
+    pub(crate) fn reset_for_bands(&mut self, n_states: usize) {
+        self.band_data_offset.clear();
         let mut offset = 0usize;
-        for band in bands.iter() {
-            band_data_offset.push(offset);
+        for band in self.bands.iter() {
+            self.band_data_offset.push(offset);
             offset += n_states * band.width();
         }
-        DynBandMatrix {
-            bands,
-            band_data_offset,
-            data: vec![INF; offset],
-            n_states,
+        self.data.clear();
+        self.data.resize(offset, INF);
+        self.n_states = n_states;
+
+        // Now that the offset table exists, populate `data_offset` on each
+        // predecessor edge so `BandPredIterator` can build slices into `data`
+        // without consulting `band_data_offset` and `bands` at iteration time.
+        for edge in &mut self.bands.band_pred {
+            edge.data_offset = self.band_data_offset[edge.pred];
         }
     }
 
-    pub(crate) fn compute_iter(&mut self) -> DynComputeIterator<'_> {
-        DynComputeIterator {
-            matrix: self as *mut _,
+    pub(crate) fn compute_iter(&mut self) -> BandComputeIterator<'_> {
+        BandComputeIterator {
+            matrix: self,
             current: 0,
-            _marker: PhantomData,
         }
     }
 
     /// Return the column (all states at one query position) for `node_rank` at
     /// query position `q`, or `None` if no band of this node covers `q`.
     ///
-    /// Used on the backtrace hot path. If multiple bands of the same node cover
-    /// `q` (rare; only at band merges), the per-state minimum is returned.
+    /// Used on the backtrace hot path. The common case is `hi - lo == 1` (one
+    /// band per node), handled inline without the per-state min loop or the
+    /// `[INF; MAX_STATES]` zero-init scaffolding. Multi-band nodes (only at
+    /// band merges) fall through to the cold loop.
+    #[inline]
     pub(crate) fn node_col_at(&self, node_rank: usize, q: usize) -> Option<StateCol> {
+        let n = self.n_states;
+        let (lo, hi) = self.bands.node_bands[node_rank];
+
+        if hi - lo == 1 {
+            let bi = lo;
+            let b = &self.bands[bi];
+            if q < b.qlo || q >= b.qhi {
+                return None;
+            }
+            let off = self.band_data_offset[bi];
+            let w = b.width();
+            let qi = q - b.qlo;
+            let mut col = [INF; crate::align::engine::dp::MAX_STATES];
+            for s in 0..n {
+                col[s] = self.data[off + s * w + qi];
+            }
+            return Some(col);
+        }
+
+        self.node_col_at_multi(node_rank, q)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn node_col_at_multi(&self, node_rank: usize, q: usize) -> Option<StateCol> {
         let n = self.n_states;
         let (lo, hi) = self.bands.node_bands[node_rank];
         let mut col = [INF; crate::align::engine::dp::MAX_STATES];
@@ -497,24 +627,33 @@ impl DynBandMatrix {
     }
 }
 
-/// Mutable view of one band's data in a DynBandMatrix.
-pub(crate) struct DynBandSlices<'a> {
+/// Mutable view of one band's data in a BandMatrix.
+///
+/// Yielded by `BandComputeIterator::next_band` for the band currently being
+/// computed. Holds a mutable slice into `BandMatrix::data` for this band's
+/// scores plus the metadata needed to lazily construct read-only slices for
+/// the band's predecessors.
+pub(crate) struct BandDataSlice<'a> {
+    /// The band being computed.
     pub band: &'a Band,
-    /// Raw data for this band. Length = n_states * w.
+
+    /// Mutable scores for this band. Length = `n_states * band.width()`.
     pub data: &'a mut [u32],
-    pub pred_edges: &'a [BandEdge],
-    band_data_offset: &'a [usize],
-    all_bands: &'a Bands,
+
+    /// Predecessor edges feeding this band.
+    pub pred_bands: &'a [BandEdge],
+
+    /// Pointer to the start of `BandMatrix::data`, used by `pred_iter` to
+    /// construct read-only slices into earlier bands' regions of the buffer.
     data_ptr: *const u32,
+
     pub n_states: usize,
 }
 
-impl<'a> DynBandSlices<'a> {
-    pub fn pred_iter(&self) -> DynPredIter<'a> {
-        DynPredIter {
-            edges: self.pred_edges,
-            band_data_offset: self.band_data_offset,
-            all_bands: self.all_bands,
+impl<'a> BandDataSlice<'a> {
+    pub fn pred_iter(&self) -> BandPredIterator<'a> {
+        BandPredIterator {
+            edges: self.pred_bands,
             data_ptr: self.data_ptr,
             n_states: self.n_states,
             current: 0,
@@ -522,78 +661,82 @@ impl<'a> DynBandSlices<'a> {
     }
 }
 
-pub(crate) struct DynPredIter<'a> {
+pub(crate) struct BandPredIterator<'a> {
     edges: &'a [BandEdge],
-    band_data_offset: &'a [usize],
-    all_bands: &'a Bands,
     data_ptr: *const u32,
     n_states: usize,
     current: usize,
 }
 
-impl<'a> Iterator for DynPredIter<'a> {
-    type Item = (&'a BandEdge, usize, &'a [u32]);
+impl<'a> Iterator for BandPredIterator<'a> {
+    type Item = (usize, &'a [u32]);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current >= self.edges.len() {
-            return None;
-        }
-        let edge = &self.edges[self.current];
+        let edge = self.edges.get(self.current)?;
         self.current += 1;
-        let pb = edge.pred;
-        let poff = self.band_data_offset[pb];
-        let pw = self.all_bands[pb].width();
-        let pred_qlo = self.all_bands[pb].qlo;
-        // SAFETY: Bands are built in topological order, so `edge.pred < b` for all
-        // edges of band `b`. `band_data_offset` is a strict prefix-sum over
-        // `n_states * width` chunks, so regions for different bands do not overlap.
-        // Combined, the predecessor slice [poff, poff + n_states*pw) is entirely
-        // disjoint from the current band's mutable slice owned by DynBandSlices.
+
+        // SAFETY: Bands are built in topological order, so every predecessor
+        // edge points at a band strictly earlier than the current band.
+        // `BandMatrix::band_data_offset` is a strict prefix-sum over
+        // `n_states * width` chunks, so regions for different bands do not
+        // overlap. The predecessor slice `[edge.data_offset, edge.data_offset +
+        // n_states * edge.width)` is therefore entirely disjoint from the
+        // current band's mutable slice held by the parent `BandDataSlice`.
         unsafe {
-            let slice: &[u32] =
-                std::slice::from_raw_parts(self.data_ptr.add(poff), self.n_states * pw);
-            Some((edge, pred_qlo, slice))
+            let slice: &[u32] = std::slice::from_raw_parts(
+                self.data_ptr.add(edge.data_offset),
+                self.n_states * edge.width,
+            );
+            Some((edge.qlo, slice))
         }
     }
 }
 
-pub(crate) struct DynComputeIterator<'a> {
-    matrix: *mut DynBandMatrix,
+/// The compute iterator enables computing alignment scores for each band
+/// using the DP recursion.
+///
+/// This is a *lending* iterator (not `std::iter::Iterator`): each call to
+/// `next_band` returns a `BandDataSlice` whose lifetime is tied to the
+/// borrow of `self`. The previous slice must therefore be dropped before
+/// the next call. Use a `while let Some(slice) = it.next_band() { ... }`
+/// loop in the caller.
+pub(crate) struct BandComputeIterator<'a> {
+    matrix: &'a mut BandMatrix,
     current: usize,
-    _marker: PhantomData<&'a mut DynBandMatrix>,
 }
 
-impl<'a> Iterator for DynComputeIterator<'a> {
-    type Item = DynBandSlices<'a>;
-
-    fn next(&mut self) -> Option<DynBandSlices<'a>> {
-        unsafe {
-            let mat = &mut *self.matrix;
-            let b = self.current;
-            if b >= mat.bands.len() {
-                return None;
-            }
-            self.current += 1;
-
-            let n = mat.n_states;
-            let ptr = mat.data.as_mut_ptr();
-            let off = mat.band_data_offset[b];
-            let w = mat.bands[b].width();
-            let data = std::slice::from_raw_parts_mut(ptr.add(off), n * w);
-            let band = &mat.bands[b];
-            let pred_edges =
-                &mat.bands.band_pred[band.pred_ix_start..band.pred_ix_start + band.pred_num];
-
-            Some(DynBandSlices {
-                band,
-                data,
-                pred_edges,
-                band_data_offset: &mat.band_data_offset,
-                all_bands: &mat.bands,
-                data_ptr: ptr as *const u32,
-                n_states: n,
-            })
+impl<'a> BandComputeIterator<'a> {
+    pub(crate) fn next_band(&mut self) -> Option<BandDataSlice<'_>> {
+        let b = self.current;
+        if b >= self.matrix.bands.len() {
+            return None;
         }
+        self.current += 1;
+
+        let n = self.matrix.n_states;
+        let off = self.matrix.band_data_offset[b];
+        let pred_edges = self.matrix.bands.pred_for_band(b);
+        let band = &self.matrix.bands[b];
+        let w = band.width();
+
+        let ptr = self.matrix.data.as_mut_ptr();
+
+        // SAFETY: `ptr.add(off)` points at the start of band `b`'s exclusive
+        // chunk in `BandMatrix::data`, sized `n * w`. The chunks for
+        // different bands are disjoint by the prefix-sum offset layout, so
+        // returning a `&mut [u32]` over this range does not alias any other
+        // band's mutable region. Predecessor slices materialized via
+        // `BandPredIterator` are read-only and target strictly earlier
+        // bands' chunks, which are also disjoint from this one.
+        let data = unsafe { std::slice::from_raw_parts_mut(ptr.add(off), n * w) };
+
+        Some(BandDataSlice {
+            band,
+            data,
+            pred_bands: pred_edges,
+            data_ptr: ptr as *const u32,
+            n_states: n,
+        })
     }
 }
 
@@ -607,6 +750,7 @@ fn align_banded<K: DPKernel, Ix: IndexType>(
     query: &[u8],
     k: usize,
     logger: Option<&DebugLogger>,
+    scratch: &mut Scratch,
 ) -> Option<AlignOutput<POAGraph<Ix>>>
 where
     K::Costs: AlignmentCostModel,
@@ -621,17 +765,28 @@ where
         "align_banded attempt"
     );
 
-    // 1. Build band structure and allocate flat DP matrix.
-    let bands = Bands::for_global_alignment(graph, query, k as isize);
+    // Split scratch into disjoint field borrows so the DP loop can hold
+    // `&mut matrix` and `&mut diag_buf` simultaneously.
+    let Scratch {
+        matrix,
+        init_data,
+        node_to_rank,
+        diag_buf,
+    } = scratch;
+
+    // 1. Build band structure and (re-)size the flat DP matrix in place.
+    matrix
+        .bands
+        .reset_for_global_alignment(graph, query, k as isize);
 
     // Write band debug output (outside the hot DP loop).
     if let Some(log) = logger {
-        for band in &bands.bands {
+        for band in &matrix.bands.bands {
             log.write_band(k, band.node_rank, band.qlo, band.qhi);
         }
     }
 
-    let mut matrix = DynBandMatrix::new(bands, K::STATES);
+    matrix.reset_for_bands(K::STATES);
 
     // 2. Initialize band 0 (start sentinel) via kernel.
     {
@@ -643,8 +798,10 @@ where
 
     // 3. Build init_data for the start sentinel used by the generic backtrace.
     //    Layout: `init_data[s * mp1 + q]`, length = K::STATES * mp1.
-    let mut init_data = vec![INF; K::STATES * mp1];
-    K::init_start(&mut init_data, mp1, 0, costs);
+    let init_data_len = K::STATES * mp1;
+    init_data.clear();
+    init_data.resize(init_data_len, INF);
+    K::init_start(init_data, mp1, 0, costs);
 
     // 4. Build node_to_rank: node.index() → topological rank.
     let max_idx = graph
@@ -652,7 +809,8 @@ where
         .map(|nd| nd.index())
         .max()
         .unwrap_or(0);
-    let mut node_to_rank = vec![usize::MAX; max_idx + 1];
+    node_to_rank.clear();
+    node_to_rank.resize(max_idx + 1, usize::MAX);
     for topo_idx in 0..graph.node_count() {
         let v = graph.rank_to_node(topo_idx);
         node_to_rank[v.index()] = topo_idx;
@@ -660,12 +818,13 @@ where
 
     // 5. Forward DP over all bands in topological order.
     //
-    // Band 0 is the start sentinel (already initialized above); skip it.
-    // The end sentinel is also skipped: the final alignment score is read from
-    // predecessors of the end node (the last real nodes), exactly as in the
-    // canonical DP. The end sentinel carries no meaningful symbol.
-    let start = graph.start_node();
+    // Band 0 is the start sentinel and is skipped via `.skip(1)` (it was
+    // initialized above via `init_start`). The end sentinel's bands are the
+    // last entries in `bands` (it has the highest topological rank), so we
+    // stop the loop as soon as we encounter them — the final alignment score
+    // is read separately from the end node's predecessors below.
     let end = graph.end_node();
+    let end_rank = graph.node_rank(end);
 
     // Scratch buffer for the diagonal predecessor values used by M[q].
     // Pre-allocated at maximum band width to avoid per-band heap churn.
@@ -676,34 +835,40 @@ where
         .map(|b| b.width())
         .max()
         .unwrap_or(1);
-    let mut diag_buf = vec![INF; max_band_width];
+    if diag_buf.len() < max_band_width {
+        diag_buf.resize(max_band_width, INF);
+    }
 
-    for band_slices in matrix.compute_iter().skip(1) {
+    let mut compute_iter = matrix.compute_iter();
+    let _ = compute_iter.next_band(); // skip start sentinel (band 0)
+    while let Some(band_slices) = compute_iter.next_band() {
         let node_rank = band_slices.band.node_rank;
-        let node = graph.rank_to_node(node_rank);
-
-        if node == start || node == end {
-            continue;
+        if node_rank == end_rank {
+            break;
         }
+        let node = graph.rank_to_node(node_rank);
 
         let symbol = graph.get_node_symbol(node);
         let qlo = band_slices.band.qlo;
         let qhi = band_slices.band.qhi;
         let w = qhi - qlo;
 
-        // ── D[q]: deletion — graph advances, query stays ─────────────────────
-        for (_, pred_qlo, pred_data) in band_slices.pred_iter() {
-            let pred_w = pred_data.len() / K::STATES;
-            K::accumulate_gap(band_slices.data, w, qlo, pred_data, pred_w, pred_qlo, costs);
-        }
-
-        // ── diag_buf[qi]: best predecessor score on the diagonal (q-1) ───────
+        // ── Fused per-predecessor pass: D-state + diagonal buffer ────────────
         let diag_buf = &mut diag_buf[..w];
         diag_buf.fill(INF);
 
-        for (_, pred_qlo, pred_data) in band_slices.pred_iter() {
+        for (pred_qlo, pred_data) in band_slices.pred_iter() {
             let pred_w = pred_data.len() / K::STATES;
-            K::accumulate_diag(diag_buf, w, qlo, pred_data, pred_w, pred_qlo);
+            K::accumulate_pred(
+                band_slices.data,
+                diag_buf,
+                w,
+                qlo,
+                pred_data,
+                pred_w,
+                pred_qlo,
+                costs,
+            );
         }
 
         // ── Finalize: apply substitution and sequential M/I states ────────────
@@ -733,6 +898,7 @@ where
     }
 
     // 6. Check alignment success: find the best score at (end's predecessor, m).
+    let start = graph.start_node();
     let matrix_ref = &matrix;
     let (best_score, best_node, best_state) = graph
         .predecessors(end)
@@ -782,11 +948,11 @@ where
         matrix_ref.node_col_at(rank, q)
     };
 
-    let alignment = backtrace_generic::<K, POAGraph<Ix>>(
+    let alignment = backtrace_generic::<K, POAGraph<Ix>, _>(
         costs,
         graph,
         &get_node_col,
-        &init_data,
+        init_data,
         best_node,
         best_state,
         m,
@@ -1043,13 +1209,16 @@ mod tests {
     fn dyn_band_matrix_allocates_n_states_per_position() {
         let g = linear_graph(b"ACGT");
         let query = b"ACGT";
-        let bands_a = Bands::for_global_alignment(&g, query, 4isize);
-        let bands_b = Bands::for_global_alignment(&g, query, 4isize);
-        let total_3: usize = bands_a.iter().map(|b| 3 * b.width()).sum();
-        let total_1: usize = bands_b.iter().map(|b| b.width()).sum();
-        let mat3 = DynBandMatrix::new(bands_a, 3);
+        let mut mat3 = BandMatrix::default();
+        mat3.bands.reset_for_global_alignment(&g, query, 4isize);
+        let total_3: usize = mat3.bands.iter().map(|b| 3 * b.width()).sum();
+        mat3.reset_for_bands(3);
         assert_eq!(mat3.data.len(), total_3);
-        let mat1 = DynBandMatrix::new(bands_b, 1);
+
+        let mut mat1 = BandMatrix::default();
+        mat1.bands.reset_for_global_alignment(&g, query, 4isize);
+        let total_1: usize = mat1.bands.iter().map(|b| b.width()).sum();
+        mat1.reset_for_bands(1);
         assert_eq!(mat1.data.len(), total_1);
     }
 }

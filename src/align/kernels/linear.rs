@@ -30,38 +30,33 @@
 //! ## Computation pipeline (band v)
 //!
 //! ```text
-//!   step 1  accumulate_gap(u → v)     — (b) deletion from predecessor u at q
-//!   step 2  accumulate_diag(u → v)    — (a) best predecessor score at q-1
-//!   step 3  finalize                  — apply subst, then left→right (c) sweep
+//!   step 1  accumulate_pred(u → v)    per pred u — fold (b) into data and
+//!                                                   (a) into diag_buf in one pass
+//!   step 2  finalize                  once       — apply subst, then left→right (c) sweep
 //! ```
 //!
-//! ### step 1: `accumulate_gap` — one call per predecessor band `u`
+//! ### step 1: `accumulate_pred` — one call per predecessor band `u`
+//!
+//! Single pass over `src[u]` updates both reductions:
 //!
 //! ```text
-//!     pred band u   . X . . .    (state 0 at query position q)
+//!     pred band u   . X . . .          (state 0 at query position q)
 //!                     │
-//!                     │  + ge
+//!                     │  + ge          (b) deletion: same q, v ← u
 //!                     ▼
-//!     curr band v   . Y . . .    Y = min(Y, X + ge)
-//!                     ▲
-//!                     └─── same q, graph step v ← u
-//! ```
+//!     curr band v   . Y . . .          Y = min(Y, X + ge)
 //!
-//! ### step 2: `accumulate_diag` — best predecessor at `q-1`
-//!
-//! ```text
-//!     pred band u   X . . . .    (at q-1)
+//!     pred band u   X . . . .          (at q-1)
 //!                    ╲
-//!                     ▼ diagonal (no subst yet)
-//!     diag_buf      . Y . .    Y = min(Y, X)
+//!                     ▼ diagonal (no subst yet)   (a) diagonal: q ← q-1, v ← u
+//!     diag_buf      . Y . .            Y = min(Y, X)
 //! ```
 //!
-//! ### step 3: `finalize` — apply subst, then left→right insertion sweep
+//! ### step 2: `finalize` — apply subst, then left→right insertion sweep
 //!
 //! ```text
-//!     after accumulate_gap:   data    = [ g0  g1  g2  g3 ]   (deletion cost per cell)
-//!     after accumulate_diag
-//!     + substitution:         diag_buf = [ d0  d1  d2  d3 ]   (diag + subst)
+//!     after accumulate_pred:  data     = [ g0  g1  g2  g3 ]   (deletion cost per cell)
+//!     after substitution:     diag_buf = [ d0  d1  d2  d3 ]   (diag + subst)
 //!
 //!     qi = 0:     data[0] = min(g0, d0)                       (no left neighbour)
 //!
@@ -117,21 +112,26 @@ impl DPKernel for LinearKernel {
         }
     }
 
-    /// Fold deletion (graph-only step) contributions from predecessor band `src`
-    /// into `dst` at the same query position.
+    /// Fold one predecessor band into both `dst` (deletion cost per cell) and
+    /// `diag_buf` (best predecessor score at `q-1`), in a single pass over `src`.
+    ///
+    /// The loop is split into three sections so each iteration body is
+    /// straight-line: a leading gap-only cell (at most one), the bulk where both
+    /// updates apply, and a trailing diag-only cell (at most one). Iteration
+    /// covers `q ∈ [max(dst_qlo, src_qlo), min(dst_qhi, src_qhi)+1]` — the
+    /// query-range overlap between the two bands, extended by one for the
+    /// diagonal lookup at `q-1`.
     ///
     /// ```text
-    ///     pred band u   . . X . . .     (src[pqi], same q = dst_qlo + qi)
-    ///                       │
-    ///                       │ + ge        (linear deletion cost)
-    ///                       ▼
-    ///     curr band v   . . Y . . .     Y ← min(Y, X + ge)
+    ///     gap update at q    pred src[q]      → dst[q]  += ge
+    ///     diag update at q   pred src[q-1]    → diag_buf[q] = min(., src[q-1])
     /// ```
     ///
-    /// Iterates over `q ∈ [max(dst_qlo, src_qlo), min(dst_qhi, src_qhi)]`, the
-    /// query-range overlap between the two bands. No-op when they don't overlap.
-    fn accumulate_gap(
+    /// Substitution cost is NOT applied here — `finalize` applies it once after
+    /// every predecessor has contributed.
+    fn accumulate_pred(
         dst: &mut [u32],
+        diag_buf: &mut [u32],
         w_dst: usize,
         dst_qlo: usize,
         src: &[u32],
@@ -140,49 +140,34 @@ impl DPKernel for LinearKernel {
         costs: &Linear,
     ) {
         let ge = costs.gap_extend() as u32;
-        let q_lo = dst_qlo.max(src_qlo);
-        let q_hi = (dst_qlo + w_dst - 1).min(src_qlo + w_src - 1);
-        if q_lo > q_hi {
-            return;
-        }
-        for q in q_lo..=q_hi {
+
+        let gap_q_lo = dst_qlo.max(src_qlo);
+        let gap_q_hi = (dst_qlo + w_dst).min(src_qlo + w_src);
+        let diag_q_lo = dst_qlo.max(src_qlo + 1);
+        let diag_q_hi = (dst_qlo + w_dst).min(src_qlo + w_src + 1);
+
+        // Section A: gap-only prefix (0 or 1 cell).
+        if gap_q_lo < diag_q_lo && gap_q_lo < gap_q_hi {
+            let q = gap_q_lo;
             let qi = q - dst_qlo;
             let pqi = q - src_qlo;
-            // D[q] = predecessor M[q] + ge (one deletion step)
             dst[qi] = dst[qi].min(sat(src[pqi], ge));
         }
-    }
 
-    /// Fold diagonal (predecessor at `q-1`) contributions into `diag_buf`.
-    ///
-    /// Substitution cost is NOT applied here — it is applied once in `finalize`
-    /// after every predecessor has contributed, so a single symbol comparison
-    /// suffices regardless of predecessor count.
-    ///
-    /// ```text
-    ///     pred band u   . X . . .     (src[pqi] at q-1)
-    ///                     ╲
-    ///                      ╲ diagonal, no cost yet
-    ///                       ▼
-    ///     diag_buf      . . Y . .     Y ← min(Y, X)
-    ///
-    ///     index shift:  pqi = q - 1 - src_qlo
-    ///                   qi  = q     - dst_qlo
-    /// ```
-    fn accumulate_diag(
-        diag_buf: &mut [u32],
-        w_dst: usize,
-        dst_qlo: usize,
-        src: &[u32],
-        w_src: usize,
-        src_qlo: usize,
-    ) {
-        let q_lo = dst_qlo.max(src_qlo + 1);
-        let q_hi = (dst_qlo + w_dst - 1).min(src_qlo + w_src);
-        if q_lo > q_hi {
-            return;
+        // Section B: both updates apply.
+        let both_lo = diag_q_lo;
+        let both_hi = gap_q_hi.min(diag_q_hi);
+        for q in both_lo..both_hi {
+            let qi = q - dst_qlo;
+            let pqi_g = q - src_qlo;
+            let pqi_d = pqi_g - 1;
+            dst[qi] = dst[qi].min(sat(src[pqi_g], ge));
+            diag_buf[qi] = diag_buf[qi].min(src[pqi_d]);
         }
-        for q in q_lo..=q_hi {
+
+        // Section C: diag-only tail (0 or 1 cell).
+        if gap_q_hi < diag_q_hi {
+            let q = gap_q_hi;
             let qi = q - dst_qlo;
             let pqi = q - 1 - src_qlo;
             diag_buf[qi] = diag_buf[qi].min(src[pqi]);
@@ -193,8 +178,9 @@ impl DPKernel for LinearKernel {
     /// insertion cost left → right through `data`.
     ///
     /// Prerequisites: every predecessor has already contributed via
-    /// [`Self::accumulate_gap`] (into `data`) and [`Self::accumulate_diag`]
-    /// (into `diag_buf`). This function is called exactly once per band.
+    /// [`Self::accumulate_pred`] (folding deletion cost into `data` and the
+    /// diagonal minimum into `diag_buf`). This function is called exactly once
+    /// per band.
     ///
     /// ```text
     ///   input:
@@ -223,22 +209,19 @@ impl DPKernel for LinearKernel {
         costs: &Linear,
     ) {
         let ge = costs.gap_extend() as u32;
-        let eq_cost = 0u32;
         let mm_cost = costs.mismatch() as u32;
 
-        // Apply substitution to diag_buf in-place
+        // Apply substitution to diag_buf in-place (branchless mask).
         let subst_start = usize::from(qlo == 0);
         for qi in subst_start..w {
-            let subst = if symbol == query[qlo + qi - 1] {
-                eq_cost
-            } else {
-                mm_cost
-            };
+            let q = query[qlo + qi - 1];
+            let mismatch = (symbol != q) as u32;
+            let subst = mm_cost & mismatch.wrapping_neg();
             diag_buf[qi] = sat(diag_buf[qi], subst);
         }
 
         // Sequential pass: M[qi] = min(deletion_accumulated, diagonal, insertion_from_left)
-        // data[qi] already has the deletion cost from accumulate_gap.
+        // data[qi] already has the deletion cost from accumulate_pred.
         // qi=0: no insertion from left
         data[0] = data[0].min(diag_buf[0]);
         for qi in 1..w {

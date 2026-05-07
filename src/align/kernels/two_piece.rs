@@ -52,9 +52,10 @@
 //! ## Per-band computation pipeline
 //!
 //! ```text
-//!   1. accumulate_gap(u → v)    per pred u — updates D1 AND D2 columns
-//!   2. accumulate_diag(u → v)   per pred u — diag_buf = min over all 5 states
-//!   3. finalize                 once       — subst + (I1, I2, M) sweep
+//!   1. accumulate_pred(u → v)   per pred u — single pass over src:
+//!                                              updates D1 AND D2 columns AND
+//!                                              folds min over all 5 states into diag_buf
+//!   2. finalize                 once       — subst + (I1, I2, M) sweep
 //! ```
 
 use super::{BacktraceOp, DPKernel};
@@ -103,10 +104,15 @@ impl DPKernel for TwoPieceAffineKernel {
         }
     }
 
-    /// Fold D1 and D2 contributions from one predecessor band `src` into `dst`.
+    /// Fold one predecessor band into `dst` (D1 and D2 gap states) and
+    /// `diag_buf` (min across all 5 states at `q-1`), in a single pass over `src`.
     ///
-    /// Both tracks are updated independently — D1 pulls from M/I1/D1; D2 pulls
-    /// from M/I2/D2. The two tracks do not cross-talk.
+    /// The two deletion tracks are updated independently — D1 pulls from
+    /// M/I1/D1 with piece-1 costs, D2 pulls from M/I2/D2 with piece-2 costs;
+    /// no D1↔D2 cross-talk. Substitution is NOT added here — `finalize`
+    /// applies it once after every predecessor has contributed.
+    ///
+    /// **Gap update** (same `q`, graph step `v ← u`):
     ///
     /// ```text
     ///                    pred band u (same q)
@@ -122,55 +128,8 @@ impl DPKernel for TwoPieceAffineKernel {
     ///                  ▼                   ▼
     ///           dst[D1][qi]         dst[D2][qi]      (both updated, independently)
     /// ```
-    fn accumulate_gap(
-        dst: &mut [u32],
-        w_dst: usize,
-        dst_qlo: usize,
-        src: &[u32],
-        w_src: usize,
-        src_qlo: usize,
-        costs: &TwoPieceAffine,
-    ) {
-        let go1 = costs.gap_open() as u32;
-        let ge1 = costs.gap_extend() as u32;
-        let go_ge1 = go1 + ge1;
-        let go2 = costs.gap_open2() as u32;
-        let ge2 = costs.gap_extend2() as u32;
-        let go_ge2 = go2 + ge2;
-
-        let q_lo = dst_qlo.max(src_qlo);
-        let q_hi = (dst_qlo + w_dst - 1).min(src_qlo + w_src - 1);
-        if q_lo > q_hi {
-            return;
-        }
-
-        for q in q_lo..=q_hi {
-            let qi = q - dst_qlo;
-            let pqi = q - src_qlo;
-            // Read predecessor states: 0=M, 1=D1, 2=D2, 3=I1, 4=I2
-            let pm = src[pqi];
-            let pd1 = src[w_src + pqi];
-            let pd2 = src[2 * w_src + pqi];
-            let pi1 = src[3 * w_src + pqi];
-            let pi2 = src[4 * w_src + pqi];
-
-            let m_or_i1 = pm.min(pi1); // M or I1 → D1 transition
-            let m_or_i2 = pm.min(pi2); // M or I2 → D2 transition
-
-            // D1[q] = min(M_pred[q] + go_ge1, I1_pred[q] + go_ge1, D1_pred[q] + ge1)
-            dst[w_dst + qi] = dst[w_dst + qi].min(sat(m_or_i1, go_ge1)).min(sat(pd1, ge1));
-
-            // D2[q] = min(M_pred[q] + go_ge2, I2_pred[q] + go_ge2, D2_pred[q] + ge2)
-            dst[2 * w_dst + qi] = dst[2 * w_dst + qi]
-                .min(sat(m_or_i2, go_ge2))
-                .min(sat(pd2, ge2));
-        }
-    }
-
-    /// Fold the diagonal-predecessor minimum across ALL five states into `diag_buf`.
     ///
-    /// Substitution cost is applied once in `finalize`, so the buffer here
-    /// carries a raw best-score across states at `q-1` in the predecessor.
+    /// **Diag update** (graph step `v ← u`, query `q ← q-1`):
     ///
     /// ```text
     ///     pred band u at q-1
@@ -187,23 +146,86 @@ impl DPKernel for TwoPieceAffineKernel {
     ///                    ▼
     ///     diag_buf[qi] ← min(diag_buf[qi], candidate)
     /// ```
-    fn accumulate_diag(
+    ///
+    /// The implementation splits the loop into three sections (gap-only
+    /// prefix, both-updates bulk, diag-only tail) so each iteration body is
+    /// straight-line.
+    fn accumulate_pred(
+        dst: &mut [u32],
         diag_buf: &mut [u32],
         w_dst: usize,
         dst_qlo: usize,
         src: &[u32],
         w_src: usize,
         src_qlo: usize,
+        costs: &TwoPieceAffine,
     ) {
-        let q_lo = dst_qlo.max(src_qlo + 1);
-        let q_hi = (dst_qlo + w_dst - 1).min(src_qlo + w_src);
-        if q_lo > q_hi {
-            return;
+        let go1 = costs.gap_open() as u32;
+        let ge1 = costs.gap_extend() as u32;
+        let go_ge1 = go1 + ge1;
+        let go2 = costs.gap_open2() as u32;
+        let ge2 = costs.gap_extend2() as u32;
+        let go_ge2 = go2 + ge2;
+
+        let gap_q_lo = dst_qlo.max(src_qlo);
+        let gap_q_hi = (dst_qlo + w_dst).min(src_qlo + w_src);
+        let diag_q_lo = dst_qlo.max(src_qlo + 1);
+        let diag_q_hi = (dst_qlo + w_dst).min(src_qlo + w_src + 1);
+
+        // Section A: gap-only prefix (0 or 1 cell).
+        if gap_q_lo < diag_q_lo && gap_q_lo < gap_q_hi {
+            let q = gap_q_lo;
+            let qi = q - dst_qlo;
+            let pqi = q - src_qlo;
+            let pm = src[pqi];
+            let pd1 = src[w_src + pqi];
+            let pd2 = src[2 * w_src + pqi];
+            let pi1 = src[3 * w_src + pqi];
+            let pi2 = src[4 * w_src + pqi];
+            dst[w_dst + qi] = dst[w_dst + qi]
+                .min(sat(pm.min(pi1), go_ge1))
+                .min(sat(pd1, ge1));
+            dst[2 * w_dst + qi] = dst[2 * w_dst + qi]
+                .min(sat(pm.min(pi2), go_ge2))
+                .min(sat(pd2, ge2));
         }
-        for q in q_lo..=q_hi {
+
+        // Section B: both updates apply.
+        let both_lo = diag_q_lo;
+        let both_hi = gap_q_hi.min(diag_q_hi);
+        for q in both_lo..both_hi {
+            let qi = q - dst_qlo;
+            let pqi_g = q - src_qlo;
+            let pqi_d = pqi_g - 1;
+
+            // Gap update at pqi_g.
+            let pm_g = src[pqi_g];
+            let pd1_g = src[w_src + pqi_g];
+            let pd2_g = src[2 * w_src + pqi_g];
+            let pi1_g = src[3 * w_src + pqi_g];
+            let pi2_g = src[4 * w_src + pqi_g];
+            dst[w_dst + qi] = dst[w_dst + qi]
+                .min(sat(pm_g.min(pi1_g), go_ge1))
+                .min(sat(pd1_g, ge1));
+            dst[2 * w_dst + qi] = dst[2 * w_dst + qi]
+                .min(sat(pm_g.min(pi2_g), go_ge2))
+                .min(sat(pd2_g, ge2));
+
+            // Diag update at pqi_g - 1 (min over all 5 states).
+            let pm_d = src[pqi_d];
+            let pd1_d = src[w_src + pqi_d];
+            let pd2_d = src[2 * w_src + pqi_d];
+            let pi1_d = src[3 * w_src + pqi_d];
+            let pi2_d = src[4 * w_src + pqi_d];
+            let best = pm_d.min(pd1_d).min(pd2_d).min(pi1_d).min(pi2_d);
+            diag_buf[qi] = diag_buf[qi].min(best);
+        }
+
+        // Section C: diag-only tail (0 or 1 cell).
+        if gap_q_hi < diag_q_hi {
+            let q = gap_q_hi;
             let qi = q - dst_qlo;
             let pqi = q - 1 - src_qlo;
-            // min over all 5 predecessor states
             let pm = src[pqi];
             let pd1 = src[w_src + pqi];
             let pd2 = src[2 * w_src + pqi];
@@ -257,17 +279,14 @@ impl DPKernel for TwoPieceAffineKernel {
         let go2 = costs.gap_open2() as u32;
         let ge2 = costs.gap_extend2() as u32;
         let go_ge2 = go2 + ge2;
-        let eq_cost = 0u32;
         let mm_cost = costs.mismatch() as u32;
 
-        // Apply substitution cost in-place to diag_buf
+        // Apply substitution cost in-place to diag_buf (branchless mask).
         let subst_start = usize::from(qlo == 0);
         for qi in subst_start..w {
-            let subst = if symbol == query[qlo + qi - 1] {
-                eq_cost
-            } else {
-                mm_cost
-            };
+            let q = query[qlo + qi - 1];
+            let mismatch = (symbol != q) as u32;
+            let subst = mm_cost & mismatch.wrapping_neg();
             diag_buf[qi] = sat(diag_buf[qi], subst);
         }
 

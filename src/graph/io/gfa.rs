@@ -8,6 +8,7 @@ use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 
 use crate::errors::PoastaIOError;
 use crate::graph::consensus::heaviest_bundle_consensus;
+use crate::graph::io::CONSENSUS_NAME;
 use crate::graph::poa::POAGraph;
 use crate::graph::traits::{GraphBase, GraphWithNodeOrdering};
 
@@ -18,8 +19,6 @@ pub struct GfaOutputOptions {
     /// heaviest-bundling consensus path.
     pub include_consensus: bool,
 }
-
-const CONSENSUS_NAME: &str = "consensus";
 
 /// Serialise a POA graph to GFA 1.0.
 ///
@@ -71,15 +70,29 @@ where
         n_links += 1;
     }
 
+    // Walk each sequence one node at a time, picking the next edge by binary-searching
+    // `seq_idx` in the edge's `sequence_ids` (sorted ascending by `add_edge`).
+    // Segments are streamed straight to the writer so we never hold a Vec<String> of
+    // the full path in memory.
     for (seq_idx, seq) in graph.sequences.iter().enumerate() {
-        let mut segments: Vec<String> = Vec::new();
+        write!(out, "P\t{}\t", seq.name())
+            .map_err(|source| PoastaIOError::FileWriteError { source })?;
+
         let mut curr = seq.start_node();
+        let mut first = true;
         loop {
-            segments.push(format!("n{}+", curr.index()));
+            if first {
+                write!(out, "n{}+", curr.index())
+            } else {
+                write!(out, ",n{}+", curr.index())
+            }
+            .map_err(|source| PoastaIOError::FileWriteError { source })?;
+            first = false;
+
             let next = graph
                 .graph
                 .edges(curr)
-                .find(|e| e.weight().sequence_ids.contains(&seq_idx))
+                .find(|e| e.weight().sequence_ids.binary_search(&seq_idx).is_ok())
                 .map(|e| e.target());
             match next {
                 Some(n) if n != end => curr = n,
@@ -87,8 +100,7 @@ where
             }
         }
 
-        writeln!(out, "P\t{}\t{}\t*", seq.name(), segments.join(","))
-            .map_err(|source| PoastaIOError::FileWriteError { source })?;
+        writeln!(out, "\t*").map_err(|source| PoastaIOError::FileWriteError { source })?;
     }
 
     let mut consensus_emitted = false;

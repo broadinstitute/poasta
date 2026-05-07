@@ -51,13 +51,26 @@ pub trait DPKernel: Sized + 'static {
 
     // ── Forward pass ────────────────────────────────────────────────────────
 
-    /// Accumulate gap-state (D-like) contributions from ONE predecessor band
-    /// into the current band's data. Called once per predecessor band.
+    /// Fold ONE predecessor band into both the current band's gap states and
+    /// the shared diagonal-minimum buffer in a single pass over `src`.
     ///
-    /// `dst`: current band data, len = `STATES * w_dst`
-    /// `src`: predecessor band data, len = `STATES * w_src`
-    fn accumulate_gap(
+    /// Called once per predecessor band before [`Self::finalize`]. Subsequent
+    /// calls shrink `dst` (gap states) and `diag_buf` (diagonal minimum) via
+    /// `min`, so the ordering of predecessor calls is irrelevant.
+    ///
+    /// - `dst`: current band data, len = `STATES * w_dst`. The gap states
+    ///   (e.g. `D` for affine, `D1`/`D2` for two-piece) are updated in place.
+    ///   M and I-like states are NOT touched here — they are written by
+    ///   `finalize`.
+    /// - `diag_buf`: shared buffer of length `w_dst` accumulating
+    ///   `min(all-states at q-1 in predecessor)`. Substitution cost is NOT
+    ///   applied here — it is applied once in [`Self::finalize`] after every
+    ///   predecessor has contributed, so a single symbol comparison suffices
+    ///   regardless of predecessor count.
+    /// - `src`: predecessor band data, len = `STATES * w_src`.
+    fn accumulate_pred(
         dst: &mut [u32],
+        diag_buf: &mut [u32],
         w_dst: usize,
         dst_qlo: usize,
         src: &[u32],
@@ -66,22 +79,9 @@ pub trait DPKernel: Sized + 'static {
         costs: &Self::Costs,
     );
 
-    /// Accumulate the diagonal predecessor minimum into `diag_buf` (length `w_dst`).
-    /// `diag_buf[qi]` accumulates `min(all-states at q-1 in predecessor)`.
-    /// Called once per predecessor band before `finalize`.
-    /// No `costs` parameter — substitution cost is applied later in [`Self::finalize`].
-    fn accumulate_diag(
-        diag_buf: &mut [u32],
-        w_dst: usize,
-        dst_qlo: usize,
-        src: &[u32],
-        w_src: usize,
-        src_qlo: usize,
-    );
-
     /// Apply substitution cost to `diag_buf`, then compute sequential states
     /// (M and I-like) left-to-right. The gap states in `data` must already be
-    /// filled (via `accumulate_gap` calls) before calling this.
+    /// filled (via `accumulate_pred` calls) before calling this.
     fn finalize(
         data: &mut [u32],
         w: usize,

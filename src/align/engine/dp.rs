@@ -200,10 +200,12 @@ fn align_dp<K: DPKernel, G: AlignableGraph>(
             })
             .collect();
 
-        // Accumulate gap states from all predecessors.
+        // Accumulate gap states and diagonal predecessor scores in one pass per pred.
+        let mut diag_buf = vec![INF; mp1];
         for src in &pred_bufs {
-            K::accumulate_gap(
+            K::accumulate_pred(
                 &mut dp_data[slot_base(slot)..slot_base(slot) + n_states * mp1],
+                &mut diag_buf,
                 mp1,
                 0,
                 src,
@@ -211,12 +213,6 @@ fn align_dp<K: DPKernel, G: AlignableGraph>(
                 0,
                 costs,
             );
-        }
-
-        // Accumulate diagonal predecessor scores into diag_buf.
-        let mut diag_buf = vec![INF; mp1];
-        for src in &pred_bufs {
-            K::accumulate_diag(&mut diag_buf, mp1, 0, src, mp1, 0);
         }
 
         // Finalize: substitution + sequential M/I recurrence.
@@ -283,7 +279,7 @@ fn align_dp<K: DPKernel, G: AlignableGraph>(
         Some(col)
     };
 
-    let alignment = backtrace_generic::<K, G>(
+    let alignment = backtrace_generic::<K, G, _>(
         costs,
         graph,
         &get_node_col,
@@ -322,15 +318,18 @@ fn align_dp<K: DPKernel, G: AlignableGraph>(
 ///
 /// `init_data` has `K::STATES * (m+1)` elements and represents the start
 /// sentinel column (built via `K::init_start`).
-pub(crate) fn backtrace_generic<K: DPKernel, G: AlignableGraph>(
+pub(crate) fn backtrace_generic<K: DPKernel, G: AlignableGraph, F>(
     costs: &K::Costs,
     graph: &G,
-    get_node_col: &dyn Fn(G::Node, usize) -> Option<StateCol>,
+    get_node_col: &F,
     init_data: &[u32],
     best_node: G::Node,
     best_state: u8,
     m: usize,
-) -> Vec<AlignedPair<G::Node>> {
+) -> Vec<AlignedPair<G::Node>>
+where
+    F: Fn(G::Node, usize) -> Option<StateCol>,
+{
     let n_states = K::STATES;
     // Backtrace walks at most one step per graph node per query position;
     // reserving `m + 32` avoids most reallocations without over-allocating.
@@ -363,7 +362,7 @@ pub(crate) fn backtrace_generic<K: DPKernel, G: AlignableGraph>(
                 debug_assert!(q > 0, "q=0 in Diagonal state; expected SwitchState");
                 pairs.push(AlignedPair::new(Some(v), Some(q - 1)));
                 q -= 1;
-                match find_best_pred_generic::<K, G>(graph, get_node_col, init_data, v, q, costs) {
+                match find_best_pred_generic::<K, G, F>(graph, get_node_col, init_data, v, q, costs) {
                     None => break,
                     Some((pv, ps)) => {
                         v = pv;
@@ -373,7 +372,7 @@ pub(crate) fn backtrace_generic<K: DPKernel, G: AlignableGraph>(
             }
             BacktraceOp::Delete { .. } => {
                 pairs.push(AlignedPair::new(Some(v), None));
-                match find_del_pred_generic::<K, G>(graph, get_node_col, init_data, v, q, costs) {
+                match find_del_pred_generic::<K, G, F>(graph, get_node_col, init_data, v, q, costs) {
                     None => break,
                     Some((pv, ps)) => {
                         v = pv;
@@ -395,14 +394,17 @@ pub(crate) fn backtrace_generic<K: DPKernel, G: AlignableGraph>(
 /// Find the predecessor of `v` with the best (minimum) overall score at query
 /// position `q`, across all states. Returns `None` if the best predecessor is
 /// the start sentinel (alignment is complete), otherwise `Some((pred_node, best_state_id))`.
-fn find_best_pred_generic<K: DPKernel, G: AlignableGraph>(
+fn find_best_pred_generic<K: DPKernel, G: AlignableGraph, F>(
     graph: &G,
-    get_node_col: &dyn Fn(G::Node, usize) -> Option<StateCol>,
+    get_node_col: &F,
     init_data: &[u32],
     v: G::Node,
     q: usize,
     _costs: &K::Costs,
-) -> Option<(G::Node, u8)> {
+) -> Option<(G::Node, u8)>
+where
+    F: Fn(G::Node, usize) -> Option<StateCol>,
+{
     let start = graph.start_node();
     let end = graph.end_node();
     let mp1 = init_data.len() / K::STATES;
@@ -446,14 +448,17 @@ fn find_best_pred_generic<K: DPKernel, G: AlignableGraph>(
 /// Returns `None` if the best predecessor is the start sentinel (alignment is
 /// complete), otherwise `Some((pred_node, pred_state_id))` where `pred_state_id`
 /// is the state in the predecessor that produced the minimum cost.
-fn find_del_pred_generic<K: DPKernel, G: AlignableGraph>(
+fn find_del_pred_generic<K: DPKernel, G: AlignableGraph, F>(
     graph: &G,
-    get_node_col: &dyn Fn(G::Node, usize) -> Option<StateCol>,
+    get_node_col: &F,
     init_data: &[u32],
     v: G::Node,
     q: usize,
     costs: &K::Costs,
-) -> Option<(G::Node, u8)> {
+) -> Option<(G::Node, u8)>
+where
+    F: Fn(G::Node, usize) -> Option<StateCol>,
+{
     let start = graph.start_node();
     let end = graph.end_node();
     let mp1 = init_data.len() / K::STATES;

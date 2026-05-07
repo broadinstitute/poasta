@@ -8,7 +8,6 @@ use crate::errors::PoastaError;
 use crate::graph::alignment::AddAlignment;
 
 use super::traits::{GraphBase, GraphWithNodeOrdering};
-use super::utils::rev_postorder_nodes;
 
 pub(crate) mod graph_impl {
     use petgraph::graph::IndexType;
@@ -111,6 +110,11 @@ where
     pub(crate) graph: graph_impl::POAGraphImpl<Ix>,
     pub sequences: Vec<Sequence<POANodeIndex<Ix>>>,
     topological_sorted: Vec<POANodeIndex<Ix>>,
+    /// Reused visited bitmap for `compute_rev_postorder`. Indexed by
+    /// `node.index()`; reset to all-`false` on each call. Reused across
+    /// invocations to avoid the per-alignment hashset allocation that the
+    /// previous `FxHashSet`-based implementation paid for.
+    visited_scratch: Vec<bool>,
     start_node: POANodeIndex<Ix>,
     end_node: POANodeIndex<Ix>,
 }
@@ -130,9 +134,66 @@ where
             graph,
             sequences: Vec::default(),
             topological_sorted: vec![start_node, end_node],
+            visited_scratch: Vec::new(),
             start_node,
             end_node,
         }
+    }
+
+    /// Topological order (reverse postorder) of all nodes, last computed by
+    /// `post_process` / `compute_rev_postorder`.
+    #[inline]
+    pub(crate) fn topological_order(&self) -> &[POANodeIndex<Ix>] {
+        &self.topological_sorted
+    }
+
+    /// Recompute `topological_sorted` via iterative DFS from the start sentinel.
+    ///
+    /// Uses `visited_scratch` (a `Vec<bool>` indexed by `node.index()`) instead
+    /// of an `FxHashSet`. petgraph node indices are dense, so a bitmap lookup
+    /// is one load and the per-call allocation that the hashset incurred is
+    /// gone. Called once per `add_alignment`, so this matters.
+    pub(crate) fn compute_rev_postorder(&mut self) {
+        let max_idx = self
+            .graph
+            .node_indices()
+            .map(|n| n.index())
+            .max()
+            .unwrap_or(0);
+
+        self.visited_scratch.clear();
+        self.visited_scratch.resize(max_idx + 1, false);
+        self.topological_sorted.clear();
+
+        let graph = &self.graph;
+        let visited = &mut self.visited_scratch;
+        let topo = &mut self.topological_sorted;
+        let start = self.start_node;
+
+        visited[start.index()] = true;
+        let mut stack: Vec<(POANodeIndex<Ix>, Neighbors<'_, POAEdgeData, Ix>)> =
+            vec![(start, graph.neighbors(start))];
+
+        loop {
+            let next_child = match stack.last_mut() {
+                None => break,
+                Some((_, iter)) => iter.next(),
+            };
+            match next_child {
+                Some(child) => {
+                    if !visited[child.index()] {
+                        visited[child.index()] = true;
+                        stack.push((child, graph.neighbors(child)));
+                    }
+                }
+                None => {
+                    let (node, _) = stack.pop().unwrap();
+                    topo.push(node);
+                }
+            }
+        }
+
+        topo.reverse();
     }
 
     pub fn node_symbol(&self, node: POANodeIndex<Ix>) -> u8 {
@@ -229,7 +290,7 @@ where
             }
         }
 
-        self.topological_sorted = rev_postorder_nodes(self);
+        self.compute_rev_postorder();
 
         // Update the rank field on each node so that node_rank() returns the correct value.
         for (rank, &node) in self.topological_sorted.iter().enumerate() {

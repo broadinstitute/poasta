@@ -9,10 +9,13 @@ pub trait AlignableGraph: GraphWithNodeOrdering<NodeType = Self::Node> {
 
 /// Per-alignment counters emitted by the alignment engines.
 ///
-/// `cells_computed` counts each DP state as one cell. The canonical DP
-/// touches `(m + 1) * n_real * n_states` cells, so
+/// `cells_computed` counts each DP state as one cell, summed across every
+/// attempt the engine made (e.g. each band-doubling iteration). The canonical
+/// DP touches `(m + 1) * n_real * n_states` cells, so
 /// `fraction_of_full_matrix = cells_computed / ((m+1) * n_real * n_states)`
-/// (1.0 ⇒ equivalent to the full DP).
+/// (1.0 ⇒ equivalent in work to one full-matrix DP). Because failed attempts
+/// also contribute cells, the fraction can exceed 1.0 when many doublings
+/// occur before the alignment is provably optimal.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AlignmentStats {
     pub max_bandwidth: usize,
