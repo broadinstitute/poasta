@@ -28,7 +28,7 @@ use std::cmp::Ordering;
 use std::convert::Infallible;
 use std::marker::PhantomData;
 use std::ops::Index;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::align::{
     cost_models::AlignmentCostModel,
@@ -75,7 +75,7 @@ where
     costs: C,
     /// Starting bandwidth k (≥ 1).
     initial_k: usize,
-    logger: Option<Rc<RefCell<DebugLogger>>>,
+    logger: Option<Arc<DebugLogger>>,
     scratch: RefCell<Scratch>,
     _phantom: PhantomData<Ix>,
 }
@@ -102,7 +102,7 @@ where
     }
 
     /// Attach a debug logger; call `DebugLogger::begin_sequence` before each `align` call.
-    pub fn with_debug_logger(mut self, logger: Rc<RefCell<DebugLogger>>) -> Self {
+    pub fn with_debug_logger(mut self, logger: Arc<DebugLogger>) -> Self {
         self.logger = Some(logger);
         self
     }
@@ -145,8 +145,7 @@ where
             .saturating_mul(C::Kernel::STATES);
         let mut total_cells_computed: usize = 0;
 
-        let log_borrow = self.logger.as_ref().map(|rc| rc.borrow());
-        let log: Option<&DebugLogger> = log_borrow.as_deref();
+        let log: Option<&DebugLogger> = self.logger.as_deref();
 
         let mut scratch = self.scratch.borrow_mut();
 
@@ -854,12 +853,21 @@ where
         let w = qhi - qlo;
 
         // ── Fused per-predecessor pass: D-state + diagonal buffer ────────────
+        //
+        // For single-pred bands (the common case in chain-like POA regions),
+        // the destination band's range is exactly the predecessor's shifted
+        // range, so the first call alone covers `diag_buf` end-to-end. We use
+        // `init_pred` (writes `=`) and skip the per-band `diag_buf.fill(INF)`.
+        // For multi-pred bands the first pred only covers part of `diag_buf`,
+        // so we must keep the fill before `min`-folding subsequent preds.
         let diag_buf = &mut diag_buf[..w];
-        diag_buf.fill(INF);
+        let n_preds = band_slices.pred_bands.len();
+        let mut pred_iter = band_slices.pred_iter();
 
-        for (pred_qlo, pred_data) in band_slices.pred_iter() {
+        if n_preds == 1 {
+            let (pred_qlo, pred_data) = pred_iter.next().unwrap();
             let pred_w = pred_data.len() / K::STATES;
-            K::accumulate_pred(
+            K::init_pred(
                 band_slices.data,
                 diag_buf,
                 w,
@@ -869,6 +877,21 @@ where
                 pred_qlo,
                 costs,
             );
+        } else {
+            diag_buf.fill(INF);
+            for (pred_qlo, pred_data) in pred_iter {
+                let pred_w = pred_data.len() / K::STATES;
+                K::accumulate_pred(
+                    band_slices.data,
+                    diag_buf,
+                    w,
+                    qlo,
+                    pred_data,
+                    pred_w,
+                    pred_qlo,
+                    costs,
+                );
+            }
         }
 
         // ── Finalize: apply substitution and sequential M/I states ────────────

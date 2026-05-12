@@ -190,35 +190,38 @@ impl DPKernel for TwoPieceAffineKernel {
                 .min(sat(pd2, ge2));
         }
 
-        // Section B: both updates apply.
+        // Section B: both updates apply. Split into independent passes so
+        // each loop is a clean SoA stream over `src` (better autovectorization
+        // across the 5 contiguous state arrays).
         let both_lo = diag_q_lo;
         let both_hi = gap_q_hi.min(diag_q_hi);
+
+        // Pass 1: D1 / D2 gap fold (writes dst[D1] and dst[D2]).
         for q in both_lo..both_hi {
             let qi = q - dst_qlo;
-            let pqi_g = q - src_qlo;
-            let pqi_d = pqi_g - 1;
-
-            // Gap update at pqi_g.
-            let pm_g = src[pqi_g];
-            let pd1_g = src[w_src + pqi_g];
-            let pd2_g = src[2 * w_src + pqi_g];
-            let pi1_g = src[3 * w_src + pqi_g];
-            let pi2_g = src[4 * w_src + pqi_g];
+            let pqi = q - src_qlo;
+            let pm = src[pqi];
+            let pd1 = src[w_src + pqi];
+            let pd2 = src[2 * w_src + pqi];
+            let pi1 = src[3 * w_src + pqi];
+            let pi2 = src[4 * w_src + pqi];
             dst[w_dst + qi] = dst[w_dst + qi]
-                .min(sat(pm_g.min(pi1_g), go_ge1))
-                .min(sat(pd1_g, ge1));
+                .min(sat(pm.min(pi1), go_ge1))
+                .min(sat(pd1, ge1));
             dst[2 * w_dst + qi] = dst[2 * w_dst + qi]
-                .min(sat(pm_g.min(pi2_g), go_ge2))
-                .min(sat(pd2_g, ge2));
-
-            // Diag update at pqi_g - 1 (min over all 5 states).
-            let pm_d = src[pqi_d];
-            let pd1_d = src[w_src + pqi_d];
-            let pd2_d = src[2 * w_src + pqi_d];
-            let pi1_d = src[3 * w_src + pqi_d];
-            let pi2_d = src[4 * w_src + pqi_d];
-            let best = pm_d.min(pd1_d).min(pd2_d).min(pi1_d).min(pi2_d);
-            diag_buf[qi] = diag_buf[qi].min(best);
+                .min(sat(pm.min(pi2), go_ge2))
+                .min(sat(pd2, ge2));
+        }
+        // Pass 2: diag fold (writes diag_buf[qi]).
+        for q in both_lo..both_hi {
+            let qi = q - dst_qlo;
+            let pqi = q - 1 - src_qlo;
+            let pm = src[pqi];
+            let pd1 = src[w_src + pqi];
+            let pd2 = src[2 * w_src + pqi];
+            let pi1 = src[3 * w_src + pqi];
+            let pi2 = src[4 * w_src + pqi];
+            diag_buf[qi] = diag_buf[qi].min(pm.min(pd1).min(pd2).min(pi1).min(pi2));
         }
 
         // Section C: diag-only tail (0 or 1 cell).
@@ -233,6 +236,86 @@ impl DPKernel for TwoPieceAffineKernel {
             let pi2 = src[4 * w_src + pqi];
             let best = pm.min(pd1).min(pd2).min(pi1).min(pi2);
             diag_buf[qi] = diag_buf[qi].min(best);
+        }
+    }
+
+    /// Like [`Self::accumulate_pred`] but writes destinations with `=` instead
+    /// of `min`-folding. Caller-side preconditions match
+    /// [`AffineKernel::init_pred`]: `dst` is pre-initialized to INF, and the
+    /// destination band's range matches the predecessor's shifted range
+    /// (true for single-pred bands).
+    fn init_pred(
+        dst: &mut [u32],
+        diag_buf: &mut [u32],
+        w_dst: usize,
+        dst_qlo: usize,
+        src: &[u32],
+        w_src: usize,
+        src_qlo: usize,
+        costs: &TwoPieceAffine,
+    ) {
+        let go1 = costs.gap_open() as u32;
+        let ge1 = costs.gap_extend() as u32;
+        let go_ge1 = go1 + ge1;
+        let go2 = costs.gap_open2() as u32;
+        let ge2 = costs.gap_extend2() as u32;
+        let go_ge2 = go2 + ge2;
+
+        let gap_q_lo = dst_qlo.max(src_qlo);
+        let gap_q_hi = (dst_qlo + w_dst).min(src_qlo + w_src);
+        let diag_q_lo = dst_qlo.max(src_qlo + 1);
+        let diag_q_hi = (dst_qlo + w_dst).min(src_qlo + w_src + 1);
+
+        // Section A: gap-only prefix.
+        if gap_q_lo < diag_q_lo && gap_q_lo < gap_q_hi {
+            let q = gap_q_lo;
+            let qi = q - dst_qlo;
+            let pqi = q - src_qlo;
+            let pm = src[pqi];
+            let pd1 = src[w_src + pqi];
+            let pd2 = src[2 * w_src + pqi];
+            let pi1 = src[3 * w_src + pqi];
+            let pi2 = src[4 * w_src + pqi];
+            dst[w_dst + qi] = sat(pm.min(pi1), go_ge1).min(sat(pd1, ge1));
+            dst[2 * w_dst + qi] = sat(pm.min(pi2), go_ge2).min(sat(pd2, ge2));
+        }
+
+        // Section B: both updates apply (write directly).
+        let both_lo = diag_q_lo;
+        let both_hi = gap_q_hi.min(diag_q_hi);
+        for q in both_lo..both_hi {
+            let qi = q - dst_qlo;
+            let pqi = q - src_qlo;
+            let pm = src[pqi];
+            let pd1 = src[w_src + pqi];
+            let pd2 = src[2 * w_src + pqi];
+            let pi1 = src[3 * w_src + pqi];
+            let pi2 = src[4 * w_src + pqi];
+            dst[w_dst + qi] = sat(pm.min(pi1), go_ge1).min(sat(pd1, ge1));
+            dst[2 * w_dst + qi] = sat(pm.min(pi2), go_ge2).min(sat(pd2, ge2));
+        }
+        for q in both_lo..both_hi {
+            let qi = q - dst_qlo;
+            let pqi = q - 1 - src_qlo;
+            let pm = src[pqi];
+            let pd1 = src[w_src + pqi];
+            let pd2 = src[2 * w_src + pqi];
+            let pi1 = src[3 * w_src + pqi];
+            let pi2 = src[4 * w_src + pqi];
+            diag_buf[qi] = pm.min(pd1).min(pd2).min(pi1).min(pi2);
+        }
+
+        // Section C: diag-only tail.
+        if gap_q_hi < diag_q_hi {
+            let q = gap_q_hi;
+            let qi = q - dst_qlo;
+            let pqi = q - 1 - src_qlo;
+            let pm = src[pqi];
+            let pd1 = src[w_src + pqi];
+            let pd2 = src[2 * w_src + pqi];
+            let pi1 = src[3 * w_src + pqi];
+            let pi2 = src[4 * w_src + pqi];
+            diag_buf[qi] = pm.min(pd1).min(pd2).min(pi1).min(pi2);
         }
     }
 
@@ -281,22 +364,26 @@ impl DPKernel for TwoPieceAffineKernel {
         let go_ge2 = go2 + ge2;
         let mm_cost = costs.mismatch() as u32;
 
-        // Apply substitution cost in-place to diag_buf (branchless mask).
-        let subst_start = usize::from(qlo == 0);
-        for qi in subst_start..w {
-            let q = query[qlo + qi - 1];
-            let mismatch = (symbol != q) as u32;
-            let subst = mm_cost & mismatch.wrapping_neg();
-            diag_buf[qi] = sat(diag_buf[qi], subst);
-        }
-
-        // Boundary: I1[0] = I2[0] = INF, M[0] = min(diag, D1[0], D2[0])
+        // Boundary qi=0: I1[0] = I2[0] = INF, M[0] = min(diag + subst, D1[0], D2[0]).
         data[3 * w] = INF; // I1[0]
         data[4 * w] = INF; // I2[0]
+        let diag0 = if qlo == 0 {
+            diag_buf[0]
+        } else {
+            let mismatch = (symbol != query[qlo - 1]) as u32;
+            sat(diag_buf[0], mm_cost & mismatch.wrapping_neg())
+        };
         let d_best_0 = data[w].min(data[2 * w]);
-        data[0] = diag_buf[0].min(d_best_0);
+        data[0] = diag0.min(d_best_0);
 
+        // Sequential left→right sweep with per-cell substitution mask folded
+        // in. The loop is scalar regardless (RAW deps on M[qi-1], I1[qi-1],
+        // I2[qi-1]); folding saves one streaming pass over diag_buf.
         for qi in 1..w {
+            let q_byte = query[qlo + qi - 1];
+            let mismatch = (symbol != q_byte) as u32;
+            let diag = sat(diag_buf[qi], mm_cost & mismatch.wrapping_neg());
+
             let m_prev = data[qi - 1];
             let i1_prev = data[3 * w + qi - 1];
             let i2_prev = data[4 * w + qi - 1];
@@ -306,7 +393,7 @@ impl DPKernel for TwoPieceAffineKernel {
             data[4 * w + qi] = sat(m_prev, go_ge2).min(sat(i2_prev, ge2));
             let d_best = data[w + qi].min(data[2 * w + qi]);
             let i_best = data[3 * w + qi].min(data[4 * w + qi]);
-            data[qi] = min3(diag_buf[qi], d_best, i_best);
+            data[qi] = min3(diag, d_best, i_best);
         }
     }
 

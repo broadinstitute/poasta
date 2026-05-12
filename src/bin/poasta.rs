@@ -1,11 +1,10 @@
 //! POASTA command-line driver.
 
-use std::cell::RefCell;
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Write};
 use std::path::Path;
 use std::process::ExitCode;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use clap::Parser;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
@@ -18,9 +17,8 @@ use poasta::align::engine::AlignOutput;
 use poasta::align::engine::band_doubling::BandDoublingEngineScalar;
 use poasta::align::engine::dp::CanonicalDP;
 use poasta::align::traits::AlignmentEngine;
-use poasta::cli::poasta::{
-    AlignArgs, CliArgs, CliSubcommand, CostModelKind, EngineKind, OutputType,
-};
+use poasta::cli::CostModelKind;
+use poasta::cli::poasta::{AlignArgs, CliArgs, CliSubcommand, EngineKind, OutputType};
 use poasta::debug::logger::DebugLogger;
 use poasta::errors::PoastaIOError;
 use poasta::graph::io::fasta::{FastaOutputOptions, load_graph_from_fasta_msa, poa_graph_to_fasta};
@@ -150,12 +148,12 @@ fn open_seed_graph(path: &Path) -> Result<Box<dyn io::Read>, PoastaIOError> {
     }
 }
 
-fn make_debug_logger(args: &AlignArgs) -> Result<Option<Rc<RefCell<DebugLogger>>>, CliError> {
+fn make_debug_logger(args: &AlignArgs) -> Result<Option<Arc<DebugLogger>>, CliError> {
     match &args.debug_output_dir {
         None => Ok(None),
         Some(dir) => {
             let logger = DebugLogger::new(dir.clone())?;
-            Ok(Some(Rc::new(RefCell::new(logger))))
+            Ok(Some(Arc::new(logger)))
         }
     }
 }
@@ -232,7 +230,7 @@ fn run_with<E>(
     engine: E,
     graph: POAGraph<u32>,
     sequences: &[(String, Vec<u8>)],
-    debug_logger: Option<Rc<RefCell<DebugLogger>>>,
+    debug_logger: Option<Arc<DebugLogger>>,
 ) -> Result<POAGraph<u32>, CliError>
 where
     E: for<'s> AlignmentEngine<
@@ -246,7 +244,7 @@ where
 
     for (name, seq) in sequences {
         if let Some(ref logger) = debug_logger {
-            logger.borrow().begin_sequence(aligner.graph(), name, seq);
+            logger.begin_sequence(aligner.graph(), name, seq);
         }
 
         aligner
@@ -254,7 +252,7 @@ where
             .map_err(|e| CliError::Align(format!("{e}")))?;
 
         if let Some(ref logger) = debug_logger {
-            logger.borrow().end_sequence();
+            logger.end_sequence();
         }
     }
 

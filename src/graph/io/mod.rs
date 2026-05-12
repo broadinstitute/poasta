@@ -2,6 +2,7 @@
 
 pub mod dot;
 pub mod fasta;
+pub mod gaf;
 pub mod gfa;
 pub mod seq;
 

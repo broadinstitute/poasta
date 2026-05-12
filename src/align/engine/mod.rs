@@ -37,6 +37,20 @@ where
     pub fn is_aligned(&self) -> bool {
         self.0.is_some() && self.1.is_some()
     }
+
+    /// `true` when this pair represents a query insertion relative to the
+    /// graph: a query position with no corresponding graph node.
+    #[inline(always)]
+    pub fn is_insertion(&self) -> bool {
+        self.0.is_none() && self.1.is_some()
+    }
+
+    /// `true` when this pair represents a deletion in the query relative to
+    /// the graph: a graph node with no corresponding query position.
+    #[inline(always)]
+    pub fn is_deletion(&self) -> bool {
+        self.0.is_some() && self.1.is_none()
+    }
 }
 
 pub struct AlignOutput<G: AlignableGraph> {

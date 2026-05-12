@@ -79,6 +79,33 @@ pub trait DPKernel: Sized + 'static {
         costs: &Self::Costs,
     );
 
+    /// Like [`Self::accumulate_pred`] but writes destinations with `=` instead
+    /// of `min`-folding, so the caller can skip the per-band
+    /// `diag_buf.fill(INF)` for **single-predecessor bands**.
+    ///
+    /// Preconditions enforced by the caller:
+    ///
+    /// - `dst[D_state][..]` is pre-initialized to [`crate::align::engine::dp::INF`]
+    ///   (this is true after `BandMatrix::reset_for_bands`).
+    /// - Every cell in `diag_buf[..w_dst]` is covered by Section B + C of this
+    ///   call, i.e. the destination band's range equals the predecessor's
+    ///   shifted range. This holds for single-pred bands because the
+    ///   destination is constructed as `[pred.qlo+1, pred.qhi+1)`.
+    ///
+    /// For multi-predecessor bands the caller must keep the `fill(INF)` +
+    /// `accumulate_pred` path: subsequent `min`-folds against an uninitialized
+    /// `diag_buf` are unsound.
+    fn init_pred(
+        dst: &mut [u32],
+        diag_buf: &mut [u32],
+        w_dst: usize,
+        dst_qlo: usize,
+        src: &[u32],
+        w_src: usize,
+        src_qlo: usize,
+        costs: &Self::Costs,
+    );
+
     /// Apply substitution cost to `diag_buf`, then compute sequential states
     /// (M and I-like) left-to-right. The gap states in `data` must already be
     /// filled (via `accumulate_pred` calls) before calling this.

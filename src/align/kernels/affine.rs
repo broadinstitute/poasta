@@ -163,27 +163,29 @@ impl DPKernel for AffineKernel {
             dst[w_dst + qi] = dst[w_dst + qi].min(sat(pm.min(pi), go_ge)).min(sat(pd, ge));
         }
 
-        // Section B: both updates apply.
+        // Section B: both updates apply. Split into two passes so each loop is
+        // a clean SoA stream (M, D, I are contiguous u32 streams in `src`)
+        // suitable for autovectorization.
         let both_lo = diag_q_lo;
         let both_hi = gap_q_hi.min(diag_q_hi);
+
+        // Pass 1: D-state fold (writes dst[w_dst + qi]).
         for q in both_lo..both_hi {
             let qi = q - dst_qlo;
-            let pqi_g = q - src_qlo;
-            let pqi_d = pqi_g - 1;
-
-            // Gap reads at pqi_g.
-            let pm_g = src[pqi_g];
-            let pd_g = src[w_src + pqi_g];
-            let pi_g = src[2 * w_src + pqi_g];
+            let pqi = q - src_qlo;
+            let pm = src[pqi];
+            let pd = src[w_src + pqi];
+            let pi = src[2 * w_src + pqi];
             dst[w_dst + qi] = dst[w_dst + qi]
-                .min(sat(pm_g.min(pi_g), go_ge))
-                .min(sat(pd_g, ge));
-
-            // Diag reads at pqi_g - 1.
-            let pm_d = src[pqi_d];
-            let pd_d = src[w_src + pqi_d];
-            let pi_d = src[2 * w_src + pqi_d];
-            diag_buf[qi] = diag_buf[qi].min(min3(pm_d, pd_d, pi_d));
+                .min(sat(pm.min(pi), go_ge))
+                .min(sat(pd, ge));
+        }
+        // Pass 2: diag fold (writes diag_buf[qi]).
+        for q in both_lo..both_hi {
+            let qi = q - dst_qlo;
+            let pqi = q - 1 - src_qlo;
+            diag_buf[qi] = diag_buf[qi]
+                .min(min3(src[pqi], src[w_src + pqi], src[2 * w_src + pqi]));
         }
 
         // Section C: diag-only tail (0 or 1 cell, when src extends past gap_q_hi).
@@ -195,6 +197,74 @@ impl DPKernel for AffineKernel {
             let pd = src[w_src + pqi];
             let pi = src[2 * w_src + pqi];
             diag_buf[qi] = diag_buf[qi].min(min3(pm, pd, pi));
+        }
+    }
+
+    /// Like [`Self::accumulate_pred`] but writes destinations directly with
+    /// `=` instead of `min`-folding. The caller must guarantee that every cell
+    /// the next predecessor's `accumulate_pred` will read in `dst` (D-state)
+    /// or `diag_buf` is either covered by this pass or pre-initialized to
+    /// [`INF`]. In the engine this is satisfied for **single-predecessor
+    /// bands** because the destination band's range is constructed as the
+    /// shifted predecessor range — Section B + Section C cover the entire
+    /// `diag_buf`, and `dst[D]` cells outside the gap range stay at the [`INF`]
+    /// value `BandMatrix::reset_for_bands` writes once per alignment.
+    fn init_pred(
+        dst: &mut [u32],
+        diag_buf: &mut [u32],
+        w_dst: usize,
+        dst_qlo: usize,
+        src: &[u32],
+        w_src: usize,
+        src_qlo: usize,
+        costs: &Affine,
+    ) {
+        let go = costs.gap_open() as u32;
+        let ge = costs.gap_extend() as u32;
+        let go_ge = go + ge;
+
+        let gap_q_lo = dst_qlo.max(src_qlo);
+        let gap_q_hi = (dst_qlo + w_dst).min(src_qlo + w_src);
+        let diag_q_lo = dst_qlo.max(src_qlo + 1);
+        let diag_q_hi = (dst_qlo + w_dst).min(src_qlo + w_src + 1);
+
+        // Section A: gap-only prefix (0 or 1 cell).
+        if gap_q_lo < diag_q_lo && gap_q_lo < gap_q_hi {
+            let q = gap_q_lo;
+            let qi = q - dst_qlo;
+            let pqi = q - src_qlo;
+            let pm = src[pqi];
+            let pd = src[w_src + pqi];
+            let pi = src[2 * w_src + pqi];
+            dst[w_dst + qi] = sat(pm.min(pi), go_ge).min(sat(pd, ge));
+        }
+
+        // Section B: both updates apply.
+        let both_lo = diag_q_lo;
+        let both_hi = gap_q_hi.min(diag_q_hi);
+        for q in both_lo..both_hi {
+            let qi = q - dst_qlo;
+            let pqi = q - src_qlo;
+            let pm = src[pqi];
+            let pd = src[w_src + pqi];
+            let pi = src[2 * w_src + pqi];
+            dst[w_dst + qi] = sat(pm.min(pi), go_ge).min(sat(pd, ge));
+        }
+        for q in both_lo..both_hi {
+            let qi = q - dst_qlo;
+            let pqi = q - 1 - src_qlo;
+            diag_buf[qi] = min3(src[pqi], src[w_src + pqi], src[2 * w_src + pqi]);
+        }
+
+        // Section C: diag-only tail.
+        if gap_q_hi < diag_q_hi {
+            let q = gap_q_hi;
+            let qi = q - dst_qlo;
+            let pqi = q - 1 - src_qlo;
+            let pm = src[pqi];
+            let pd = src[w_src + pqi];
+            let pi = src[2 * w_src + pqi];
+            diag_buf[qi] = min3(pm, pd, pi);
         }
     }
 
@@ -240,27 +310,32 @@ impl DPKernel for AffineKernel {
         let go_ge = go + ge;
         let mm_cost = costs.mismatch() as u32;
 
-        // Apply substitution to diag_buf in-place. The per-cell `if symbol ==
-        // query[..]` is rewritten as a branchless mask so the loop auto-
-        // vectorises without a data-dependent branch on mixed-match queries.
-        let subst_start = usize::from(qlo == 0);
-        for qi in subst_start..w {
-            let q = query[qlo + qi - 1];
-            let mismatch = (symbol != q) as u32;
-            let subst = mm_cost & mismatch.wrapping_neg();
-            diag_buf[qi] = sat(diag_buf[qi], subst);
-        }
-
-        // I[0] = INF (no left neighbor within band at qi=0)
+        // Boundary qi=0: I[0] = INF (no left neighbor within band), M[0] is
+        // min(diag_buf[0] + subst, D[0]). At qlo == 0 there is no query
+        // character to compare against, so substitution is skipped — this is
+        // only reachable for the first band of the start sentinel's column.
         data[2 * w] = INF;
-        // M[0] = min(diag_buf[0], D[0])
-        data[0] = diag_buf[0].min(data[w]);
+        let diag0 = if qlo == 0 {
+            diag_buf[0]
+        } else {
+            let mismatch = (symbol != query[qlo - 1]) as u32;
+            sat(diag_buf[0], mm_cost & mismatch.wrapping_neg())
+        };
+        data[0] = diag0.min(data[w]);
 
+        // Sequential left→right sweep. The substitution mask is computed
+        // per-cell here instead of in a separate pass over `diag_buf`: the
+        // RAW dependency on `data[qi-1]` and `data[2*w + qi-1]` makes this
+        // loop scalar regardless, so we save one streaming pass.
         for qi in 1..w {
+            let q_byte = query[qlo + qi - 1];
+            let mismatch = (symbol != q_byte) as u32;
+            let diag = sat(diag_buf[qi], mm_cost & mismatch.wrapping_neg());
+
             let m_prev = data[qi - 1];
             let i_prev = data[2 * w + qi - 1];
             data[2 * w + qi] = sat(m_prev, go_ge).min(sat(i_prev, ge));
-            data[qi] = min3(diag_buf[qi], data[w + qi], data[2 * w + qi]);
+            data[qi] = min3(diag, data[w + qi], data[2 * w + qi]);
         }
     }
 
