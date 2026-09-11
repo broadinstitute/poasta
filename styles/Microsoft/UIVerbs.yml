@@ -1,0 +1,9 @@
+extends: existence
+message: "Use 'select' instead of the input-specific verb '%s'."
+link: https://learn.microsoft.com/en-us/style-guide/procedures-instructions/describing-interactions-with-ui
+level: warning
+ignorecase: true
+# 'right-click' and 'double-click' are explicitly allowed by the guide.
+tokens:
+  - '(?<!right-)(?<!double-)click(?:s|ed|ing)?(?: on)?'
+  - 'swipe(?:s|d|ing)?'

@@ -1,0 +1,16 @@
+extends: existence
+message: "Don't add -ly to an ordinal number."
+link: https://learn.microsoft.com/en-us/style-guide/numbers
+level: error
+# These almost always appear sentence-initial ('Firstly, ...'), which the
+# default case-sensitive match missed entirely.
+ignorecase: true
+action:
+  name: edit
+  params:
+    - trim
+    - ly
+tokens:
+  - firstly
+  - secondly
+  - thirdly

@@ -1,0 +1,103 @@
+extends: substitution
+message: "Prefer '%s' over '%s'."
+# term preference should be based on microsoft style guide, such as
+link: https://learn.microsoft.com/en-us/style-guide/a-z-word-list-term-collections/a/adapter
+level: warning
+ignorecase: true
+action:
+  name: replace
+swap:
+  "(?:agent|virtual assistant|intelligent personal assistant)": personal digital assistant
+  "(?:assembler|machine language)": assembly language
+  "(?:drive C:|drive C>|C: drive)": drive C
+  "(?:internet bot|web robot)s?": bot(s)
+  "(?:microsoft cloud|the cloud)": cloud
+  "(?:mobile|smart) ?phone": phone
+  "24/7": every day
+  "audio(?:-| )book": audiobook
+  "back(?:-| )light": backlight
+  # The space is required: 'chatbot' is the preferred form, so an optional
+  # space here made the rule flag its own suggestion.
+  "chat bots?": chatbot(s)
+  "(?:display|graphics) driver": video driver
+  "(?:okay|all right|alright)": OK
+  "(?:video|display|graphics) adapter": video card
+  "graphics (?:card|board)": video card
+  "italic(?:s|ized)": italic
+  "(?:command|option|action) button": button
+  "type size": font size
+  "type style": font style
+  "(?:bolded|boldfaced|boldface)": bold
+  "(?:end-user license agreement|EULA)": Microsoft Software License Terms
+  "(?:microsoft recommends|it is recommended)": we recommend
+  "(?:pop-up window|dialogue box)": dialog box
+  "maximize (?:box|icon)": Maximize button
+  "minimize (?:box|icon)": Minimize button
+  "(?:K byte|KByte)": KB
+  "12:00 midnight": midnight
+  "12:00 noon": noon
+  adaptor: adapter
+  administrate: administer
+  afterwards: afterward
+  alphabetic: alphabetical
+  alphanumerical: alphanumeric
+  # Article depends on how the acronym is pronounced; see the acronyms page.
+  a ISP: an ISP
+  a SQL: an SQL
+  an DLL: a DLL
+  an URL: a URL
+  anti-aliasing: antialiasing
+  anti-malware: antimalware
+  anti-spyware: antispyware
+  anti-virus: antivirus
+  appendixes: appendices
+  artificial intelligence: AI
+  broadcasted: broadcast
+  caap: CaaP
+  conversation-as-a-platform: conversation as a platform
+  core document: main document
+  different to: different from
+  double-click on: double-click
+  eb: EB
+  ebook: e-book
+  ecommerce: e-commerce
+  ediscovery: e-discovery
+  elearning: e-learning
+  end user: user
+  esports: e-sports
+  gb: GB
+  gbps: Gbps
+  home directory: root directory
+  hoster: hosting provider
+  information technology: IT
+  insertion point: pointer
+  it professional: IT pro
+  kb: KB
+  keypress: keystroke
+  licensing terms: license terms
+  lowercased: lowercase
+  matrixes: matrices
+  mb: MB
+  mobile computer: computer
+  mouse over: hover over
+  moveable: movable
+  numeric keyboard: numeric keypad
+  numerical: numeric
+  off-premise: off-premises
+  on-premise: on-premises
+  pathname: path
+  pb: PB
+  read-write: read/write
+  smart technology: intelligent technology
+  spec: specification
+  stylus: pen
+  target drive: destination drive
+  target file: destination file
+  tb: TB
+  typeface: font
+  unprintable: nonprintable
+  uppercased: uppercase
+  videoconference: video call
+  wireless phone: phone
+  zb: ZB
+  zeroes: zeros

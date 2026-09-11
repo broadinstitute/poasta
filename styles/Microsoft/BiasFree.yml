@@ -1,0 +1,14 @@
+extends: substitution
+message: "Consider '%s' instead of '%s'."
+link: https://learn.microsoft.com/en-us/style-guide/bias-free-communication
+level: warning
+ignorecase: true
+action:
+  name: replace
+# Culturally sensitive terms; see GenderBias.yml for gendered terms.
+swap:
+  '(?:demilitarized zone|DMZ)': perimeter network
+  'master/slave': master/subordinate
+  'sanity check': quick check
+  'spirit animal': role model
+  hangs: stops responding

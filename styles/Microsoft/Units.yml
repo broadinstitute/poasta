@@ -1,0 +1,17 @@
+extends: existence
+message: "Don't spell out the number in '%s'."
+link: https://learn.microsoft.com/en-us/style-guide/a-z-word-list-term-collections/term-collections/units-of-measure-terms
+level: error
+ignorecase: true
+raw:
+  - '\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)\s'
+tokens:
+  - '(?:centi|milli)?meters'
+  - '(?:kilo)?grams'
+  - '(?:kilo)?meters'
+  - '(?:mega)?pixels'
+  - cm
+  - inches
+  - lb
+  - miles
+  - pounds

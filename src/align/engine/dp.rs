@@ -50,35 +50,9 @@ pub(crate) fn extract_init_col<K: DPKernel>(init_data: &[u32], mp1: usize, q: us
     col
 }
 
-/// Sentinel value for "unreachable / infinite cost".
-///
-/// Chosen so that `INF + any_realistic_cost` stays below `u32::MAX`, which lets
-/// `sat` use a plain wrapping add + min instead of the more expensive
-/// `saturating_add` (which requires overflow detection on every u32 lane and
-/// maps to multiple instructions instead of `vpaddd` + `vpminud`).
-///
-/// Upper bound on a real score: `sequence_len × max_cost_per_step`.  For
-/// sequences up to ~10 million bp and costs up to ~1 000, that is ≈10^10 —
-/// far below `1<<28 ≈ 2.7×10^8`.  If you align sequences of length > 100 M or
-/// use very large cost values, raise this constant accordingly.
-pub(crate) const INF: u32 = 1 << 28;
-
-/// Saturating-style cost addition, capped at [`INF`].
-///
-/// Uses `wrapping_add` rather than `saturating_add` so that the compiler can
-/// lower the vectorised form to a single `vpaddd` + `vpminud` pair instead of
-/// the multi-instruction overflow-detection sequence that `u32::saturating_add`
-/// requires.  Correctness relies on the invariant that real scores never exceed
-/// `u32::MAX - max_single_step_cost`; see [`INF`] for the bound.
-#[inline(always)]
-pub(crate) fn sat(a: u32, b: u32) -> u32 {
-    a.wrapping_add(b).min(INF)
-}
-
-#[inline(always)]
-pub(crate) fn min3(a: u32, b: u32, c: u32) -> u32 {
-    a.min(b).min(c)
-}
+// `INF`/`sat`/`min3` moved to `align::score` so the A* engine shares the same
+// score representation; re-exported here for compatibility with existing callers.
+pub(crate) use crate::align::score::{INF, min3, sat};
 
 // ─── Public engine struct ────────────────────────────────────────────────────
 
@@ -499,6 +473,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::align::test_support::score_from_alignment;
     use crate::align::{cost_models::affine::Affine, traits::AlignmentEngine};
     use crate::graph::{alignment::AddAlignment, poa::POAGraph};
 
@@ -523,6 +498,39 @@ mod tests {
         g.add_alignment("s1", seq2, None, &vec![1; seq2.len()])
             .unwrap();
         g
+    }
+
+    /// Graph with several overlapping bubbles: a SNP bubble (position 3:
+    /// A/G), an indel bubble (position 4: extra A), and a second SNP bubble
+    /// near the end (position 6: C/A), all reconverging before the end node.
+    fn multi_branch_graph() -> POAGraph<u32> {
+        let mut g = POAGraph::new();
+        g.add_alignment("s0", b"ACGTACGT", None, &vec![1; 8])
+            .unwrap();
+        g.add_alignment("s1", b"ACGAACGT", None, &vec![1; 8])
+            .unwrap();
+        g.add_alignment("s2", b"ACGTCCGT", None, &vec![1; 8])
+            .unwrap();
+        g.add_alignment("s3", b"AGGTACAT", None, &vec![1; 8])
+            .unwrap();
+        g
+    }
+
+    /// Run `query` through the canonical DP and assert the backtrace-derived
+    /// alignment re-scores (via [`score_from_alignment`]) to exactly the
+    /// score the engine reported.
+    fn assert_backtrace_matches_score(graph: &POAGraph<u32>, query: &[u8]) {
+        let r = run(graph, query);
+        let recomputed = score_from_alignment(graph, query, &r.alignment, &costs());
+        assert_eq!(
+            r.score,
+            recomputed,
+            "backtrace/score mismatch for query {:?}: reported={}, recomputed={}, alignment={:?}",
+            String::from_utf8_lossy(query),
+            r.score,
+            recomputed,
+            r.alignment
+        );
     }
 
     fn run(graph: &POAGraph<u32>, query: &[u8]) -> AlignOutput<POAGraph<u32>> {
@@ -584,14 +592,7 @@ mod tests {
 
     #[test]
     fn test_score_consistent_with_alignment() {
-        let g = linear_graph(b"ACGT");
-        let query = b"AXGT";
-        let r = run(&g, query);
-        let recomputed = score_from_alignment(&g, query, &r.alignment, &costs());
-        assert_eq!(
-            r.score, recomputed,
-            "score from alignment pairs must match result score"
-        );
+        assert_backtrace_matches_score(&linear_graph(b"ACGT"), b"AXGT");
     }
 
     #[test]
@@ -602,12 +603,7 @@ mod tests {
         let query = b"ACT";
         let r = run(&g, query);
         assert_eq!(r.score, 3);
-        let recomputed = score_from_alignment(&g, query, &r.alignment, &costs());
-        assert_eq!(
-            r.score, recomputed,
-            "deletion alignment pairs must re-score to {}, got {} (pairs: {:?})",
-            r.score, recomputed, r.alignment
-        );
+        assert_backtrace_matches_score(&g, query);
     }
 
     #[test]
@@ -616,47 +612,73 @@ mod tests {
         let query = b"ACGT";
         let r = run(&g, query);
         assert_eq!(r.score, 3);
-        let recomputed = score_from_alignment(&g, query, &r.alignment, &costs());
-        assert_eq!(
-            r.score, recomputed,
-            "insertion alignment pairs must re-score to {}, got {} (pairs: {:?})",
-            r.score, recomputed, r.alignment
-        );
+        assert_backtrace_matches_score(&g, query);
     }
 
-    fn score_from_alignment(
-        graph: &POAGraph<u32>,
-        query: &[u8],
-        aln: &[AlignedPair<<POAGraph<u32> as AlignableGraph>::Node>],
-        costs: &Affine,
-    ) -> u32 {
-        let go = costs.gap_open() as u32;
-        let ge = costs.gap_extend() as u32;
-        let mut score = 0u32;
-        let mut in_gap = false;
+    #[test]
+    fn test_alignment_consistent_with_score_multiple_substitutions() {
+        // Three separate mismatches scattered through a linear graph.
+        assert_backtrace_matches_score(&linear_graph(b"ACGTACGTAC"), b"AGGTCCGTAG");
+    }
 
-        for pair in aln {
-            match (pair.node(), pair.query_pos()) {
-                (Some(node), Some(qpos)) => {
-                    let gsym = graph.get_node_symbol(node);
-                    let qsym = query[qpos];
-                    score = sat(
-                        score,
-                        if gsym == qsym {
-                            0u32
-                        } else {
-                            costs.mismatch() as u32
-                        },
-                    );
-                    in_gap = false;
-                }
-                (Some(_), None) | (None, Some(_)) => {
-                    score = sat(score, if in_gap { ge } else { go + ge });
-                    in_gap = true;
-                }
-                (None, None) => {}
-            }
+    #[test]
+    fn test_alignment_consistent_with_score_bubble_snp() {
+        // Single-base SNP bubble (A vs G at position 1).
+        let g = bubble_graph(b"AAGT", b"AGGT");
+        for query in [b"AAGT".as_slice(), b"AGGT".as_slice(), b"ATGT".as_slice()] {
+            assert_backtrace_matches_score(&g, query);
         }
-        score
+    }
+
+    #[test]
+    fn test_alignment_consistent_with_score_bubble_indel() {
+        // Indel bubble (extra "A" in the longer path) plus mismatches in the query.
+        let g = bubble_graph(b"ACGAT", b"ACGT");
+        for query in [b"ACGAT".as_slice(), b"ACGT".as_slice(), b"AXGT".as_slice(), b"ACGATT".as_slice()] {
+            assert_backtrace_matches_score(&g, query);
+        }
+    }
+
+    #[test]
+    fn test_alignment_consistent_with_score_deletion_spanning_bubble() {
+        // Query drops bases straddling the bubble's merge point, forcing the
+        // backtrace to walk a deletion across the branch back into the
+        // single shared path.
+        let g = bubble_graph(b"ACGAT", b"ACGT");
+        for query in [b"AT".as_slice(), b"AGT".as_slice(), b"A".as_slice()] {
+            assert_backtrace_matches_score(&g, query);
+        }
+    }
+
+    #[test]
+    fn test_alignment_consistent_with_score_insertion_at_branch_point() {
+        // Query has extra bases inserted right where the two branches
+        // reconverge, exercising the insertion-state transition at a merge node.
+        let g = bubble_graph(b"ACGAT", b"ACGT");
+        for query in [b"ACGATXXT".as_slice(), b"ACGTXXT".as_slice()] {
+            assert_backtrace_matches_score(&g, query);
+        }
+    }
+
+    #[test]
+    fn test_alignment_consistent_with_score_multi_branch_graph() {
+        // Graph built from four sequences with overlapping SNP/indel
+        // bubbles; queries mix exact branch matches, novel recombinations,
+        // and mismatches to exercise many predecessor-choice combinations in
+        // the backtrace's merge-point logic.
+        let g = multi_branch_graph();
+        for query in [
+            b"ACGTACGT".as_slice(),
+            b"ACGAACGT".as_slice(),
+            b"ACGTCCGT".as_slice(),
+            b"AGGTACAT".as_slice(),
+            b"ACGTACAT".as_slice(),
+            b"CCGTACGT".as_slice(),
+            b"AGGAACAT".as_slice(),
+            b"ACGACGT".as_slice(),
+            b"ACGTACG".as_slice(),
+        ] {
+            assert_backtrace_matches_score(&g, query);
+        }
     }
 }

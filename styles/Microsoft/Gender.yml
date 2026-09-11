@@ -1,0 +1,8 @@
+extends: existence
+message: "Don't use '%s'."
+link: https://learn.microsoft.com/en-us/style-guide/grammar/nouns-pronouns#pronouns-and-gender
+level: error
+ignorecase: true
+tokens:
+  - he/she
+  - s/he

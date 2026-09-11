@@ -51,3 +51,29 @@ impl AlignmentCostModel for Affine {
         self.gap_extend
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::align::AlignState;
+
+    fn costs() -> Affine {
+        Affine::new(4, 2, 1) // mismatch=4, gap_open=2, gap_extend=1
+    }
+
+    #[test]
+    fn gap_cost_zero_length_is_zero() {
+        assert_eq!(costs().gap_cost(AlignState::Match, 0), 0);
+    }
+
+    #[test]
+    fn gap_cost_from_match_charges_open_and_extend() {
+        assert_eq!(costs().gap_cost(AlignState::Match, 3), 2 + 3);
+    }
+
+    #[test]
+    fn gap_cost_already_in_gap_charges_extend_only() {
+        assert_eq!(costs().gap_cost(AlignState::Insertion, 3), 3);
+        assert_eq!(costs().gap_cost(AlignState::Deletion, 3), 3);
+    }
+}

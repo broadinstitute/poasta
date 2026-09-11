@@ -1,0 +1,9 @@
+---
+extends: existence
+message: "AI commit tell: changelog-style heading '%s'. CHANGELOG.md is the place for changelog format. Commits should explain what changed and why in prose."
+level: error
+# scope: raw so the (?m)^ multiline anchor matches start-of-line in the
+# raw commit body, not after markdown block parsing.
+scope: raw
+raw:
+  - '(?m)^#{2,4}\s+(?:Added|Changed|Fixed|Removed|Deprecated|Security|Breaking|Breaking Changes|Migration|New Features|Improvements|Bug Fixes)\s*$'

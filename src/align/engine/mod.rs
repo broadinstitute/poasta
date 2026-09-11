@@ -1,6 +1,7 @@
 use crate::align::traits::{AlignResult, AlignableGraph};
 use crate::graph::traits::GraphNodeId;
 
+pub mod astar;
 pub mod band_doubling;
 pub mod dp;
 

@@ -1,0 +1,24 @@
+extends: substitution
+message: "Consider '%s' instead of '%s'."
+link: https://learn.microsoft.com/en-us/style-guide/militaristic-language
+level: suggestion
+ignorecase: true
+action:
+  name: replace
+# The guide scopes its table to cybersecurity writing, so the generic verbs it
+# also lists (combat, fight, guard, ward) are omitted here: without that context
+# they'd fire on ordinary prose.
+swap:
+  '(?:cyber ?)?kill chain': cyberattack chain
+  'defense-in-depth approach': multilayered approach
+  'external attack surface': external exposure
+  'first line of defense': protection
+  'frontline analysts': security analysts
+  'locked down': secured
+  adversaries: threat actors
+  adversary: threat actor
+  attackers: cyberattackers
+  attacker: cyberattacker
+  blast radius: impact
+  fortifications: protection
+  frontlines: defense

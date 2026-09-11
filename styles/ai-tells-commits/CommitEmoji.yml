@@ -1,0 +1,87 @@
+---
+extends: existence
+message: "AI commit tell: '%s'. Drop the gitmoji and use words."
+level: error
+nonword: true
+tokens:
+  # Features and additions
+  - "✨"
+  - "🎉"
+  - "➕"
+
+  # Bugs and fixes
+  - "🐛"
+  - "🩹"
+  - "🚑"
+  - "🥅"
+
+  # Refactoring and code quality
+  - "♻️"
+  - "🎨"
+  - "💄"
+  - "🔨"
+
+  # Performance
+  - "⚡"
+  - "🚀"
+
+  # Documentation
+  - "📝"
+  - "💡"
+
+  # Tests
+  - "✅"
+  - "🧪"
+
+  # Dependencies and builds
+  - "📦"
+  - "⬆️"
+  - "⬇️"
+  - "➖"
+
+  # Configuration and tooling
+  - "🔧"
+  - "🔩"
+
+  # Security
+  - "🔒"
+  - "🔐"
+
+  # Removal and deprecation
+  - "🔥"
+  - "🗑️"
+  - "💀"
+
+  # Version control operations
+  - "🔀"
+  - "⏪"
+  - "🏷️"
+
+  # Logging and monitoring
+  - "🔊"
+  - "🔇"
+
+  # Architecture and infrastructure
+  - "🏗️"
+  - "🚚"
+  - "🗃️"
+
+  # Accessibility and i18n
+  - "♿"
+  - "🌐"
+
+  # UI and UX
+  - "📱"
+  - "🚸"
+
+  # CI/CD
+  - "👷"
+  - "💚"
+
+  # Misc AI-favored commit emoji
+  - "🍱"
+  - "🤡"
+  - "💩"
+  - "🙈"
+  - "📸"
+  - "🧹"

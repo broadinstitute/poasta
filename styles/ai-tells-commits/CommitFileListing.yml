@@ -1,0 +1,18 @@
+---
+extends: existence
+message: "AI commit tell: file-by-file listing. The diff already shows what files changed. Describe what changed about the code."
+level: error
+# scope: raw so markdown list parsing does not strip the bullet markers
+# the regex relies on.
+#
+# The line terminator is (?:\n|$), not \s*$\n: Vale hands raw blocks to
+# the regex without a trailing newline on the last line, so a mandatory
+# \n per repetition left a three-bullet list one repetition short and the
+# rule never fired on its own test case. [^\S\n] is
+# whitespace-except-newline, so a repetition can never swallow the next
+# line's anchor. Paths may be wrapped in backticks or bold markers and
+# may carry a trailing annotation ("src/app.ts: add handler"), the spellings
+# agents actually emit.
+scope: raw
+raw:
+  - '(?m)(?:^[^\S\n]*[-*+][^\S\n]+(?:\*\*|`)?(?:[A-Za-z0-9_./-]+/)?[A-Za-z0-9_.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|cpp|cc|c|h|hpp|cs|rb|php|swift|m|mm|md|rst|adoc|yaml|yml|json|toml|ini|sh|bash|zsh|fish|sql|css|scss|sass|less|html|htm|xml|proto|graphql|gql|tf|tfvars|env|conf|cfg)(?:\*\*|`)?(?:[^\S\n]*[:—–-][^\n]*)?[^\S\n]*(?:\n|$)){3,}'

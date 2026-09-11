@@ -1,0 +1,37 @@
+---
+extends: existence
+message: "AI commit tell: '%s'. State what changed and why, not marketing copy."
+level: error
+ignorecase: true
+# The hyphenated forms 'state-of-the-art', 'best-in-class', 'world-class',
+# and 'cutting-edge' are intentionally omitted — ai-tells.OverusedVocabulary
+# and ai-tells.AICompoundPhrases already cover them, and the README directs
+# users to layer both styles on commit messages.
+tokens:
+  - production-ready
+  - production ready
+  - enterprise-grade
+  - enterprise grade
+  - mission-critical
+  - mission critical
+  - world class
+  - state of the art
+  - cutting edge
+  - best in class
+  - industry-standard
+  - industry standard
+  - battle-tested
+  - battle tested
+  - rock-solid
+  - rock solid
+  - bulletproof
+  # 'first-class' / 'first class' omitted: standard CS terminology
+  # (first-class functions, first-class support) with no marketing sense.
+  - top-tier
+  - top tier
+  - highly scalable
+  - fault-tolerant
+  - fault tolerant
+  - carefully crafted
+  - meticulously crafted
+  - elegantly designed

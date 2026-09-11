@@ -1,0 +1,7 @@
+extends: existence
+message: "Use questions sparingly."
+link: https://learn.microsoft.com/en-us/style-guide/punctuation/question-marks
+level: suggestion
+nonword: true
+tokens:
+  - '\w\?(?:\s|$)'

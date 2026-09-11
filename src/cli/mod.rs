@@ -16,10 +16,6 @@ pub enum AlignmentSpan {
     /// Perform semi-global alignment, i.e., globally align query but allow free gaps in the graph
     /// at the beginning and end
     SemiGlobal,
-
-    /// Perform ends-free alignment, i.e., indels at the beginning or end on either the query or
-    /// graph are free
-    EndsFree,
 }
 
 /// Log verbosity levels exposed on the CLI.

@@ -17,11 +17,27 @@ pub enum OutputType {
 /// Which alignment engine the CLI should dispatch to.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum EngineKind {
+    /// Priority-queue-driven A* aligner (default). The only engine that supports
+    /// `--alignment-span` ends-free and semi-global alignment.
+    Astar,
+
     /// Scalar Ukkonen-style band-doubling Gotoh aligner (default).
     BandDoubling,
 
     /// Canonical O(N*m) Gotoh DP (reference / oracle — slow on large inputs).
     CanonicalDp,
+}
+
+/// Which A* heuristic to use. Ignored by non-`astar` engines.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum HeuristicKind {
+    /// Admissible min-gap-cost lower bound (default): tighter bound, visits
+    /// fewer states than Dijkstra.
+    MinGapCost,
+
+    /// Plain Dijkstra (`h ≡ 0`): exact, but explores every state within the
+    /// optimal-score radius.
+    Dijkstra,
 }
 
 #[derive(Parser, Debug)]
@@ -87,14 +103,19 @@ pub struct AlignArgs {
     pub alignment_span: AlignmentSpan,
 
     /// Which alignment engine to use.
-    #[arg(long, value_enum, default_value = "band-doubling")]
+    #[arg(long, value_enum, default_value = "astar")]
     #[clap(help_heading = "Alignment configuration")]
     pub engine: EngineKind,
 
-    /// Starting bandwidth for band-doubling. Ignored by canonical-dp.
+    /// Starting bandwidth for band-doubling. Ignored by canonical-dp and astar.
     #[arg(long, default_value_t = 1)]
     #[clap(help_heading = "Alignment configuration")]
     pub initial_k: usize,
+
+    /// Which heuristic the astar engine uses. Ignored by other engines.
+    #[arg(long, value_enum, default_value = "min-gap-cost")]
+    #[clap(help_heading = "Alignment configuration")]
+    pub heuristic: HeuristicKind,
 
     /// Which cost model to use.
     #[arg(long, value_enum, default_value = "affine")]
@@ -137,9 +158,12 @@ pub struct AlignArgs {
 impl AlignArgs {
     /// Sanity-check the combination of CLI flags.
     pub fn validate(&self) -> Result<(), String> {
-        if !matches!(self.alignment_span, AlignmentSpan::Global) {
+        if !matches!(self.alignment_span, AlignmentSpan::Global)
+            && !matches!(self.engine, EngineKind::Astar)
+        {
             return Err(format!(
-                "alignment span '{:?}' is not yet supported; only 'global' is available",
+                "alignment span '{:?}' requires --engine astar; \
+                 band-doubling and canonical-dp only support global alignment",
                 self.alignment_span
             ));
         }

@@ -1,0 +1,11 @@
+---
+extends: existence
+message: "AI commit tell: past tense '%s' in subject. Use imperative mood. Apply the Beams test: 'If applied, this commit will ___'."
+level: error
+# scope: raw so \A anchors to the start of the file (line 1, the commit
+# subject) rather than the start of each prose block. Without this, body
+# paragraphs that happen to start with these verbs would also fire.
+scope: raw
+raw:
+  - '\A(?:(?:feat|fix|chore|docs|style|refactor|perf|test|build|ci|revert|deps)(?:\([^)]+\))?!?:\s+)?'
+  - '(Added|Adding|Fixed|Fixing|Updated|Updating|Removed|Removing|Refactored|Refactoring|Implemented|Implementing|Created|Creating|Bumped|Bumping|Cleaned|Cleaning|Deleted|Deleting|Improved|Improving|Changed|Changing|Renamed|Renaming|Moved|Moving|Optimized|Optimizing|Enhanced|Enhancing|Modified|Modifying|Configured|Configuring|Documented|Documenting|Introduced|Introducing|Replaced|Replacing|Switched|Switching|Migrated|Migrating|Wrote|Writing|Made|Making|Tested|Testing|Verified|Verifying|Resolved|Resolving|Addressed|Addressing)\b'

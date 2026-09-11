@@ -1,0 +1,11 @@
+extends: substitution
+message: "Consider using '%s' instead of the jargon '%s'."
+link: https://learn.microsoft.com/en-us/style-guide/word-choice/avoid-jargon
+level: suggestion
+ignorecase: true
+action:
+  name: replace
+swap:
+  bucketize: group
+  glyph: symbol
+  leverage: take advantage of

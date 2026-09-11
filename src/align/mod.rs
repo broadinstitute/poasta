@@ -9,8 +9,67 @@ use self::traits::{AlignResult, AlignableGraph, AlignmentEngine};
 pub mod cost_models;
 pub mod engine;
 pub mod kernels;
+pub mod offsets;
+pub mod score;
 pub mod traits;
 pub mod utils;
+
+/// Shared test-only helper for verifying that a backtrace-produced alignment
+/// is self-consistent with its reported score. Used by every engine's test
+/// module (`dp`, `band_doubling`, `astar`) so each can check its own
+/// (potentially independently implemented) backtrace against the cost model,
+/// rather than only comparing scores across engines.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::cost_models::AlignmentCostModel;
+    use super::engine::AlignedPair;
+    use super::score::sat;
+    use super::traits::AlignableGraph;
+
+    /// Recompute an alignment's score by replaying its `AlignedPair`s through
+    /// the cost model, independent of however the engine computed its DP
+    /// scores. Assumes a single-piece gap-affine cost model (`gap_open`/
+    /// `gap_extend`), so it applies to `Affine` but not `TwoPieceAffine`.
+    pub(crate) fn score_from_alignment<G, C>(
+        graph: &G,
+        query: &[u8],
+        aln: &[AlignedPair<G::Node>],
+        costs: &C,
+    ) -> u32
+    where
+        G: AlignableGraph,
+        C: AlignmentCostModel,
+    {
+        let go = costs.gap_open() as u32;
+        let ge = costs.gap_extend() as u32;
+        let mut score = 0u32;
+        let mut in_gap = false;
+
+        for pair in aln {
+            match (pair.node(), pair.query_pos()) {
+                (Some(node), Some(qpos)) => {
+                    let gsym = graph.get_node_symbol(node);
+                    let qsym = query[qpos];
+                    score = sat(
+                        score,
+                        if gsym == qsym {
+                            0u32
+                        } else {
+                            costs.mismatch() as u32
+                        },
+                    );
+                    in_gap = false;
+                }
+                (Some(_), None) | (None, Some(_)) => {
+                    score = sat(score, if in_gap { ge } else { go + ge });
+                    in_gap = true;
+                }
+                (None, None) => {}
+            }
+        }
+        score
+    }
+}
 
 /// Represents the kind of alignment to perform
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,7 +253,7 @@ where
     }
 
     /// Align each `(name, sequence, weights)` triple. `weights.len()` must equal
-    /// `sequence.len()`; the underlying graph implementation validates this.
+    /// `sequence.len()`.
     pub fn align_all_with_weights<'s, I>(
         &mut self,
         sequences: I,
@@ -241,7 +300,7 @@ where
         let _enter = span.enter();
 
         if self.graph.is_empty() {
-            tracing::info!(
+            tracing::debug!(
                 "Initialize graph from first sequence {name} (len: {})",
                 seq.len()
             );
@@ -250,13 +309,13 @@ where
                 .add_alignment(name, seq, None, weights)
                 .map_err(PoastaAlignerError::AddAlignment)?;
         } else {
-            tracing::info!("Aligning {name} (len: {})", seq.len());
+            tracing::debug!("Aligning {name} (len: {})", seq.len());
             let result = self
                 .engine
                 .align(&self.graph, seq)
                 .map_err(PoastaAlignerError::Engine)?;
             self.run_stats.record(&result.alignment_stats());
-            tracing::info!(score = result.alignment_score(), "Alignment complete");
+            tracing::debug!(score = result.alignment_score(), "Alignment complete");
 
             tracing::debug!("Updating graph...");
             self.graph

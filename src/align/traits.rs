@@ -5,6 +5,17 @@ pub trait AlignableGraph: GraphWithNodeOrdering<NodeType = Self::Node> {
     type Node: GraphNodeId; // Mostly here to constrain subtrait associated types
 
     fn get_node_symbol(&self, p: Self::Node) -> u8;
+
+    /// Whether the graph node `p` carries the query byte `symbol`.
+    ///
+    /// A* compares query bytes against graph symbols in its hottest loop
+    /// (the greedy match-extension DFA); this provided default is trivial,
+    /// but gives implementations a chance to specialise (e.g. IUPAC
+    /// ambiguity codes) without changing the trait's callers.
+    #[inline]
+    fn is_symbol_equal(&self, p: Self::Node, symbol: u8) -> bool {
+        self.get_node_symbol(p) == symbol
+    }
 }
 
 /// Per-alignment counters emitted by the alignment engines.

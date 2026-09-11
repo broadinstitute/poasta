@@ -269,7 +269,7 @@ where
 
                 while let Ok((name, seq)) = rx_seq.recv() {
                     if let Some(ref logger) = debug_logger {
-                        logger.begin_sequence(graph, &name, &seq);
+                        logger.begin_sequence(graph, &name);
                     }
                     let out = match engine.align(graph, seq.as_slice()) {
                         Ok(out) => out,

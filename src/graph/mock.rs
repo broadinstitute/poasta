@@ -202,6 +202,25 @@ pub(crate) fn create_test_graph1() -> MockGraph {
     g
 }
 
+/// A straight chain of `length` nodes (labelled `1..=length`), no branching.
+/// The first node is the (implicit) start (in-degree 0), the last is the
+/// (implicit) end (out-degree 0) — useful for bubble-index tests that need a
+/// node with a known, unambiguous (min == max) distance to the graph end.
+pub(crate) fn create_linear_graph(length: usize) -> MockGraph {
+    let mut g = MockGraph::default();
+    let mut prev = None;
+    for i in 1..=length {
+        let nix = g.add_node(NodeData::new(i as i64));
+        if let Some(p) = prev {
+            g.add_edge(p, nix, ());
+        }
+        prev = Some(nix);
+    }
+
+    g.post_process_graph();
+    g
+}
+
 pub(crate) fn create_test_graph2() -> MockGraph {
     let mut nmap = FxHashMap::default();
     let mut g = MockGraph::default();

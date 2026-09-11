@@ -1,0 +1,12 @@
+extends: existence
+message: "'%s' should have one space."
+link: https://learn.microsoft.com/en-us/style-guide/punctuation/periods
+level: error
+nonword: true
+# The period case requires a lowercase-initial word so that dotted identifiers
+# ('My.Project', 'System.Text.Json') aren't flagged; '?' and '!' don't occur in
+# identifiers, so they stay permissive. See issue #68.
+tokens:
+  - '[a-z][.?!] {2,}[A-Z]'
+  - '\b[a-z]\w*\.[A-Z]'
+  - '\w[?!][A-Z]'
