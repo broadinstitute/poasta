@@ -8,7 +8,6 @@ edition = "2024"
 
 [dependencies]
 flate2 = "1.1.9"
-num = { version = "~0.4" }
 petgraph = { version = "~0.8", features = ["serde-1"] }
 tracing = { version = "0.1.44" }
 noodles = { version = "~0.109", features = ["fasta", "fastq"] }
