@@ -3,7 +3,7 @@ use petgraph::stable_graph::{Neighbors, NodeIndices};
 use petgraph::visit::EdgeRef;
 use petgraph::{Incoming, Outgoing};
 
-use crate::align::engine::{AlignOutput, AlignedPair};
+use crate::align::traits::{AlignOutput, AlignedPair};
 use crate::errors::PoastaError;
 use crate::graph::alignment::AddAlignment;
 

@@ -10,6 +10,7 @@
 pub mod aln_graph;
 pub mod dfa;
 pub mod heuristic;
+pub mod pruning;
 pub mod queue;
 pub mod visited;
 
@@ -24,14 +25,14 @@ use std::sync::Arc;
 use crate::align::cost_models::AlignmentCostModel;
 use crate::align::cost_models::affine::Affine;
 use crate::align::cost_models::two_piece::TwoPieceAffine;
-use crate::align::engine::astar::aln_graph::{
+use crate::align::astar::aln_graph::{
     AlignmentGraph, AlignmentGraphNode, ThreeStateAlignmentGraph, TwoPieceAlignmentGraph,
 };
-use crate::align::engine::astar::dfa::{DepthFirstGreedyAlignment, ExtendResult};
-use crate::align::engine::astar::heuristic::{AstarHeuristic, Dijkstra, MinimumGapCost};
-use crate::align::engine::astar::queue::{AffineLayeredQueue, AstarQueue, TwoPieceLayeredQueue};
-use crate::align::engine::astar::visited::{AstarVisited, ThreeStateAstarData, TwoPieceAstarData};
-use crate::align::engine::{AlignOutput, AlignmentStats};
+use crate::align::astar::dfa::{DepthFirstGreedyAlignment, ExtendResult};
+use crate::align::astar::heuristic::{AstarHeuristic, Dijkstra, MinimumGapCost};
+use crate::align::astar::queue::{AffineLayeredQueue, AstarQueue, TwoPieceLayeredQueue};
+use crate::align::astar::visited::{AstarVisited, ThreeStateAstarData, TwoPieceAstarData};
+use crate::align::traits::{AlignOutput, AlignmentStats};
 use crate::align::traits::{AlignableGraph, AlignmentEngine};
 use crate::align::{AlignState, AlignmentMode};
 use crate::graph::bubbles::index::BubbleIndex;

@@ -11,7 +11,7 @@ use itertools::Itertools;
 use petgraph::graph::IndexType;
 use rustc_hash::FxHashMap;
 
-use crate::align::engine::AlignedPair;
+use crate::align::traits::AlignedPair;
 use crate::graph::io::gfa::{Field, FieldValue, GraphSegments};
 use crate::graph::poa::{POAGraph, POANodeIndex};
 

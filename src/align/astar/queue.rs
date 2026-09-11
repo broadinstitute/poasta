@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 use std::fmt::Debug;
 
 use crate::align::AlignState;
-use crate::align::engine::astar::aln_graph::AlignmentGraphNode;
+use crate::align::astar::aln_graph::AlignmentGraphNode;
 use crate::align::offsets::OffsetType;
 use crate::graph::traits::GraphNodeId;
 

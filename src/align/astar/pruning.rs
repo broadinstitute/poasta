@@ -13,7 +13,7 @@ use std::cmp::{max, min};
 
 use crate::align::AlignState;
 use crate::align::cost_models::AlignmentCostModel;
-use crate::align::engine::astar::aln_graph::AlignmentGraphNode;
+use crate::align::astar::aln_graph::AlignmentGraphNode;
 use crate::align::offsets::OffsetType;
 use crate::graph::bubbles::index::{BubbleIndex, NodeBubbleMap};
 use crate::graph::traits::GraphNodeId;

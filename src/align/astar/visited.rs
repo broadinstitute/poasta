@@ -12,14 +12,14 @@ use crate::align::cost_models::AlignmentCostModel;
 use crate::align::cost_models::affine::Affine;
 use crate::align::cost_models::linear::Linear;
 use crate::align::cost_models::two_piece::TwoPieceAffine;
-use crate::align::engine::AlignedPair;
-use crate::align::engine::astar::aln_graph::AlignmentGraphNode;
+use crate::align::traits::AlignedPair;
+use crate::align::astar::aln_graph::AlignmentGraphNode;
 use crate::align::offsets::OffsetType;
 use crate::align::score::INF;
 use crate::align::traits::AlignableGraph;
 use crate::align::AlignState;
 use crate::graph::bubbles::index::BubbleIndex;
-use crate::graph::bubbles::reached::ReachedBubbleExitsMatch;
+use crate::align::astar::pruning::ReachedBubbleExitsMatch;
 use crate::graph::traits::{GraphNodeId, GraphWithNodeOrdering};
 
 /// Insert `offset` into a per-node "reached bubble exit" list, keeping it sorted

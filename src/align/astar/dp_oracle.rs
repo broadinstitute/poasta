@@ -10,7 +10,7 @@ use std::convert::Infallible;
 use std::marker::PhantomData;
 
 use crate::align::cost_models::AlignmentCostModel;
-use crate::align::engine::{AlignOutput, AlignmentStats};
+use crate::align::traits::{AlignOutput, AlignmentStats};
 use crate::align::score::{INF, sat};
 use crate::align::traits::{AlignableGraph, AlignmentEngine};
 

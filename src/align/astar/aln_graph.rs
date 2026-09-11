@@ -8,7 +8,7 @@ use crate::align::cost_models::AlignmentCostModel;
 use crate::align::cost_models::affine::Affine;
 use crate::align::cost_models::linear::Linear;
 use crate::align::cost_models::two_piece::TwoPieceAffine;
-use crate::align::engine::astar::visited::AstarVisited;
+use crate::align::astar::visited::AstarVisited;
 use crate::align::offsets::OffsetType;
 use crate::align::traits::AlignableGraph;
 use crate::align::{AlignState, AlignmentMode};

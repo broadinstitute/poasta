@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::align::cost_models::affine::Affine;
 use crate::align::cost_models::AlignmentCostModel;
-use crate::align::engine::astar::aln_graph::{resolve_bound, AlignmentGraphNode};
+use crate::align::astar::aln_graph::{resolve_bound, AlignmentGraphNode};
 use crate::align::offsets::OffsetType;
 use crate::align::{AlignState, AlignmentMode};
 use crate::graph::bubbles::index::BubbleIndex;

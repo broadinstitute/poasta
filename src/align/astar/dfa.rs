@@ -8,8 +8,8 @@
 use std::cell::{RefCell, RefMut};
 
 use crate::align::AlignState;
-use crate::align::engine::astar::aln_graph::AlignmentGraphNode;
-use crate::align::engine::astar::visited::AstarVisited;
+use crate::align::astar::aln_graph::AlignmentGraphNode;
+use crate::align::astar::visited::AstarVisited;
 use crate::align::offsets::OffsetType;
 use crate::align::traits::AlignableGraph;
 use crate::graph::traits::GraphNodeId;
