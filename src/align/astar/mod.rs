@@ -391,6 +391,7 @@ where
         }
 
         if aln_graph.is_end(graph, query, &aln_node, aln_state) {
+            trace_visited(score, &aln_node, aln_state);
             num_visited += 1;
             break (score, aln_node);
         }
@@ -400,6 +401,7 @@ where
         }
 
         visited.mark_reached(score, &aln_node, aln_state);
+        trace_visited(score, &aln_node, aln_state);
         num_visited += 1;
 
         if aln_state == AlignState::Match {
@@ -475,6 +477,18 @@ where
     };
 
     Ok((end_score, end_node, num_visited))
+}
+
+/// Emit the `set_visited` trace event consumed by `debug::subscriber`.
+#[inline]
+fn trace_visited<N: GraphNodeId, O: OffsetType>(score: u32, node: &AlignmentGraphNode<N, O>, state: AlignState) {
+    tracing::trace!(
+        target: "poasta::astar::set_visited",
+        score,
+        node = node.node().index(),
+        offset = node.offset().as_usize(),
+        state = ?state,
+    );
 }
 
 /// Backtrace + wrap the search result into an [`AlignOutput`], shared by

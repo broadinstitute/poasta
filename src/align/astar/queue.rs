@@ -140,6 +140,14 @@ where
 
     fn queue_aln_state(&mut self, node: AlignmentGraphNode<N, O>, aln_state: AlignState, score: u32, h: usize) {
         let priority = score as usize + h;
+        tracing::trace!(
+            target: "poasta::astar::queue_item",
+            score,
+            node = node.node().index(),
+            offset = node.offset().as_usize(),
+            state = ?aln_state,
+            priority,
+        );
         self.queue(AstarQueuedItem(score, node, aln_state), priority)
     }
 }

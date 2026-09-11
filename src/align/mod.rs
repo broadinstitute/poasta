@@ -291,7 +291,7 @@ where
         G: AddAlignment<<E as AlignmentEngine<&'s [u8]>>::Success>,
         <E as AlignmentEngine<&'s [u8]>>::Success: AlignResult,
     {
-        let span = tracing::info_span!("align_seq");
+        let span = tracing::info_span!("align_seq", seq_id = name);
         let _enter = span.enter();
 
         if self.graph.is_empty() {

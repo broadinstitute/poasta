@@ -155,6 +155,14 @@ where
 
                     astar_visited.dfa_match(self.score, parent.aln_graph_node(), &child);
                     self.num_visited += 1;
+                    tracing::trace!(
+                        target: "poasta::astar::extend",
+                        score = self.score,
+                        node = child.node().index(),
+                        offset = parent.offset().as_usize(),
+                        extended_offset = child.offset().as_usize(),
+                        state = "Match",
+                    );
 
                     if is_end(&child) {
                         return Some(ExtendResult::EndReached(child));
