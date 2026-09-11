@@ -2,7 +2,7 @@
 //!
 //! Query offsets are stored in every visited cell and every queued state, so
 //! their width dominates memory traffic. `OffsetType` names the handful of
-//! operations the engine needs; `u32` is the only implementation.
+//! operations the engine needs. `u32` is the only implementation.
 
 use std::fmt::Debug;
 use std::hash::Hash;

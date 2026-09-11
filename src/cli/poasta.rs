@@ -78,7 +78,7 @@ pub struct AlignArgs {
     #[clap(help_heading = "Outputs")]
     pub include_consensus: bool,
 
-    /// Output only the consensus sequence as a single FASTA record. Incompatible with GFA output.
+    /// Output only the consensus sequence as one FASTA record. Incompatible with GFA output.
     #[arg(long, conflicts_with = "include_consensus")]
     #[clap(help_heading = "Outputs")]
     pub consensus_only: bool,

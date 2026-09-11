@@ -18,7 +18,7 @@ pub struct LasagnaCli {
     pub log_level: LogLevel,
 
     /// Input partial order graph in GFA format (optionally gzipped). The graph
-    /// is loaded read-only; lasagna does not modify it.
+    /// is loaded read-only. Lasagna does not modify it.
     #[clap(help_heading = "Inputs")]
     pub graph: PathBuf,
 
@@ -32,7 +32,7 @@ pub struct LasagnaCli {
     pub num_threads: usize,
 
     /// Output filename. If not given, defaults to stdout. Output is always
-    /// GAF; the filename is not used to choose the format.
+    /// GAF. The filename is not used to choose the format.
     #[arg(short, long)]
     #[clap(help_heading = "Outputs")]
     pub output: Option<PathBuf>,

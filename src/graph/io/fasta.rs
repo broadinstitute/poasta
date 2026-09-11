@@ -23,7 +23,7 @@ pub struct FastaOutputOptions {
     /// When true, append an extra FASTA record named "consensus" (with gap padding) as the last
     /// row of the MSA. Ignored if `consensus_only` is also set.
     pub include_consensus: bool,
-    /// When true, write only the consensus as a single FASTA record (no MSA columns, no gaps).
+    /// When true, write only the consensus as one FASTA record without MSA columns or gaps.
     /// Takes precedence over `include_consensus`.
     pub consensus_only: bool,
 }
@@ -33,7 +33,7 @@ pub struct FastaOutputOptions {
 /// Each record is interpreted as one row of the MSA; rows must be equal length (shorter rows are
 /// tolerated by only reading up to their actual length). The character `-` denotes a gap.
 ///
-/// Columns that share the same character across rows collapse to a single node with the
+/// Columns that share the same character across rows collapse to one node with the
 /// appropriate `aligned_nodes` cross-links, mirroring the construction used when aligning
 /// sequences incrementally.
 pub fn load_graph_from_fasta_msa<Ix, R>(reader: R) -> Result<POAGraph<Ix>, PoastaIOError>
@@ -112,7 +112,7 @@ where
 /// columns it does not cover. Columns correspond to clusters of mutually-aligned nodes
 /// (the `aligned_nodes` cross-links created during alignment).
 ///
-/// When `opts.consensus_only` is set, emits only a single FASTA record with the consensus
+/// When `opts.consensus_only` is set, emits only one FASTA record with the consensus
 /// sequence (no gaps). When `opts.include_consensus` is set, appends the consensus as the last
 /// record of the MSA with gap padding matching the other rows.
 pub fn poa_graph_to_fasta<Ix, W>(
@@ -183,7 +183,7 @@ where
 
     // Walk each sequence one at a time, picking the next edge by binary-searching
     // `seq_idx` in the edge's `sequence_ids`. `POAGraph::add_edge` appends sequence ids in
-    // ingest order, so `sequence_ids` is sorted ascending — binary search is sound.
+    // ingest order, so `sequence_ids` is sorted ascending, so binary search is sound.
     // Peak extra memory is one row buffer instead of the full `O(total_path_length)`
     // path prebuild we used to do.
     for (seq_idx, seq) in graph.sequences.iter().enumerate() {

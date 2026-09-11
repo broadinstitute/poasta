@@ -3,7 +3,7 @@
 //! Match edges cost 0, so once a `Match` state pops off the queue the search
 //! walks matching `(node, offset+1)` successors depth first for free and
 //! re-enters the queue only at a mismatch, the graph end or the query end.
-//! This is the single biggest constant-factor win in the engine.
+//! This is the biggest constant-factor win in the engine.
 
 use std::cell::{RefCell, RefMut};
 
@@ -71,7 +71,7 @@ where
 
     /// A just-matched state satisfies the caller-supplied `is_end` predicate
     /// (used by `EndsFree`/semi-global alignment, where a valid end state can
-    /// sit in the middle of the graph — not just at the true end sentinel —
+    /// sit in the middle of the graph, not just at the true end sentinel,
     /// so it must be checked on every match, not only when a state is popped
     /// off the priority queue).
     EndReached(AlignmentGraphNode<N, O>),
@@ -121,7 +121,7 @@ where
     }
 
     /// `is_end` is checked against every freshly matched state before it is
-    /// pushed for further extension — needed so `EndsFree` end states in the
+    /// pushed for further extension. This is needed so `EndsFree` end states in the
     /// middle of the graph aren't silently walked past (see
     /// `ExtendResult::EndReached`). For `Global` mode this is essentially free:
     /// it's only ever true at the true end sentinel, which the DFA never

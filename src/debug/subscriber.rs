@@ -167,7 +167,7 @@ impl tracing::field::Visit for SeqId {
     fn record_debug(&mut self, _field: &tracing::field::Field, _value: &dyn fmt::Debug) {}
 }
 
-/// Fields shared by all three event kinds; unused ones stay at their default.
+/// Fields shared by all three event kinds. Unused ones keep their default.
 #[derive(Debug, Default)]
 struct AlignmentState {
     score: u64,

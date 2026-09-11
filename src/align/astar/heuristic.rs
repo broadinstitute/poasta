@@ -57,7 +57,7 @@ where
 ///
 /// Mode-aware: under `AlignmentMode::EndsFree`, a gap that falls entirely
 /// within the free leading/trailing region costs nothing, so `h` returns 0
-/// for that dimension rather than charging `C::gap_cost` — otherwise the
+/// for that dimension rather than charging `C::gap_cost`. Otherwise the
 /// heuristic would overestimate (charge for a gap the alignment mode doesn't
 /// actually penalise) and stop being admissible.
 pub struct MinimumGapCost<N, O, C>
@@ -166,8 +166,7 @@ mod tests {
         let costs = Affine::new(4, 6, 2);
 
         // Chain of 7 nodes; the 2nd node (label 2) is exactly 5 edges from
-        // the auto-detected end node, so its (min, max) dist-to-end is (5, 5) —
-        // matching stable's hand-supplied `vec![(5, 5)]` bubble-index stub.
+        // the auto-detected end node, so its (min, max) dist-to-end is (5, 5).
         let g = create_linear_graph(7);
         let node_under_test = g.all_nodes_iter().nth(1).unwrap();
         let bubble_index = Arc::new(BubbleIndex::new(&g));

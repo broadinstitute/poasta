@@ -1,9 +1,9 @@
 //! Lasagna: read-to-graph alignment driver.
 //!
 //! Loads a GFA partial-order graph, then aligns FASTA/FASTQ reads against it
-//! with the A* engine. The graph stays read-only throughout: this is the
-//! read-mapping use case, not POA-MSA construction, so the bubble index is
-//! built once and shared by every aligner thread.
+//! with the A* engine. This is read mapping rather than MSA construction, so
+//! the graph is never modified and the bubble index is built once and shared
+//! by every aligner thread.
 
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
@@ -303,7 +303,7 @@ where
 
                     if let Some(rec) = rec {
                         if tx_out.send(rec).is_err() {
-                            // Writer has hung up; nothing more we can do.
+                            // Writer has hung up. Nothing more to do.
                             break;
                         }
                     } else {
@@ -345,7 +345,7 @@ fn read_sequences(path: &Path, tx: Sender<SequenceRecord>) -> Result<(), CliErro
     for record in open_sequences(path)? {
         let (name, seq) = record?;
         if tx.send((name, seq)).is_err() {
-            // Aligners have all hung up; stop reading.
+            // Aligners have all hung up. Stop reading.
             return Ok(());
         }
     }

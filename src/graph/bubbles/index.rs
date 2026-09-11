@@ -116,7 +116,7 @@ where
                     let mut new_bubble_stack = bubble_stack.clone();
 
                     // if the predecessor is an entrance, remove it from the stack since we're
-                    // moving backward, and thus are exiting this bubble.
+                    // moving backward, and so are exiting this bubble.
                     if bubble_entrances[pred.index()].is_entrance() {
                         let (bubble_dist_from_start, bubble_exit) = new_bubble_stack.pop().unwrap();
                         node_bubble_map[pred.index()].push(NodeBubbleMap {

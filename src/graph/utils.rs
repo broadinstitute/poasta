@@ -6,7 +6,7 @@ use crate::graph::traits::GraphWithNodeOrdering;
 ///
 /// `GraphWithNodeOrdering` implementations already maintain this order via
 /// `node_rank`/`rank_to_node` (computed once via DFS in `post_process`), so
-/// this is just a materialization of `rank_to_node(0..node_count())` — no
+/// this is just a materialization of `rank_to_node(0..node_count())`, with no
 /// second traversal.
 pub fn rev_postorder_nodes<G: GraphWithNodeOrdering>(graph: &G) -> Vec<G::NodeType> {
     (0..graph.node_count()).map(|r| graph.rank_to_node(r)).collect()

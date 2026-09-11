@@ -373,7 +373,7 @@ fn gap_pieces<C: AlignmentCostModel>(costs: &C, n_states: usize) -> Vec<GapPiece
     pieces
 }
 
-/// One backtrace step: find the predecessor `(node, state)` whose score is
+/// Find the predecessor `(node, state)` whose score is
 /// consistent with a transition into `aln_node`/`aln_state`, or `None` at the
 /// start of the alignment.
 fn gap_step<N, O, C, G, const S: usize>(

@@ -257,7 +257,7 @@ where
 
 /// Shared `EndsFree` `is_end`: a `Match` state counts as a valid alignment end
 /// once its query offset is within the free trailing-query-skip bound of
-/// `seq.len()` *and* its graph node can reach the true end within the free
+/// `seq.len()` and its graph node can reach the true end within the free
 /// trailing-graph-skip bound.
 fn ends_free_is_end<G, O>(
     ref_graph: &G,
@@ -395,7 +395,8 @@ impl AlignmentGraph for LinearAlignmentGraph {
 
 // ─── Gap-affine: one or two independent gap pieces ───────────────────────────
 
-/// One gap piece: its costs and the two states (deletion, insertion) it owns.
+/// A gap piece has its own costs and its own two states, deletion and
+/// insertion.
 #[derive(Clone, Copy)]
 struct GapPiece {
     open_extend: u8,

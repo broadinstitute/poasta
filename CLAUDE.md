@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 Guidance for Claude Code when working in this repository. The full
-walkthrough of the code lives in [docs/architecture.md](docs/architecture.md);
+walkthrough of the code is in [docs/architecture.md](docs/architecture.md);
 this file is the short map.
 
 ## What POASTA is
@@ -22,7 +22,7 @@ cargo test --lib astar::                      # one module
 cargo build --features disable_tracing        # trace events compiled out
 cargo run --features bench --bin poasta_vs_spoa -- <args>   # needs spoa C++ build
 cargo doc --no-deps
-vale src docs CLAUDE.md README.md             # prose lint (comments only in .rs)
+vale src docs CLAUDE.md                       # prose lint (comments only in .rs)
 ```
 
 Binaries after a release build: `target/release/poasta`, `target/release/lasagna`.
@@ -31,7 +31,7 @@ Binaries after a release build: `target/release/poasta`, `target/release/lasagna
 
 - `src/align/`: aligning a query to a graph. `mod.rs` has `PoastaAligner`,
   `AlignmentMode` and `AlignState`; `traits.rs` has `AlignableGraph`,
-  `AlignmentEngine` and `AlignOutput`; `cost_models/` the three cost models.
+  `AlignmentEngine` and `AlignOutput`. `cost_models/` has the three cost models.
 - `src/align/astar/`: the engine. `mod.rs` (`AstarEngine`, `AstarCostModel`,
   main loop), `aln_graph.rs` (state machines), `visited.rs` (scores and
   backtrace), `queue.rs` (bucket queue), `dfa.rs` (free match extension),
@@ -45,7 +45,7 @@ Binaries after a release build: `target/release/poasta`, `target/release/lasagna
 
 ## Invariants
 
-- The graph is read-only during alignment; `AddAlignment` runs afterwards.
+- The graph is read-only during alignment. `AddAlignment` runs afterwards.
 - `graph/` never imports from `align/` except `poa.rs` implementing
   `AddAlignment` for `AlignOutput`.
 - Every A* configuration must match `DpOracle`'s score on the test graphs,
@@ -59,6 +59,6 @@ Binaries after a release build: `target/release/poasta`, `target/release/lasagna
 
 ## Style
 
-- Comments are prose: no em dashes, short sentences, no filler. Run vale.
+- Comments are prose. Use short sentences and avoid em dashes and filler. Run vale.
 - Deliberate shortcuts carry a `ponytail:` comment naming the ceiling.
 - Keep the module docs (`//!`) in each `mod.rs` accurate when moving code.

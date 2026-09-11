@@ -204,7 +204,7 @@ impl Display for Field {
 }
 
 /// A subset of the GFA value types we actually round-trip. The full GFA spec
-/// also allows `B` (numeric arrays); we don't need them here.
+/// also allows `B` (numeric arrays), which are not needed here.
 #[derive(Debug, PartialEq)]
 pub enum FieldValue {
     String(String),
@@ -517,7 +517,7 @@ where
                     let from_ix = name_to_ix.get(&link.sid1).copied();
                     let to_ix = name_to_ix.get(&link.sid2).copied();
 
-                    // Either segment may appear after the link line; defer.
+                    // Either segment may appear after the link line. Defer.
                     if from_ix.is_none() || to_ix.is_none() {
                         links_to_add.push(link);
                         continue;

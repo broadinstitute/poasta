@@ -270,7 +270,7 @@ mod tests {
     }
 
     /// Popping must always return the lowest-priority item queued so far,
-    /// regardless of insertion order; within a bucket the order is LIFO.
+    /// regardless of insertion order. Within a bucket the order is LIFO.
     #[test]
     fn pop_order_is_monotone_by_priority() {
         let mut queue: LayeredQueue<Vec<usize>> = LayeredQueue::new();

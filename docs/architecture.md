@@ -59,7 +59,7 @@ src/
 └── bin/                    thin drivers: poasta.rs, lasagna.rs, poasta_vs_spoa.rs
 ```
 
-Dependencies point one way: `graph` knows nothing about aligning, `align`
+Dependencies point one way: `graph` does not depend on `align`, `align`
 builds on `graph`, and `cli`, `debug` and the binaries build on both. The
 one exception is deliberate: `graph/poa.rs` implements `AddAlignment` for
 the engine's `AlignOutput`, so it imports `AlignOutput` and `AlignedPair`
@@ -92,7 +92,7 @@ The engine only ever reads the graph. Mutation happens afterwards, through
 `POAGraph<Ix>` wraps a petgraph `StableDiGraph`. Every node carries one
 symbol byte; every edge carries a weight and the IDs of the sequences that
 traverse it. Two sentinel nodes, start (`#`) and end (`$`), bracket the real
-nodes so every path has a single source and sink. `post_process` assigns a
+nodes so every path has one source and one sink. `post_process` assigns a
 topological rank to each node and the shortest and longest depth from the
 start, both of which the DOT writer shows.
 
@@ -159,7 +159,7 @@ calls the expansion for the reason the DFA stopped:
 - `expand_all`: a gap state popped from the queue. Close it for free into
   `Match` and extend it by one.
 
-The linear graph has a single state. With no gap-open cost there is nothing
+The linear graph has one state. With no gap-open cost there is nothing
 to remember between steps, so a gap is an edge that costs `gap_extend` and
 moves along one axis, and `expand_all` is unreachable.
 
@@ -210,7 +210,7 @@ Match edges cost nothing, so a popped `Match` state is not expanded one step
 but extended as far as it will go. `DepthFirstGreedyAlignment` (`dfa.rs`)
 walks matching successors depth first, recording each as visited at the
 same score, and returns only when it hits a mismatch, the graph end, the
-query end or an ends-free end state. This is the single largest
+query end or an ends-free end state. This is the largest
 constant-factor win in the engine.
 
 ### Heuristics
@@ -243,7 +243,7 @@ entry already dominates. `ReachedBubbleExitsMatch` (`pruning.rs`) makes
 that check using the minimum gap cost between the state and the reached
 offsets. States that fail it are dropped from the queue and from DFA
 extension. Pruning changes the number of states visited but never the
-score; the tests assert both.
+score. The tests assert both.
 
 ### Backtrace
 
@@ -258,7 +258,7 @@ is a `Vec<AlignedPair>`, oldest first.
 ### Statistics
 
 `AlignmentStats::cells_computed` is the number of states expanded or
-reached by extension. `fraction_of_full_matrix` divides that by
+reached by match extension. `fraction_of_full_matrix` divides that by
 `(m + 1) × real nodes × states`, the size of the full dynamic programming
 matrix, so a value of one means as much work as a full DP.
 
@@ -311,7 +311,7 @@ file format. It needs updating before it can plot these files.
 
 ## Testing
 
-Everything is unit tested in-tree; `tests/` holds only fixture files.
+Everything is unit tested in-tree. `tests/` contains only fixture files.
 
 - `DpOracle` (`astar/dp_oracle.rs`) is a plain full-matrix Gotoh DP for all
   three cost models. Every A* configuration must reproduce its score on the
@@ -333,4 +333,4 @@ Everything is unit tested in-tree; `tests/` holds only fixture files.
 - Visited slots and queue vectors are indexed by `AlignState as usize`.
 - Within a queue bucket, order is LIFO and Match before deletions before
   insertions. Changing it changes which of several equal-score alignments
-  is returned, and therefore the MSA layout.
+  is returned, and so the MSA layout.

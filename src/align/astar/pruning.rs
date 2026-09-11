@@ -2,7 +2,7 @@
 //!
 //! Given the set of query offsets at which a bubble's exit node has already
 //! been reached (in the `Match` state) at some score, decide whether a
-//! candidate state could possibly still improve on that — i.e. whether A*
+//! candidate state could still improve on that, that is, whether A*
 //! needs to keep exploring it, or whether it's provably dominated.
 //!
 //! Decoupled from the concrete `AstarVisited`/visited-storage types: takes a

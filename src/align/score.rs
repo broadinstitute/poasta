@@ -10,19 +10,20 @@
 /// `saturating_add` (which requires overflow detection on every u32 lane and
 /// maps to multiple instructions instead of `vpaddd` + `vpminud`).
 ///
-/// Upper bound on a real score: `sequence_len × max_cost_per_step`.  For
-/// sequences up to ~10 million bp and costs up to ~1 000, that is ≈10^10 —
-/// far below `1<<28 ≈ 2.7×10^8`.  If you align sequences of length > 100 M or
-/// use very large cost values, raise this constant accordingly.
+/// Real scores must stay below `INF`. A score is at most
+/// `sequence_len × max_cost_per_step`, so with per-step costs up to about 25
+/// that holds for queries up to about 10 Mbp. Raise this constant (and
+/// check `u32` headroom) before aligning longer queries or using much
+/// larger costs.
 pub const INF: u32 = 1 << 28;
 
 /// Saturating-style cost addition, capped at [`INF`].
 ///
 /// Uses `wrapping_add` rather than `saturating_add` so that the compiler can
-/// lower the vectorised form to a single `vpaddd` + `vpminud` pair instead of
+/// lower the vectorised form to one `vpaddd` + `vpminud` pair instead of
 /// the multi-instruction overflow-detection sequence that `u32::saturating_add`
 /// requires.  Correctness relies on the invariant that real scores never exceed
-/// `u32::MAX - max_single_step_cost`; see [`INF`] for the bound.
+/// `u32::MAX - max_single_step_cost`. See [`INF`] for the bound.
 #[inline(always)]
 pub fn sat(a: u32, b: u32) -> u32 {
     a.wrapping_add(b).min(INF)

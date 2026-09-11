@@ -37,7 +37,7 @@ impl MockGraph {
 
     /// Iterative reverse-postorder DFS from the (assumed unique) source node.
     /// Writes the order to `self.1`. Mirrors `POAGraph::compute_rev_postorder`
-    /// but allocates a fresh bitmap each call — this is test-only code and not
+    /// but allocates a fresh bitmap each call. This is test-only code and not
     /// in any hot path.
     fn compute_rev_postorder(&mut self) {
         let start = self.start_node();
@@ -197,7 +197,7 @@ pub(crate) fn create_test_graph1() -> MockGraph {
 
 /// A straight chain of `length` nodes (labelled `1..=length`), no branching.
 /// The first node is the (implicit) start (in-degree 0), the last is the
-/// (implicit) end (out-degree 0) — useful for bubble-index tests that need a
+/// (implicit) end (out-degree 0), useful for bubble-index tests that need a
 /// node with a known, unambiguous (min == max) distance to the graph end.
 pub(crate) fn create_linear_graph(length: usize) -> MockGraph {
     let mut g = MockGraph::default();

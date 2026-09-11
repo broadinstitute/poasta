@@ -64,11 +64,11 @@ impl Display for GAFRecord {
 /// (i.e. no segment of the query actually matched the graph).
 ///
 /// Behaviour vs. the stable lasagna port:
-/// - Leading insertions *and* leading deletions are skipped during the
+/// - Leading insertions and leading deletions are skipped during the
 ///   `at_aln_start` window (stable only skipped leading insertions, which
 ///   inflated `path_aln_start` to 0 when the optimum starts with a deletion).
 /// - The trailing-indel trim no longer prints a stray "Removed insertion from
-///   end" log; the deletion arm in stable also mislabeled itself "insertion".
+///   end" log. The deletion arm there also mislabeled itself "insertion".
 pub fn alignment_to_gaf<Ix>(
     graph: &POAGraph<Ix>,
     graph_segments: &GraphSegments<Ix>,
@@ -105,7 +105,7 @@ where
         if at_aln_start {
             // Skip both leading insertions and leading deletions. Leading
             // insertions advance query_start; leading deletions are dropped
-            // silently — they would otherwise inflate the path with segments
+            // silently. They would otherwise inflate the path with segments
             // the alignment doesn't actually cover.
             if aln_pair.is_insertion() {
                 query_start += 1;
@@ -175,8 +175,8 @@ where
     }
 
     if path_segments.is_empty() {
-        // No aligned pair was ever seen — every operation was an indel. Don't
-        // emit a record; the caller can decide whether to log/skip.
+        // No aligned pair was ever seen. Every operation was an indel, so no
+        // record is emitted. The caller can decide whether to log or skip.
         return None;
     }
 
@@ -309,7 +309,7 @@ mod tests {
         let node_to_segment = build_node_to_segment(&loaded.graph, &loaded.graph_segments);
 
         // Build a synthetic alignment that perfectly matches segment "1"
-        // (AAACTGC, len 7) — exactly all-`=`, no indels.
+        // (AAACTGC, len 7), so the CIGAR is all `=` with no indels.
         let mut alignment: Vec<AlignedPair<POANodeIndex<u32>>> = Vec::new();
         let segment_1_start = loaded.graph_segments.start_nodes[0];
         let mut curr = segment_1_start;
@@ -371,7 +371,7 @@ mod tests {
         let mut alignment: Vec<AlignedPair<POANodeIndex<u32>>> = Vec::new();
         // Leading insertion (query base before any graph match)
         alignment.push(AlignedPair::new(None, Some(0)));
-        // A single aligned pair at segment 1's first node, query position 1
+        // One aligned pair at segment 1's first node, query position 1
         alignment.push(AlignedPair::new(Some(segment_1_start), Some(1)));
         // Trailing deletion: graph advances without consuming query
         let segment_1_next = loaded

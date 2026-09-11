@@ -51,7 +51,7 @@ pub type Offset = u32;
 pub trait HeuristicConfig {
     /// Whether this heuristic needs the bubble index to compute `h`. (The
     /// bubble index is built unconditionally today since bubble-exit pruning
-    /// also depends on it; this is documentation for callers / future gating.)
+    /// also depends on it. This is documentation for callers and future gating.)
     fn needs_bubble_index(&self) -> bool;
 
     fn build<C, N, O>(
@@ -673,12 +673,10 @@ mod tests {
         assert_eq!(result.score, expected.score);
     }
 
-    /// Bubble-exit pruning: confirm pruning
-    /// never changes the reported score and never visits *more* states than
-    /// leaving it off (the `AlignmentStats.cells_computed`/
-    /// `fraction_of_full_matrix` plumbing already flows through unchanged
-    /// from `AlignOutput`, so this doubles as the "no regression on the
-    /// fraction-of-matrix metric" check called for by the task).
+    /// Bubble-exit pruning must leave the reported score unchanged and must
+    /// not visit more states than leaving it off. The `cells_computed` and
+    /// `fraction_of_full_matrix` statistics come through unchanged from
+    /// `AlignOutput`, so this also guards the fraction-of-matrix metric.
     ///
     /// Block size `B` (`BlockedVisitedStorage`'s const generic, default 8)
     /// and the `u64` offset-width fallback aren't swept here: neither is
@@ -713,8 +711,8 @@ mod tests {
 
     /// Assert the A* engine's own (independently implemented) backtrace
     /// re-scores, via [`score_from_alignment`], to exactly the score it
-    /// reported — checked for both heuristics since each drives a separate
-    /// `align` call and thus a separate backtrace walk.
+    /// reported. Checked for both heuristics, since each is a separate
+    /// `align` call and so a separate backtrace walk.
     fn assert_astar_backtrace_matches_score(graph: &POAGraph<u32>, query: &[u8]) {
         let dijkstra_engine: AstarEngine<POAGraph<u32>, Affine, DijkstraHeuristic> =
             AstarEngine::new(costs()).with_heuristic(DijkstraHeuristic);
@@ -878,7 +876,7 @@ mod tests {
         }
     }
 
-    /// The one-state linear engine: pruning must not change the score, and
+    /// For the one-state linear engine, pruning must not change the score, and
     /// its own backtrace must re-score to what it reported.
     #[test]
     fn linear_pruning_and_backtrace_are_consistent() {
@@ -935,8 +933,8 @@ mod tests {
     fn two_piece_cost_model_matches_oracle() {
         // mismatch=1, piece1 (short gaps): open=2, extend=2; piece2 (long
         // gaps): open=6, extend=1. go1 <= go2 and ge1 > ge2, so opening is
-        // always at least as cheap under piece 1 and long gaps favour piece 2
-        // — the intended two-piece usage.
+        // always at least as cheap under piece 1 and long gaps favour piece 2,
+        // the intended two-piece usage.
         let costs = crate::align::cost_models::two_piece::TwoPieceAffine::new(1, 2, 2, 6, 1);
 
         assert_astar_matches_oracle_two_piece(&linear_graph(b"ACGT"), b"ACGT", costs);
@@ -1131,7 +1129,7 @@ mod tests {
     /// end-to-end, graph ends free) can terminate on a *real* graph node
     /// instead of the end sentinel (see `ends_free_is_end`). The backtrace
     /// used to only ever record `curr` once its predecessor was found, so the
-    /// end state passed in — real for `EndsFree`, the sentinel for `Global` —
+    /// end state passed in (real for `EndsFree`, the sentinel for `Global`)
     /// was silently dropped whenever it wasn't the sentinel. For a query
     /// identical to a microsatellite-like repeat already in the graph, that
     /// turned the final matched base into a spurious 1-base insertion (and a

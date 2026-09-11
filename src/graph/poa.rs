@@ -111,7 +111,7 @@ where
     pub sequences: Vec<Sequence<POANodeIndex<Ix>>>,
     topological_sorted: Vec<POANodeIndex<Ix>>,
     /// Reused visited bitmap for `compute_rev_postorder`. Indexed by
-    /// `node.index()`; reset to all-`false` on each call. Reused across
+    /// `node.index()`. Reset to all-`false` on each call. Reused across
     /// invocations to avoid the per-alignment hashset allocation that the
     /// previous `FxHashSet`-based implementation paid for.
     visited_scratch: Vec<bool>,
