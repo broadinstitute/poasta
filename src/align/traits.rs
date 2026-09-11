@@ -1,3 +1,9 @@
+//! The interface between graphs and alignment engines.
+//!
+//! [`AlignableGraph`] is what an engine needs from a graph, [`AlignmentEngine`]
+//! is what the aligner needs from an engine, and [`AlignOutput`] carries the
+//! score, the aligned pairs and the search statistics back.
+
 use std::error::Error;
 
 use crate::graph::traits::{GraphNodeId, GraphWithNodeOrdering};
@@ -19,18 +25,14 @@ pub trait AlignableGraph: GraphWithNodeOrdering<NodeType = Self::Node> {
     }
 }
 
-/// Per-alignment counters emitted by the alignment engines.
+/// Per-alignment counters emitted by the alignment engine.
 ///
-/// `cells_computed` counts each DP state as one cell, summed across every
-/// attempt the engine made (e.g. each band-doubling iteration). The canonical
-/// DP touches `(m + 1) * n_real * n_states` cells, so
-/// `fraction_of_full_matrix = cells_computed / ((m+1) * n_real * n_states)`
-/// (1.0 ⇒ equivalent in work to one full-matrix DP). Because failed attempts
-/// also contribute cells, the fraction can exceed 1.0 when many doublings
-/// occur before the alignment is provably optimal.
+/// `cells_computed` counts every alignment state the search expanded.
+/// `fraction_of_full_matrix` divides that by the size of the full dynamic
+/// programming matrix, `(m + 1) * real_nodes * states`, so `1.0` means the
+/// search did as much work as a full-matrix DP would have.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AlignmentStats {
-    pub max_bandwidth: usize,
     pub cells_computed: usize,
     pub fraction_of_full_matrix: f64,
 }

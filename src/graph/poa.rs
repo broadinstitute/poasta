@@ -331,21 +331,6 @@ where
         Ok(())
     }
 
-    /// Number of real nodes on the shortest start→end path.
-    pub fn l_min_real(&self) -> usize {
-        self.graph[self.end_node]
-            .depth_min
-            .index()
-            .saturating_sub(1)
-    }
-
-    /// Number of real nodes on the longest start→end path.
-    pub fn l_max_real(&self) -> usize {
-        self.graph[self.end_node]
-            .depth_max
-            .index()
-            .saturating_sub(1)
-    }
 }
 
 impl<T> GraphNodeId for T
@@ -675,32 +660,3 @@ where
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn l_min_l_max_empty_graph() {
-        let g: POAGraph<u32> = POAGraph::new();
-        assert_eq!(g.l_min_real(), 0);
-        assert_eq!(g.l_max_real(), 0);
-    }
-
-    #[test]
-    fn l_min_l_max_linear_graph() {
-        let mut g: POAGraph<u32> = POAGraph::new();
-        g.add_alignment("s0", b"ACGTA", None, &[1; 5]).unwrap();
-        assert_eq!(g.l_min_real(), 5);
-        assert_eq!(g.l_max_real(), 5);
-    }
-
-    #[test]
-    fn l_min_l_max_bubble_graph() {
-        // Two paths through a bubble: one of length 4, one of length 5.
-        let mut g: POAGraph<u32> = POAGraph::new();
-        g.add_alignment("s0", b"ACGTA", None, &[1; 5]).unwrap();
-        g.add_alignment("s1", b"ACGA", None, &[1; 4]).unwrap();
-        assert_eq!(g.l_min_real(), 4);
-        assert_eq!(g.l_max_real(), 5);
-    }
-}

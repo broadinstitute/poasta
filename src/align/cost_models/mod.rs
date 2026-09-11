@@ -1,3 +1,9 @@
+//! Cost models: what a mismatch and a gap cost.
+//!
+//! [`AlignmentCostModel`] exposes costs for up to two gap pieces; the
+//! [`linear`], [`affine`] and [`two_piece`] models implement it. The A*
+//! engine attaches its per-model machinery through `astar::AstarCostModel`.
+
 pub mod affine;
 pub mod linear;
 pub mod two_piece;
@@ -15,16 +21,13 @@ pub trait AlignmentCostModel {
 
     /// Cost of a gap of `length` given the current alignment state.
     ///
-    /// `length == 0` always costs `0`. If already inside a gap (`Insertion` /
-    /// `Deletion`), no new gap-open penalty is charged — the gap is merely
-    /// extended. Two-piece models charge the matching piece's open+extend
-    /// when already inside that piece's gap state, and take the cheaper of
-    /// the two pieces when opening a fresh gap from `Match`.
+    /// `length == 0` always costs `0`. Already inside a gap (`Insertion` or
+    /// `Deletion`) no new gap-open penalty is charged, the gap only extends.
+    /// Two-piece models extend within the piece they are in and take the
+    /// cheaper piece when opening from `Match`.
     ///
     /// Used by the A* heuristic (minimum remaining gap cost) and by the
-    /// bubble-exit pruning check, both of which only ever query this in the
-    /// `Match` state; the per-state branches below mirror `stable`'s scoring
-    /// model for parity with its `AstarHeuristic`/bubble-pruning code.
+    /// bubble-exit pruning check.
     fn gap_cost(&self, current_state: AlignState, length: usize) -> usize {
         if length == 0 {
             return 0;

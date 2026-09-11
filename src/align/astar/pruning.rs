@@ -1,4 +1,4 @@
-//! Bubble-exit pruning check, ported from `stable`'s `bubbles::reached`.
+//! Bubble-exit pruning check.
 //!
 //! Given the set of query offsets at which a bubble's exit node has already
 //! been reached (in the `Match` state) at some score, decide whether a

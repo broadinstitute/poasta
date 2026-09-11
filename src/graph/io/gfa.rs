@@ -452,7 +452,7 @@ where
 
 /// Parse a GFA 1.0 file into a `POAGraph`. The file may be plain text or
 /// gzipped (`.gz`). `post_process()` is run before returning, so the loaded
-/// graph is immediately ready to feed to the band-doubling engine.
+/// graph is immediately ready to align against.
 ///
 /// Reverse-strand links are rejected; the POA graph is undirected-strand by
 /// construction and we don't attempt to fold the reverse complement here.
@@ -610,11 +610,6 @@ mod tests {
         assert_eq!(graph_segments.names, vec!["1", "2", "3", "4", "5", "6"]);
         // tests/test.gfa segment lengths: 7, 2, 3, 10, 2, 2
         assert_eq!(graph_segments.segment_lengths, vec![7, 2, 3, 10, 2, 2]);
-
-        // The graph must have post_process()'d successfully: l_min_real/l_max_real
-        // are non-zero, which means the topological ordering is valid.
-        assert!(graph.l_min_real() > 0);
-        assert!(graph.l_max_real() >= graph.l_min_real());
 
         // Total real nodes = sum of segment lengths.
         let total_real: usize = graph_segments.segment_lengths.iter().sum();

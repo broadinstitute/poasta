@@ -1,4 +1,5 @@
-//! Graph I/O
+//! Graph and sequence I/O: FASTA and FASTQ input, FASTA MSA and GFA graphs
+//! in both directions, GAF for read alignments, DOT for debugging.
 
 pub mod dot;
 pub mod fasta;

@@ -1,11 +1,7 @@
-//! Shared score representation used by every alignment engine (canonical DP,
-//! band-doubling, and A*): a bare `u32` with [`INF`] as the "unreachable /
-//! not yet visited" sentinel, instead of an `Option`/enum wrapper.
-//!
-//! Promoted out of `engine::dp` (which re-exports these for compatibility)
-//! so the A* engine can share the exact same arithmetic convention: a visited
-//! cell defaults to `INF`, `update_score_if_lower` is a plain `new < *slot`,
-//! and backtrace equalities are exact `u32` comparisons.
+//! Score representation for the aligner: a bare `u32` with [`INF`] as the
+//! "unreachable, not yet visited" sentinel instead of an `Option` or enum
+//! wrapper. A visited cell defaults to `INF`, `update_score_if_lower` is a
+//! plain `new < *slot`, and backtrace equalities are exact `u32` comparisons.
 
 /// Sentinel value for "unreachable / infinite cost".
 ///
@@ -30,9 +26,4 @@ pub const INF: u32 = 1 << 28;
 #[inline(always)]
 pub fn sat(a: u32, b: u32) -> u32 {
     a.wrapping_add(b).min(INF)
-}
-
-#[inline(always)]
-pub fn min3(a: u32, b: u32, c: u32) -> u32 {
-    a.min(b).min(c)
 }

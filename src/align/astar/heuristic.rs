@@ -1,4 +1,4 @@
-//! A* heuristics, ported from `stable`'s `aligner::heuristic`.
+//! A* heuristics: admissible lower bounds on the cost still to pay.
 
 use std::marker::PhantomData;
 use std::sync::Arc;

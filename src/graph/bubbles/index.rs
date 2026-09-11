@@ -1,5 +1,5 @@
 //! Bubble index: node → bubble map and shortest/longest distance to the graph
-//! end node. Ported from `stable`'s `bubbles::index`.
+//! end node.
 
 use std::cmp::max;
 use std::collections::VecDeque;
@@ -233,7 +233,7 @@ mod tests {
     type Ix = NodeIndex<NIx>;
 
     /// Reduce a bubble map entry to (exit, min_dist_to_exit) for comparison
-    /// against hand-checked truth data (ported from `stable`'s bubble tests).
+    /// against hand-checked truth data.
     fn reduced(index: &BubbleIndex<Ix>, node: Ix, skip_end: Option<Ix>) -> Vec<(Ix, usize)> {
         index
             .get_node_bubbles(node)

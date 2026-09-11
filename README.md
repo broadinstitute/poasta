@@ -132,6 +132,10 @@ poasta view -Ofasta existing_msa.poasta > poa_msa.fasta
 ```
 
 
+## Architecture
+
+See [docs/architecture.md](docs/architecture.md) for how the crate is organised and how the A* engine works.
+
 ## Related repositories
 
 * [poa-bench](https://github.com/broadinstitute/poa-bench) - Benchmark POASTA against other POA tools

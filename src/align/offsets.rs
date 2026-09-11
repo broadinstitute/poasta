@@ -1,12 +1,8 @@
-//! Compact query-offset type used by the A* engine.
+//! Query-offset type used by the A* engine.
 //!
 //! Query offsets are stored in every visited cell and every queued state, so
-//! their width dominates memory traffic. This is a trimmed port of `stable`'s
-//! `OffsetType`: it drops the `num`-crate supertraits (`Unsigned +
-//! SaturatingAdd + ...`) since A* only ever needs the handful of ops below.
-//! `Add`/`Sub` are plain `std::ops` (not part of the trimmed-away `num` bounds)
-//! and are needed by the bubble-pruning code (`graph::bubbles::reached`) to
-//! do arithmetic directly on offsets.
+//! their width dominates memory traffic. `OffsetType` names the handful of
+//! operations the engine needs; `u32` is the only implementation.
 
 use std::fmt::Debug;
 use std::hash::Hash;

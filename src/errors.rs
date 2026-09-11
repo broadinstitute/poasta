@@ -7,8 +7,6 @@ use petgraph::graph::IndexType;
 
 use crate::graph::poa::POANodeIndex;
 
-// use crate::debug::messages::DebugOutputMessage;
-
 #[derive(Debug)]
 pub enum GraphError<Ix>
 where

@@ -1,71 +1,64 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working in this repository. The full
+walkthrough of the code lives in [docs/architecture.md](docs/architecture.md);
+this file is the short map.
 
-## Project Overview
+## What POASTA is
 
-**POASTA** is a fast, gap-affine sequence-to-graph and partial order aligner (POA) written in Rust. It implements an Ukkonen-style band-doubling alignment for DNA/protein sequences against partial order alignment graphs (DAGs).
+A partial order aligner in Rust. Sequences are aligned to a POA graph (a DAG
+of symbols) with an A* search that supports linear, affine and two-piece
+gap costs, global and ends-free modes, and a bubble-based heuristic and
+pruning scheme. The result is folded back into the graph.
 
-## Build & Test Commands
+## Build and test
 
 ```bash
-# Debug build
-cargo build
-
-# Optimized release build (native CPU)
+cargo build                                   # debug
 RUSTFLAGS="-C target-cpu=native" cargo build --release
-
-# Run all tests
-cargo test
-
-# Run a single test by name
-cargo test <test_name>
-
-# Run tests in a specific module
-cargo test --lib graph::
-
-# Run benchmarks against spoa (requires spoa-rs)
-cargo run --features test --bin poasta_vs_spoa -- <args>
+cargo test                                    # all unit tests (in-tree)
+cargo test <name>                             # one test
+cargo test --lib astar::                      # one module
+cargo build --features disable_tracing        # trace events compiled out
+cargo run --features bench --bin poasta_vs_spoa -- <args>   # needs spoa C++ build
+cargo doc --no-deps
+vale src docs CLAUDE.md README.md             # prose lint (comments only in .rs)
 ```
 
-The CLI binary is built by default (via the `cli` feature). After release build: `./target/release/poasta align -h`.
+Binaries after a release build: `target/release/poasta`, `target/release/lasagna`.
 
-## Architecture
+## Map
 
-### Core Modules
+- `src/align/`: aligning a query to a graph. `mod.rs` has `PoastaAligner`,
+  `AlignmentMode` and `AlignState`; `traits.rs` has `AlignableGraph`,
+  `AlignmentEngine` and `AlignOutput`; `cost_models/` the three cost models.
+- `src/align/astar/`: the engine. `mod.rs` (`AstarEngine`, `AstarCostModel`,
+  main loop), `aln_graph.rs` (state machines), `visited.rs` (scores and
+  backtrace), `queue.rs` (bucket queue), `dfa.rs` (free match extension),
+  `heuristic.rs`, `pruning.rs`, and the test-only `dp_oracle.rs`.
+- `src/graph/`: `POAGraph` (`poa.rs`), graph traits, `AddAlignment`,
+  consensus, superbubbles (`bubbles/`), and I/O (`io/`: FASTA, GFA, GAF, DOT).
+- `src/cli/` and `src/bin/`: clap structs and the `poasta`, `lasagna` and
+  `poasta_vs_spoa` drivers.
+- `src/debug/`: `--debug-output-dir` support, a `tracing` layer that writes
+  per-sequence TSVs of the search.
 
-**`src/graph/`** — POA graph data structure
-- `poa.rs`: `POAGraph<Ix>` — a `StableDiGraph` (petgraph) where each node is a byte (sequence symbol). Has sentinel `start` (#) and `end` ($) nodes. Nodes carry topological rank; edges carry weight and a set of sequence IDs traversing them.
-- `traits.rs`: Trait hierarchy — `GraphBase` → `GraphWithNodeOrdering` → `AlignableGraph`. Alignment engines are generic over `AlignableGraph`.
-- `alignment.rs`: `AddAlignment` trait — consumed by `POAGraph` to ingest an `AlignResult` and update the graph.
-- `utils.rs`: Topological sort via reverse post-order DFS.
+## Invariants
 
-**`src/align/`** — Alignment engines (Gotoh 3-state: Match/Deletion/Insertion)
-- `engine/dp.rs`: `CanonicalDP` — O(N×m) reference implementation with full DP matrix. Used as ground-truth oracle in tests.
-- `engine/band_doubling.rs`: `BandDoublingEngineScalar` — Ukkonen-style per-node multi-band tracking with band doubling and merging.
-- `cost_models/affine.rs`: `AffineAlignmentCosts` — standard affine gap model (match, mismatch, gap_open, gap_extend).
-- `traits.rs`: `AlignmentEngine<ToAlign>` trait, `AlignableGraph` requirements, `AlignedPair<N>` type, `AlignmentMode` (Global / EndsFree).
+- The graph is read-only during alignment; `AddAlignment` runs afterwards.
+- `graph/` never imports from `align/` except `poa.rs` implementing
+  `AddAlignment` for `AlignOutput`.
+- Every A* configuration must match `DpOracle`'s score on the test graphs,
+  and every backtrace must re-score to the reported score
+  (`test_support::score_from_alignment`).
+- Query offsets are `u32`. Visited slots and queue vectors are indexed by
+  `AlignState as usize`.
+- Queue pop order within a bucket is LIFO, Match before deletions before
+  insertions. It decides which equal-score alignment is returned, so
+  changing it changes MSA output.
 
-**`src/cli/poasta.rs`** — Clap-derived CLI with subcommands: `align`, `view`, `stats`. Alignment subcommand accepts FASTA input, optional existing graph (`-g`), and outputs `.poasta` binary format or DOT/FASTA/GFA.
+## Style
 
-**`src/errors.rs`** — `GraphError<Ix>`, `PoastaIOError`, `PoastaError<Ix>`.
-
-**`src/debug/`** — Conditional tracing for intermediate aligner state (only active in non-optimized builds).
-
-### Key Design Patterns
-
-- **Engines are generic**: `AlignmentEngine<G: AlignableGraph>` — cost models and graph types are pluggable.
-- **Canonical DP is the oracle**: All optimized engines should produce results equivalent to `CanonicalDP` on the same inputs. Tests validate this.
-- **Band doubling propagation**: Bands are tracked per graph node, seeded at successors of the start sentinel, propagated topologically, and merged when they are adjacent or overlap.
-- **Graph mutation is post-alignment**: `POAGraph` is modified via `AddAlignment` only after the aligner returns an `AlignResult` — the graph itself is read-only during alignment.
-
-### Active Development Context
-
-The branch (`banded-poa`) implements the band-doubling optimization, and includes migration of the stable A* engine into the new code organization and trait hierarchy.
-
-## Banded Alignment Algorithm Implementation
-
-* First, compute bands for each node. Starting with an initial band on the start node, compute bands in topological order. Bands from all predecessor nodes are considered. We keep track per band what query range originates from which predecessor band, in `BandEdge` objects.
-* Allocate a single chunk of memory for storing alignment scores, enough to hold scores for previously computed bands.
-* Iterate over all bands, and compute alignment scores based on its predecessor bands.
-* Check if we were able to reach the alignment end
+- Comments are prose: no em dashes, short sentences, no filler. Run vale.
+- Deliberate shortcuts carry a `ponytail:` comment naming the ceiling.
+- Keep the module docs (`//!`) in each `mod.rs` accurate when moving code.

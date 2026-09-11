@@ -43,13 +43,10 @@ impl AlignmentCostModel for TwoPieceAffine {
     fn gap_extend2(&self) -> u8 {
         self.gap_extend2
     }
-    /// Override: pick the cheaper of the two pieces when opening from `Match`;
-    /// no new open cost when already inside a gap of the matching piece —
-    /// same "already open, extend only" shape as the single-piece default,
-    /// applied per-piece. (Both tracks open independently from `Match`, per
-    /// this crate's `TwoPieceAffineKernel` recurrence — see
-    /// `engine::astar::aln_graph::TwoPieceAlignmentGraph`'s doc comment for
-    /// why this differs from `stable`'s transition-based model.)
+    /// Opening from `Match` takes the cheaper of the two pieces. Already inside
+    /// a gap of one piece, only that piece extends, with no new open cost.
+    /// Both pieces open independently from `Match`; there is no transition
+    /// from piece one to piece two mid-gap (see `GapAlignmentGraph`).
     fn gap_cost(&self, current_state: AlignState, length: usize) -> usize {
         if length == 0 {
             return 0;

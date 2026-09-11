@@ -46,10 +46,8 @@ pub type Offset = u32;
 
 /// Selects which [`AstarHeuristic`] an [`AstarEngine`] builds.
 ///
-/// Carried as the engine's `H` type parameter so "affine + Dijkstra" vs
-/// "affine + min-gap-cost" is a type choice instead of a bespoke config
-/// struct per combination (the four hand-written `AlignmentConfig`s on
-/// `stable` collapse into this).
+/// Carried as the engine's `H` type parameter, so cost model and heuristic
+/// combine freely without a config struct per combination.
 pub trait HeuristicConfig {
     /// Whether this heuristic needs the bubble index to compute `h`. (The
     /// bubble index is built unconditionally today since bubble-exit pruning
@@ -529,7 +527,6 @@ where
         score: end_score,
         alignment,
         stats: AlignmentStats {
-            max_bandwidth: 0,
             cells_computed: num_visited,
             fraction_of_full_matrix,
         },
@@ -578,8 +575,8 @@ mod tests {
         g
     }
 
-    /// Assert the A* engine (both heuristics) agrees with the canonical DP
-    /// oracle's score on `graph`/`query` — the core M2 equivalence check.
+    /// Assert the A* engine (both heuristics) agrees with the DP oracle's
+    /// score on `graph`/`query`.
     fn assert_astar_matches_oracle(graph: &POAGraph<u32>, query: &[u8]) {
         let oracle: DpOracle<Affine, POAGraph<u32>> = DpOracle::new(costs());
         let expected = oracle.align(graph, query).unwrap();
@@ -676,7 +673,7 @@ mod tests {
         assert_eq!(result.score, expected.score);
     }
 
-    /// Bubble-exit pruning (Task 16 "bench & tune" check): confirm pruning
+    /// Bubble-exit pruning: confirm pruning
     /// never changes the reported score and never visits *more* states than
     /// leaving it off (the `AlignmentStats.cells_computed`/
     /// `fraction_of_full_matrix` plumbing already flows through unchanged
@@ -823,7 +820,7 @@ mod tests {
         assert_error::<AstarError>();
     }
 
-    // ─── Linear cost model (Task 13) ────────────────────────────────────────
+    // ─── Linear cost model ───────────────────────────────────────────────────────────────────────────────────────
 
     fn assert_astar_matches_oracle_linear(
         graph: &POAGraph<u32>,
@@ -963,9 +960,9 @@ mod tests {
         }
     }
 
-    // ─── Semi-global / EndsFree (Task 14) ───────────────────────────────────
+    // ─── Semi-global / EndsFree ──────────────────────────────────────────────
     //
-    // No DP oracle exists for EndsFree on this branch (per the interface doc),
+    // The DP oracle is global only,
     // so these are hand-checked: each case's expected score is computed by
     // hand from the cost model, not cross-checked against DpOracle.
 

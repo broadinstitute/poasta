@@ -1,9 +1,9 @@
-//! Depth-first greedy match extension, ported from `stable`'s `aligner::dfa`.
+//! Depth-first greedy match extension.
 //!
-//! Because match edges cost 0, once a `Match` state pops off the queue we can
-//! DFS through matching `(node, offset+1)` successors for free, only
-//! re-entering the queue at mismatches, graph-end, or query-end. This is the
-//! single biggest constant-factor win in the A* engine and must be preserved.
+//! Match edges cost 0, so once a `Match` state pops off the queue the search
+//! walks matching `(node, offset+1)` successors depth first for free and
+//! re-enters the queue only at a mismatch, the graph end or the query end.
+//! This is the single biggest constant-factor win in the engine.
 
 use std::cell::{RefCell, RefMut};
 
@@ -98,7 +98,6 @@ where
     seq: &'a [u8],
     score: u32,
     num_visited: usize,
-    num_pruned: usize,
     stack: Vec<StackNode<G::Node, O, G::Successors<'a>>>,
 }
 
@@ -113,17 +112,12 @@ where
             seq,
             score,
             num_visited: 0,
-            num_pruned: 0,
             stack: vec![StackNode::new(*start_node, ref_graph.successors(start_node.node()))],
         }
     }
 
     pub fn get_num_visited(&self) -> usize {
         self.num_visited
-    }
-
-    pub fn get_num_pruned(&self) -> usize {
-        self.num_pruned
     }
 
     /// `is_end` is checked against every freshly matched state before it is
@@ -149,7 +143,6 @@ where
                 }
                 Successor::Match(child) => {
                     if astar_visited.prune(self.score, &child, AlignState::Match) {
-                        self.num_pruned += 1;
                         continue;
                     }
 

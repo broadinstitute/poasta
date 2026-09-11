@@ -38,8 +38,3 @@ pub trait GraphWithNodeOrdering: GraphBase {
     fn node_rank(&self, node: Self::NodeType) -> usize;
     fn rank_to_node(&self, node_rank: usize) -> Self::NodeType;
 }
-
-/// Trait for graphs where node have lengths
-pub trait GraphWithNodeLengths: GraphBase {
-    fn node_length(&self, node: Self::NodeType) -> usize;
-}

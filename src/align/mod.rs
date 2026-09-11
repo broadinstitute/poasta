@@ -1,3 +1,11 @@
+//! Aligning a query sequence to a graph.
+//!
+//! [`PoastaAligner`] drives the batch flow: align one sequence with an
+//! [`AlignmentEngine`], fold the result into the graph with `AddAlignment`,
+//! repeat. [`AlignmentMode`] and [`AlignState`] are shared by the engine and
+//! its tests. The engine itself lives in [`astar`], the cost models in
+//! [`cost_models`].
+
 use std::fmt;
 use std::ops::Bound;
 
@@ -133,29 +141,15 @@ where
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RunStats {
     pub n_alignments: usize,
-    pub sum_max_bandwidth: u128,
     pub sum_cells_computed: u128,
     pub sum_fraction: f64,
-    pub max_bandwidth_overall: usize,
 }
 
 impl RunStats {
     fn record(&mut self, stats: &AlignmentStats) {
         self.n_alignments += 1;
-        self.sum_max_bandwidth += stats.max_bandwidth as u128;
         self.sum_cells_computed += stats.cells_computed as u128;
         self.sum_fraction += stats.fraction_of_full_matrix;
-        if stats.max_bandwidth > self.max_bandwidth_overall {
-            self.max_bandwidth_overall = stats.max_bandwidth;
-        }
-    }
-
-    pub fn avg_max_bandwidth(&self) -> f64 {
-        if self.n_alignments == 0 {
-            0.0
-        } else {
-            self.sum_max_bandwidth as f64 / self.n_alignments as f64
-        }
     }
 
     pub fn avg_cells_computed(&self) -> f64 {

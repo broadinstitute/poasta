@@ -1,4 +1,4 @@
-//! Superbubble detection, ported from `stable`'s `bubbles::finder`.
+//! Superbubble detection.
 
 use std::cmp::min;
 use std::iter::Rev;

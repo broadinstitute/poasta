@@ -1,3 +1,7 @@
+//! Command-line argument definitions for the `poasta` and `lasagna` binaries
+//! (and `poasta_vs_spoa` behind the `bench` feature). The drivers themselves
+//! live in `src/bin/`.
+
 use clap::ValueEnum;
 
 pub mod lasagna;

@@ -10,7 +10,6 @@ use rustc_hash::FxHashMap;
 
 use crate::graph::traits::{GraphBase, GraphWithNodeOrdering};
 
-use super::traits::GraphWithNodeLengths;
 
 pub(crate) type NIx = u32;
 
@@ -156,12 +155,6 @@ impl GraphWithNodeOrdering for MockGraph {
 
     fn rank_to_node(&self, node_rank: usize) -> Self::NodeType {
         self.1[node_rank]
-    }
-}
-
-impl GraphWithNodeLengths for MockGraph {
-    fn node_length(&self, _: Self::NodeType) -> usize {
-        1
     }
 }
 
