@@ -1,5 +1,4 @@
 use super::AlignmentCostModel;
-use crate::align::kernels::affine::AffineKernel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Affine {
@@ -19,8 +18,6 @@ impl Affine {
 }
 
 impl AlignmentCostModel for Affine {
-    type Kernel = AffineKernel;
-
     #[inline(always)]
     fn mismatch(&self) -> u8 {
         self.mismatch
@@ -44,11 +41,6 @@ impl AlignmentCostModel for Affine {
     #[inline(always)]
     fn gap_extend2(&self) -> u8 {
         0
-    }
-
-    #[inline(always)]
-    fn min_gap_extend(&self) -> u8 {
-        self.gap_extend
     }
 }
 

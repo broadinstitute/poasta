@@ -42,11 +42,6 @@ pub struct LasagnaCli {
     #[clap(help_heading = "Alignment configuration")]
     pub alignment_span: AlignmentSpan,
 
-    /// Starting bandwidth for the band-doubling engine.
-    #[arg(long, default_value_t = 1)]
-    #[clap(help_heading = "Alignment configuration")]
-    pub initial_k: usize,
-
     /// Which cost model to use.
     #[arg(long, value_enum, default_value = "affine")]
     #[clap(help_heading = "Cost model")]
@@ -77,9 +72,9 @@ pub struct LasagnaCli {
     #[clap(help_heading = "Cost model")]
     pub cost_gap_extend2: u8,
 
-    /// Write debug output files (per-query band/cell TSVs and a graph DOT file) to
-    /// this directory. Filenames are derived from query names; serialised across
-    /// aligner threads via an internal mutex.
+    /// Write per-query debug files to this directory: `graph_for_<query>.dot`,
+    /// `<query>_visited.tsv` and `<query>_queued.tsv`. Filenames are derived
+    /// from query names.
     #[arg(long)]
     #[clap(help_heading = "Debug")]
     pub debug_output_dir: Option<PathBuf>,

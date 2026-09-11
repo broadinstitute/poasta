@@ -2,8 +2,6 @@ use crate::align::traits::{AlignResult, AlignableGraph};
 use crate::graph::traits::GraphNodeId;
 
 pub mod astar;
-pub mod band_doubling;
-pub mod dp;
 
 // Re-export so existing code in engine sub-modules can keep using `AlignmentStats`
 // from this module path.

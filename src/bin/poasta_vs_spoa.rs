@@ -12,9 +12,9 @@ use poasta::align::cost_models::affine::Affine;
 use poasta::align::cost_models::linear::Linear;
 use poasta::align::cost_models::two_piece::TwoPieceAffine;
 use poasta::align::engine::AlignOutput;
-use poasta::align::engine::band_doubling::BandDoublingEngineScalar;
+use poasta::align::engine::astar::{AstarEngine, AstarEngineTwoPiece};
 use poasta::align::traits::AlignmentEngine;
-use poasta::cli::poasta::CostModelKind;
+use poasta::cli::CostModelKind;
 use poasta::cli::poasta_vs_spoa::PoastaVsSpoaArgs;
 use poasta::graph::io::fasta::load_graph_from_fasta_msa;
 use poasta::graph::poa::POAGraph;
@@ -120,7 +120,7 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
     let (total_tested, total_incorrect) = match args.cost_model {
         CostModelKind::Affine => {
             let costs = Affine::new(args.cost_mismatch, args.cost_gap_open, args.cost_gap_extend);
-            let engine = BandDoublingEngineScalar::<Affine, u32>::new(costs);
+            let engine = AstarEngine::<POAGraph<u32>, Affine>::new(costs);
             run_comparison(
                 &engine,
                 &poasta_graph,
@@ -132,7 +132,7 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
         }
         CostModelKind::Linear => {
             let costs = Linear::new(args.cost_mismatch, args.cost_gap_extend);
-            let engine = BandDoublingEngineScalar::<Linear, u32>::new(costs);
+            let engine = AstarEngine::<POAGraph<u32>, Linear>::new(costs);
             run_comparison(
                 &engine,
                 &poasta_graph,
@@ -150,7 +150,7 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
                 args.cost_gap_open2,
                 args.cost_gap_extend2,
             );
-            let engine = BandDoublingEngineScalar::<TwoPieceAffine, u32>::new(costs);
+            let engine = AstarEngineTwoPiece::<POAGraph<u32>>::new(costs);
             run_comparison(
                 &engine,
                 &poasta_graph,

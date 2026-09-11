@@ -199,32 +199,4 @@ mod tests {
         assert_eq!(score(c, &g, b"AXGT"), 1);
     }
 
-    /// Temporary cross-check against the canonical DP engine that this
-    /// oracle replaces. Deleted together with `CanonicalDP`.
-    #[test]
-    fn matches_canonical_dp_on_random_queries() {
-        use crate::align::engine::dp::CanonicalDP;
-
-        let g = graph(&[b"ACGTACGT", b"ACGAACGT", b"ACGTCCGT", b"AGGTACAT"]);
-        let mut seed = 0x2545F491u32;
-        let mut next = || {
-            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
-            seed >> 8
-        };
-
-        for _ in 0..50 {
-            let len = 3 + (next() % 10) as usize;
-            let q: Vec<u8> = (0..len).map(|_| b"ACGT"[(next() % 4) as usize]).collect();
-
-            let a = Affine::new(1, 2, 1);
-            let l = Linear::new(1, 2);
-            let t = TwoPieceAffine::new(1, 2, 2, 6, 1);
-            let canon_a = CanonicalDP::<Affine, POAGraph<u32>>::new(a);
-            let canon_l = CanonicalDP::<Linear, POAGraph<u32>>::new(l);
-            let canon_t = CanonicalDP::<TwoPieceAffine, POAGraph<u32>>::new(t);
-            assert_eq!(score(a, &g, &q), canon_a.align(&g, &q).unwrap().score, "affine {q:?}");
-            assert_eq!(score(l, &g, &q), canon_l.align(&g, &q).unwrap().score, "linear {q:?}");
-            assert_eq!(score(t, &g, &q), canon_t.align(&g, &q).unwrap().score, "two-piece {q:?}");
-        }
-    }
 }

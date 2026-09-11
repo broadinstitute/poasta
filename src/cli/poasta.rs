@@ -14,21 +14,7 @@ pub enum OutputType {
     Gfa,
 }
 
-/// Which alignment engine the CLI should dispatch to.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
-pub enum EngineKind {
-    /// Priority-queue-driven A* aligner (default). The only engine that supports
-    /// `--alignment-span` ends-free and semi-global alignment.
-    Astar,
-
-    /// Scalar Ukkonen-style band-doubling Gotoh aligner (default).
-    BandDoubling,
-
-    /// Canonical O(N*m) Gotoh DP (reference / oracle — slow on large inputs).
-    CanonicalDp,
-}
-
-/// Which A* heuristic to use. Ignored by non-`astar` engines.
+/// Which A* heuristic to use.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum HeuristicKind {
     /// Admissible min-gap-cost lower bound (default): tighter bound, visits
@@ -97,22 +83,12 @@ pub struct AlignArgs {
     #[clap(help_heading = "Outputs")]
     pub consensus_only: bool,
 
-    /// Alignment span. Only 'global' is currently supported.
+    /// Alignment span.
     #[arg(short = 'm', long, value_enum, default_value = "global")]
     #[clap(help_heading = "Alignment configuration")]
     pub alignment_span: AlignmentSpan,
 
-    /// Which alignment engine to use.
-    #[arg(long, value_enum, default_value = "astar")]
-    #[clap(help_heading = "Alignment configuration")]
-    pub engine: EngineKind,
-
-    /// Starting bandwidth for band-doubling. Ignored by canonical-dp and astar.
-    #[arg(long, default_value_t = 1)]
-    #[clap(help_heading = "Alignment configuration")]
-    pub initial_k: usize,
-
-    /// Which heuristic the astar engine uses. Ignored by other engines.
+    /// Which A* heuristic to use.
     #[arg(long, value_enum, default_value = "min-gap-cost")]
     #[clap(help_heading = "Alignment configuration")]
     pub heuristic: HeuristicKind,
@@ -147,28 +123,13 @@ pub struct AlignArgs {
     #[clap(help_heading = "Cost model")]
     pub cost_gap_extend2: u8,
 
-    /// Write debug output files (DOT graph, band TSV, cell TSV) to this directory.
-    /// One set of files is produced per aligned sequence. Only supported with the
-    /// band-doubling engine.
+    /// Write per-sequence debug files to this directory: `graph_for_<seq>.dot`
+    /// (the graph before the sequence was added), `<seq>_visited.tsv` (every
+    /// alignment state the A* search expanded) and `<seq>_queued.tsv` (every
+    /// state pushed onto the queue).
     #[arg(long)]
     #[clap(help_heading = "Debug")]
     pub debug_output_dir: Option<PathBuf>,
-}
-
-impl AlignArgs {
-    /// Sanity-check the combination of CLI flags.
-    pub fn validate(&self) -> Result<(), String> {
-        if !matches!(self.alignment_span, AlignmentSpan::Global)
-            && !matches!(self.engine, EngineKind::Astar)
-        {
-            return Err(format!(
-                "alignment span '{:?}' requires --engine astar; \
-                 band-doubling and canonical-dp only support global alignment",
-                self.alignment_span
-            ));
-        }
-        Ok(())
-    }
 }
 
 #[derive(Args, Debug)]

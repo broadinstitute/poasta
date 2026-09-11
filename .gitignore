@@ -11,8 +11,11 @@ output/
 /*.png
 *.trace/
 flamegraph.svg
-debug/
+/debug/
 __pycache__
 _old
 pyrightconfig.json
 .claude
+out/
+plots/
+*.json.gz

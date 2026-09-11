@@ -3,7 +3,7 @@ use clap::ValueEnum;
 pub mod lasagna;
 pub mod poasta;
 
-#[cfg(feature = "test")]
+#[cfg(feature = "bench")]
 pub mod poasta_vs_spoa;
 
 /// An enum indicating what kind of alignment to perform. Shared between

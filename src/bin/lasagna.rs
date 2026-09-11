@@ -1,10 +1,11 @@
 //! Lasagna: read-to-graph alignment driver.
 //!
 //! Loads a GFA partial-order graph, then aligns FASTA/FASTQ reads against it
-//! using the band-doubling engine. The graph stays read-only throughout — this
-//! is the read-mapping use case, not POA-MSA construction.
+//! with the A* engine. The graph stays read-only throughout: this is the
+//! read-mapping use case, not POA-MSA construction, so the bubble index is
+//! built once and shared by every aligner thread.
 
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
 use std::path::Path;
 use std::process::ExitCode;
@@ -16,16 +17,19 @@ use crossbeam_channel::{Receiver, Sender, bounded};
 use rustc_hash::FxHashMap;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
+use poasta::align::cost_models::AlignmentCostModel;
 use poasta::align::cost_models::affine::Affine;
 use poasta::align::cost_models::linear::Linear;
 use poasta::align::cost_models::two_piece::TwoPieceAffine;
 use poasta::align::engine::AlignOutput;
-use poasta::align::engine::band_doubling::BandDoublingEngineScalar;
+use poasta::align::engine::astar::{AstarEngine, AstarEngineTwoPiece};
 use poasta::align::traits::AlignmentEngine;
 use poasta::cli::CostModelKind;
 use poasta::cli::lasagna::LasagnaCli;
-use poasta::debug::logger::DebugLogger;
+use poasta::debug::subscriber::AlignStateLayer;
+use poasta::debug::write_graph_dot;
 use poasta::errors::PoastaIOError;
+use poasta::graph::bubbles::index::BubbleIndex;
 use poasta::graph::io::gaf::{GAFRecord, alignment_to_gaf};
 use poasta::graph::io::gfa::{GraphSegments, POAGraphFromGFA, load_graph_from_gfa};
 use poasta::graph::io::seq::open_sequences;
@@ -34,7 +38,17 @@ use poasta::graph::traits::GraphBase;
 
 fn main() -> ExitCode {
     let args = LasagnaCli::parse();
-    init_tracing(args.log_level.as_tracing_str());
+
+    if let Some(dir) = &args.debug_output_dir {
+        if let Err(e) = fs::create_dir_all(dir) {
+            eprintln!("error: could not create debug output directory: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
+    init_tracing(
+        args.log_level.as_tracing_str(),
+        args.debug_output_dir.as_deref(),
+    );
 
     match run(args) {
         Ok(()) => ExitCode::SUCCESS,
@@ -45,12 +59,21 @@ fn main() -> ExitCode {
     }
 }
 
-fn init_tracing(default_level: &str) {
-    let filter =
+/// See `poasta::init_tracing`: the level filter sits on the formatter only,
+/// so trace-level A* events reach the state dumper without being printed.
+fn init_tracing(default_level: &str, debug_dir: Option<&Path>) {
+    let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
+    let fmt_layer = fmt::layer().with_writer(io::stderr).with_filter(env_filter);
+    let debug_layer = debug_dir.map(AlignStateLayer::new);
+
+    if cfg!(feature = "disable_tracing") && debug_dir.is_some() {
+        eprintln!("warning: built with `disable_tracing`; --debug-output-dir produces no state files");
+    }
+
     tracing_subscriber::registry()
-        .with(filter)
-        .with(fmt::layer().with_writer(io::stderr))
+        .with(fmt_layer)
+        .with(debug_layer)
         .init();
 }
 
@@ -107,33 +130,19 @@ fn run(args: LasagnaCli) -> Result<(), CliError> {
         "node_to_segment must cover every non-sentinel node in the graph"
     );
 
-    let debug_logger = match &args.debug_output_dir {
-        Some(dir) => Some(Arc::new(DebugLogger::new(dir.clone())?)),
-        None => None,
-    };
+    // The graph never changes, so index its bubbles once for all threads.
+    let bubbles = Arc::new(BubbleIndex::new(&graph));
 
     match args.cost_model {
         CostModelKind::Affine => {
             let costs = Affine::new(args.cost_mismatch, args.cost_gap_open, args.cost_gap_extend);
-            run_threaded(
-                costs,
-                &args,
-                &graph,
-                &graph_segments,
-                &node_to_segment,
-                debug_logger,
-            )
+            let engine = astar_engine(costs, bubbles);
+            run_threaded(&engine, &args, &graph, &graph_segments, &node_to_segment)
         }
         CostModelKind::Linear => {
             let costs = Linear::new(args.cost_mismatch, args.cost_gap_extend);
-            run_threaded(
-                costs,
-                &args,
-                &graph,
-                &graph_segments,
-                &node_to_segment,
-                debug_logger,
-            )
+            let engine = astar_engine(costs, bubbles);
+            run_threaded(&engine, &args, &graph, &graph_segments, &node_to_segment)
         }
         CostModelKind::TwoPiece => {
             let costs = TwoPieceAffine::new(
@@ -143,16 +152,18 @@ fn run(args: LasagnaCli) -> Result<(), CliError> {
                 args.cost_gap_open2,
                 args.cost_gap_extend2,
             );
-            run_threaded(
-                costs,
-                &args,
-                &graph,
-                &graph_segments,
-                &node_to_segment,
-                debug_logger,
-            )
+            let engine =
+                AstarEngineTwoPiece::<POAGraph<u32>>::new(costs).with_existing_bubbles(bubbles);
+            run_threaded(&engine, &args, &graph, &graph_segments, &node_to_segment)
         }
     }
+}
+
+fn astar_engine<C: AlignmentCostModel + Copy + 'static>(
+    costs: C,
+    bubbles: Arc<BubbleIndex<POANodeIndex<u32>>>,
+) -> AstarEngine<POAGraph<u32>, C> {
+    AstarEngine::new(costs).with_existing_bubbles(bubbles)
 }
 
 /// Walk each GFA segment by its recorded length, mapping every node it owns
@@ -206,23 +217,26 @@ fn node_to_segment_covers_all_real_nodes<Ix: petgraph::graph::IndexType>(
     _map: &FxHashMap<POANodeIndex<Ix>, (usize, usize)>,
 ) -> bool {
     // We don't have a public "iterate all non-sentinel nodes" API at the
-    // crate boundary, so this assertion is conservative — it always returns
+    // crate boundary, so this assertion is conservative: it always returns
     // true. Left as a hook in case the API is exposed later.
     true
 }
 
-fn run_threaded<C>(
-    costs: C,
+fn run_threaded<E>(
+    engine: &E,
     args: &LasagnaCli,
     graph: &POAGraph<u32>,
     graph_segments: &GraphSegments<u32>,
     node_to_segment: &FxHashMap<POANodeIndex<u32>, (usize, usize)>,
-    debug_logger: Option<Arc<DebugLogger>>,
 ) -> Result<(), CliError>
 where
-    C: poasta::align::cost_models::AlignmentCostModel + Copy + Send + 'static,
-    for<'s> BandDoublingEngineScalar<C, u32>:
-        AlignmentEngine<&'s [u8], Graph = POAGraph<u32>, Success = AlignOutput<POAGraph<u32>>>,
+    E: Sync
+        + for<'s> AlignmentEngine<
+            &'s [u8],
+            Graph = POAGraph<u32>,
+            Success = AlignOutput<POAGraph<u32>>,
+        >,
+    for<'s> <E as AlignmentEngine<&'s [u8]>>::Error: std::fmt::Display,
 {
     let num_threads = args.num_threads.max(1);
     // Bounded channels apply back-pressure: the reader can't run away from
@@ -233,6 +247,7 @@ where
 
     // Collect the first error from any worker, if any. Workers store and bail.
     let first_error: Arc<Mutex<Option<CliError>>> = Arc::new(Mutex::new(None));
+    let debug_dir = args.debug_output_dir.as_deref();
 
     thread::scope(|s| -> Result<(), CliError> {
         // Reader thread.
@@ -257,33 +272,26 @@ where
         for _ in 0..num_threads {
             let rx_seq = rx_seq.clone();
             let tx_out = tx_out.clone();
-            let initial_k = args.initial_k;
-            let debug_logger = debug_logger.clone();
             let thread_first_error = first_error.clone();
             s.spawn(move || {
-                let mut engine =
-                    BandDoublingEngineScalar::<C, u32>::new(costs).with_initial_k(initial_k);
-                if let Some(ref logger) = debug_logger {
-                    engine = engine.with_debug_logger(logger.clone());
-                }
-
                 while let Ok((name, seq)) = rx_seq.recv() {
-                    if let Some(ref logger) = debug_logger {
-                        logger.begin_sequence(graph, &name);
+                    let span = tracing::info_span!("align_seq", seq_id = name.as_str());
+                    let _enter = span.enter();
+
+                    if let Some(dir) = debug_dir {
+                        if let Err(e) = write_graph_dot(dir, &name, graph, &seq) {
+                            stash_error(&thread_first_error, e.into());
+                            break;
+                        }
                     }
+
                     let out = match engine.align(graph, seq.as_slice()) {
                         Ok(out) => out,
                         Err(e) => {
-                            if let Some(ref logger) = debug_logger {
-                                logger.end_sequence();
-                            }
                             stash_error(&thread_first_error, CliError::Align(format!("{e}")));
                             break;
                         }
                     };
-                    if let Some(ref logger) = debug_logger {
-                        logger.end_sequence();
-                    }
 
                     let rec = alignment_to_gaf(
                         graph,

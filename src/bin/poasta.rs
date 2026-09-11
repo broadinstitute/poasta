@@ -1,29 +1,27 @@
 //! POASTA command-line driver.
 
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Write};
+use std::ops::Bound;
 use std::path::Path;
 use std::process::ExitCode;
-use std::sync::Arc;
 
 use clap::Parser;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-use std::ops::Bound;
-
 use poasta::align::AlignmentMode;
 use poasta::align::PoastaAligner;
+use poasta::align::cost_models::AlignmentCostModel;
 use poasta::align::cost_models::affine::Affine;
 use poasta::align::cost_models::linear::Linear;
 use poasta::align::cost_models::two_piece::TwoPieceAffine;
 use poasta::align::engine::AlignOutput;
 use poasta::align::engine::astar::{AstarEngine, AstarEngineTwoPiece, DijkstraHeuristic};
-use poasta::align::engine::band_doubling::BandDoublingEngineScalar;
-use poasta::align::engine::dp::CanonicalDP;
 use poasta::align::traits::AlignmentEngine;
 use poasta::cli::CostModelKind;
-use poasta::cli::poasta::{AlignArgs, CliArgs, CliSubcommand, EngineKind, HeuristicKind, OutputType};
-use poasta::debug::logger::DebugLogger;
+use poasta::cli::poasta::{AlignArgs, CliArgs, CliSubcommand, HeuristicKind, OutputType};
+use poasta::debug::subscriber::AlignStateLayer;
+use poasta::debug::write_graph_dot;
 use poasta::errors::PoastaIOError;
 use poasta::graph::io::fasta::{FastaOutputOptions, load_graph_from_fasta_msa, poa_graph_to_fasta};
 use poasta::graph::io::gfa::{GfaOutputOptions, poa_graph_to_gfa};
@@ -34,7 +32,17 @@ use poasta::graph::traits::GraphBase;
 fn main() -> ExitCode {
     let args = CliArgs::parse();
 
-    init_tracing(args.log_level.as_tracing_str());
+    let debug_dir = match &args.command {
+        Some(CliSubcommand::Align(a)) => a.debug_output_dir.clone(),
+        _ => None,
+    };
+    if let Some(dir) = &debug_dir {
+        if let Err(e) = fs::create_dir_all(dir) {
+            eprintln!("error: could not create debug output directory: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
+    init_tracing(args.log_level.as_tracing_str(), debug_dir.as_deref());
 
     match args.command {
         Some(CliSubcommand::Align(align_args)) => match run_align(align_args) {
@@ -59,12 +67,23 @@ fn main() -> ExitCode {
     }
 }
 
-fn init_tracing(default_level: &str) {
-    let filter =
+/// Install the log formatter on stderr, filtered by `RUST_LOG` or
+/// `default_level`, and, when `debug_dir` is given, the A* state dumper.
+/// The level filter is attached to the formatter only, so trace-level A*
+/// events reach the dumper without being printed.
+fn init_tracing(default_level: &str, debug_dir: Option<&Path>) {
+    let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
+    let fmt_layer = fmt::layer().with_writer(io::stderr).with_filter(env_filter);
+    let debug_layer = debug_dir.map(AlignStateLayer::new);
+
+    if cfg!(feature = "disable_tracing") && debug_dir.is_some() {
+        eprintln!("warning: built with `disable_tracing`; --debug-output-dir produces no state files");
+    }
+
     tracing_subscriber::registry()
-        .with(filter)
-        .with(fmt::layer().with_writer(io::stderr))
+        .with(fmt_layer)
+        .with(debug_layer)
         .init();
 }
 
@@ -98,12 +117,9 @@ impl From<io::Error> for CliError {
 }
 
 fn run_align(args: AlignArgs) -> Result<(), CliError> {
-    args.validate().map_err(CliError::Config)?;
-
     tracing::info!(
-        engine = ?args.engine,
         cost_model = ?args.cost_model,
-        initial_k = args.initial_k,
+        heuristic = ?args.heuristic,
         input = %args.sequences.display(),
         seed_graph = ?args.graph.as_ref().map(|p| p.display().to_string()),
         "configuring aligner"
@@ -152,16 +168,6 @@ fn open_seed_graph(path: &Path) -> Result<Box<dyn io::Read>, PoastaIOError> {
     }
 }
 
-fn make_debug_logger(args: &AlignArgs) -> Result<Option<Arc<DebugLogger>>, CliError> {
-    match &args.debug_output_dir {
-        None => Ok(None),
-        Some(dir) => {
-            let logger = DebugLogger::new(dir.clone())?;
-            Ok(Some(Arc::new(logger)))
-        }
-    }
-}
-
 /// Translate the CLI's `--alignment-span` preset into the engine-level
 /// `AlignmentMode`. `SemiGlobal` frees the graph's leading/trailing indels
 /// only (query is aligned end-to-end).
@@ -184,57 +190,16 @@ fn dispatch(
     graph: POAGraph<u32>,
     sequences: &[(String, Vec<u8>)],
 ) -> Result<POAGraph<u32>, CliError> {
-    let debug_logger = make_debug_logger(args)?;
     let mode = alignment_mode(args);
 
     match args.cost_model {
         CostModelKind::Affine => {
             let costs = Affine::new(args.cost_mismatch, args.cost_gap_open, args.cost_gap_extend);
-            match args.engine {
-                EngineKind::BandDoubling => {
-                    let mut engine = BandDoublingEngineScalar::<Affine, u32>::new(costs)
-                        .with_initial_k(args.initial_k);
-                    if let Some(ref logger) = debug_logger {
-                        engine = engine.with_debug_logger(logger.clone());
-                    }
-                    run_with(engine, graph, sequences, debug_logger, true)
-                }
-                EngineKind::CanonicalDp => {
-                    let engine = CanonicalDP::<Affine, POAGraph<u32>>::new(costs);
-                    run_with(engine, graph, sequences, None, false)
-                }
-                EngineKind::Astar => {
-                    let engine: AstarEngine<POAGraph<u32>, Affine> = AstarEngine::new(costs).with_mode(mode);
-                    match args.heuristic {
-                        HeuristicKind::MinGapCost => run_with(engine, graph, sequences, None, false),
-                        HeuristicKind::Dijkstra => run_with(engine.with_heuristic(DijkstraHeuristic), graph, sequences, None, false),
-                    }
-                }
-            }
+            run_astar(costs, mode, args, graph, sequences)
         }
         CostModelKind::Linear => {
             let costs = Linear::new(args.cost_mismatch, args.cost_gap_extend);
-            match args.engine {
-                EngineKind::BandDoubling => {
-                    let mut engine = BandDoublingEngineScalar::<Linear, u32>::new(costs)
-                        .with_initial_k(args.initial_k);
-                    if let Some(ref logger) = debug_logger {
-                        engine = engine.with_debug_logger(logger.clone());
-                    }
-                    run_with(engine, graph, sequences, debug_logger, true)
-                }
-                EngineKind::CanonicalDp => {
-                    let engine = CanonicalDP::<Linear, POAGraph<u32>>::new(costs);
-                    run_with(engine, graph, sequences, None, false)
-                }
-                EngineKind::Astar => {
-                    let engine: AstarEngine<POAGraph<u32>, Linear> = AstarEngine::new(costs).with_mode(mode);
-                    match args.heuristic {
-                        HeuristicKind::MinGapCost => run_with(engine, graph, sequences, None, false),
-                        HeuristicKind::Dijkstra => run_with(engine.with_heuristic(DijkstraHeuristic), graph, sequences, None, false),
-                    }
-                }
-            }
+            run_astar(costs, mode, args, graph, sequences)
         }
         CostModelKind::TwoPiece => {
             let costs = TwoPieceAffine::new(
@@ -244,37 +209,41 @@ fn dispatch(
                 args.cost_gap_open2,
                 args.cost_gap_extend2,
             );
-            match args.engine {
-                EngineKind::BandDoubling => {
-                    let mut engine = BandDoublingEngineScalar::<TwoPieceAffine, u32>::new(costs)
-                        .with_initial_k(args.initial_k);
-                    if let Some(ref logger) = debug_logger {
-                        engine = engine.with_debug_logger(logger.clone());
-                    }
-                    run_with(engine, graph, sequences, debug_logger, true)
-                }
-                EngineKind::CanonicalDp => {
-                    let engine = CanonicalDP::<TwoPieceAffine, POAGraph<u32>>::new(costs);
-                    run_with(engine, graph, sequences, None, false)
-                }
-                EngineKind::Astar => {
-                    let engine: AstarEngineTwoPiece<POAGraph<u32>> = AstarEngineTwoPiece::new(costs).with_mode(mode);
-                    match args.heuristic {
-                        HeuristicKind::MinGapCost => run_with(engine, graph, sequences, None, false),
-                        HeuristicKind::Dijkstra => run_with(engine.with_heuristic(DijkstraHeuristic), graph, sequences, None, false),
-                    }
+            let engine = AstarEngineTwoPiece::<POAGraph<u32>>::new(costs).with_mode(mode);
+            match args.heuristic {
+                HeuristicKind::MinGapCost => run_with(engine, args, graph, sequences),
+                HeuristicKind::Dijkstra => {
+                    run_with(engine.with_heuristic(DijkstraHeuristic), args, graph, sequences)
                 }
             }
         }
     }
 }
 
-fn run_with<E>(
-    engine: E,
+fn run_astar<C>(
+    costs: C,
+    mode: AlignmentMode,
+    args: &AlignArgs,
     graph: POAGraph<u32>,
     sequences: &[(String, Vec<u8>)],
-    debug_logger: Option<Arc<DebugLogger>>,
-    is_band_doubling: bool,
+) -> Result<POAGraph<u32>, CliError>
+where
+    C: AlignmentCostModel + Copy + 'static,
+{
+    let engine = AstarEngine::<POAGraph<u32>, C>::new(costs).with_mode(mode);
+    match args.heuristic {
+        HeuristicKind::MinGapCost => run_with(engine, args, graph, sequences),
+        HeuristicKind::Dijkstra => {
+            run_with(engine.with_heuristic(DijkstraHeuristic), args, graph, sequences)
+        }
+    }
+}
+
+fn run_with<E>(
+    engine: E,
+    args: &AlignArgs,
+    graph: POAGraph<u32>,
+    sequences: &[(String, Vec<u8>)],
 ) -> Result<POAGraph<u32>, CliError>
 where
     E: for<'s> AlignmentEngine<
@@ -287,37 +256,22 @@ where
     let mut aligner = PoastaAligner::new(engine, graph);
 
     for (name, seq) in sequences {
-        if let Some(ref logger) = debug_logger {
-            logger.begin_sequence(aligner.graph(), name);
+        if let Some(dir) = &args.debug_output_dir {
+            write_graph_dot(dir, name, aligner.graph(), seq)?;
         }
 
         aligner
             .align_one_named(name, seq)
             .map_err(|e| CliError::Align(format!("{e}")))?;
-
-        if let Some(ref logger) = debug_logger {
-            logger.end_sequence();
-        }
     }
 
     let run_stats = aligner.run_stats();
-    if is_band_doubling {
-        tracing::info!(
-            n_alignments = run_stats.n_alignments,
-            avg_max_bandwidth = run_stats.avg_max_bandwidth(),
-            max_bandwidth_overall = run_stats.max_bandwidth_overall,
-            avg_cells_computed = run_stats.avg_cells_computed(),
-            avg_fraction_of_full_matrix = run_stats.avg_fraction(),
-            "run alignment stats (averaged across sequences)",
-        );
-    } else {
-        tracing::info!(
-            n_alignments = run_stats.n_alignments,
-            avg_cells_computed = run_stats.avg_cells_computed(),
-            avg_fraction_of_full_matrix = run_stats.avg_fraction(),
-            "run alignment stats (averaged across sequences)",
-        );
-    }
+    tracing::info!(
+        n_alignments = run_stats.n_alignments,
+        avg_cells_computed = run_stats.avg_cells_computed(),
+        avg_fraction_of_full_matrix = run_stats.avg_fraction(),
+        "run alignment stats (averaged across sequences)",
+    );
     Ok(aligner.into_graph())
 }
 

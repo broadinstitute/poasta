@@ -8,17 +8,12 @@ use self::traits::{AlignResult, AlignableGraph, AlignmentEngine};
 
 pub mod cost_models;
 pub mod engine;
-pub mod kernels;
 pub mod offsets;
 pub mod score;
 pub mod traits;
-pub mod utils;
 
-/// Shared test-only helper for verifying that a backtrace-produced alignment
-/// is self-consistent with its reported score. Used by every engine's test
-/// module (`dp`, `band_doubling`, `astar`) so each can check its own
-/// (potentially independently implemented) backtrace against the cost model,
-/// rather than only comparing scores across engines.
+/// Test-only helper for verifying that a backtrace-produced alignment is
+/// self-consistent with its reported score, independent of the DP oracle.
 #[cfg(test)]
 pub(crate) mod test_support {
     use super::cost_models::AlignmentCostModel;
@@ -330,14 +325,14 @@ where
 mod tests {
     use super::*;
     use crate::align::cost_models::affine::Affine;
-    use crate::align::engine::band_doubling::BandDoublingEngineScalar;
+    use crate::align::engine::astar::AstarEngine;
     use crate::graph::poa::POAGraph;
     use crate::graph::traits::GraphBase;
 
     #[test]
     fn align_all_builds_graph_from_empty() {
         let graph = POAGraph::<u32>::new();
-        let engine = BandDoublingEngineScalar::<Affine, u32>::new(Affine::new(1, 2, 1));
+        let engine = AstarEngine::<POAGraph<u32>, Affine>::new(Affine::new(1, 2, 1));
         let mut aligner = PoastaAligner::new(engine, graph);
 
         let seqs: &[&[u8]] = &[b"ACGT", b"ACCT", b"ACGG"];
@@ -352,7 +347,7 @@ mod tests {
     #[test]
     fn align_all_with_weights_accepts_custom_weights() {
         let graph = POAGraph::<u32>::new();
-        let engine = BandDoublingEngineScalar::<Affine, u32>::new(Affine::new(1, 2, 1));
+        let engine = AstarEngine::<POAGraph<u32>, Affine>::new(Affine::new(1, 2, 1));
         let mut aligner = PoastaAligner::new(engine, graph);
 
         let s0: &[u8] = b"ACGT";

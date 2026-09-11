@@ -1,5 +1,4 @@
 use super::AlignmentCostModel;
-use crate::align::kernels::linear::LinearKernel;
 
 /// Linear gap model: gap cost = gap_extend × length (no open penalty).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,8 +17,6 @@ impl Linear {
 }
 
 impl AlignmentCostModel for Linear {
-    type Kernel = LinearKernel;
-
     #[inline(always)]
     fn mismatch(&self) -> u8 {
         self.mismatch
@@ -43,10 +40,5 @@ impl AlignmentCostModel for Linear {
     #[inline(always)]
     fn gap_extend2(&self) -> u8 {
         0
-    }
-
-    #[inline(always)]
-    fn min_gap_extend(&self) -> u8 {
-        self.gap_extend
     }
 }

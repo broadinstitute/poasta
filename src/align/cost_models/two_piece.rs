@@ -1,6 +1,5 @@
 use super::AlignmentCostModel;
 use crate::align::AlignState;
-use crate::align::kernels::two_piece::TwoPieceAffineKernel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TwoPieceAffine {
@@ -24,7 +23,6 @@ impl TwoPieceAffine {
 }
 
 impl AlignmentCostModel for TwoPieceAffine {
-    type Kernel = TwoPieceAffineKernel;
     #[inline(always)]
     fn mismatch(&self) -> u8 {
         self.mismatch
@@ -45,11 +43,6 @@ impl AlignmentCostModel for TwoPieceAffine {
     fn gap_extend2(&self) -> u8 {
         self.gap_extend2
     }
-    #[inline(always)]
-    fn min_gap_extend(&self) -> u8 {
-        self.gap_extend.min(self.gap_extend2)
-    }
-
     /// Override: pick the cheaper of the two pieces when opening from `Match`;
     /// no new open cost when already inside a gap of the matching piece —
     /// same "already open, extend only" shape as the single-piece default,

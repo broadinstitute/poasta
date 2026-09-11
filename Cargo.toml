@@ -29,7 +29,7 @@ cli = ["dep:tracing-subscriber", "dep:clap", "dep:crossbeam-channel"]
 # Compile out all tracing events at info level and below (keeps warn/error only).
 # Use for maximum-performance benchmark/release builds.
 disable_tracing = ["tracing/max_level_warn", "tracing/release_max_level_warn"]
-test = ["dep:spoa_rs"]
+bench = ["cli", "dep:spoa_rs"]
 
 [profile.release]
 debug = true
@@ -48,5 +48,5 @@ required-features = ["cli"]
 [[bin]]
 name = "poasta_vs_spoa"
 path = "src/bin/poasta_vs_spoa.rs"
-required-features = ["test"]
+required-features = ["bench"]
 

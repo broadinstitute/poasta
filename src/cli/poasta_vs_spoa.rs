@@ -2,7 +2,7 @@ use clap::Parser;
 
 use std::path::PathBuf;
 
-use crate::cli::poasta::CostModelKind;
+use crate::cli::CostModelKind;
 
 #[derive(Parser)]
 pub struct PoastaVsSpoaArgs {
