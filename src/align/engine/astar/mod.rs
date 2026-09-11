@@ -13,6 +13,9 @@ pub mod heuristic;
 pub mod queue;
 pub mod visited;
 
+#[cfg(test)]
+pub(crate) mod dp_oracle;
+
 use std::error::Error;
 use std::fmt;
 use std::marker::PhantomData;
@@ -571,7 +574,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::align::engine::dp::CanonicalDP;
+    use super::dp_oracle::DpOracle;
     use crate::align::test_support::score_from_alignment;
     use crate::graph::alignment::AddAlignment;
     use crate::graph::poa::POAGraph;
@@ -613,7 +616,7 @@ mod tests {
     /// Assert the A* engine (both heuristics) agrees with the canonical DP
     /// oracle's score on `graph`/`query` — the core M2 equivalence check.
     fn assert_astar_matches_oracle(graph: &POAGraph<u32>, query: &[u8]) {
-        let oracle: CanonicalDP<Affine, POAGraph<u32>> = CanonicalDP::new(costs());
+        let oracle: DpOracle<Affine, POAGraph<u32>> = DpOracle::new(costs());
         let expected = oracle.align(graph, query).unwrap();
 
         let dijkstra_engine: AstarEngine<POAGraph<u32>, Affine, DijkstraHeuristic> =
@@ -703,7 +706,7 @@ mod tests {
             AstarEngine::new(costs()).without_pruning();
         let result = engine.align(&g, b"AXGT").unwrap();
 
-        let oracle: CanonicalDP<Affine, POAGraph<u32>> = CanonicalDP::new(costs());
+        let oracle: DpOracle<Affine, POAGraph<u32>> = DpOracle::new(costs());
         let expected = oracle.align(&g, b"AXGT").unwrap();
         assert_eq!(result.score, expected.score);
     }
@@ -862,8 +865,8 @@ mod tests {
         query: &[u8],
         costs: crate::align::cost_models::linear::Linear,
     ) {
-        let oracle: CanonicalDP<crate::align::cost_models::linear::Linear, POAGraph<u32>> =
-            CanonicalDP::new(costs);
+        let oracle: DpOracle<crate::align::cost_models::linear::Linear, POAGraph<u32>> =
+            DpOracle::new(costs);
         let expected = oracle.align(graph, query).unwrap();
 
         let dijkstra_engine: AstarEngine<
@@ -920,10 +923,10 @@ mod tests {
         query: &[u8],
         costs: crate::align::cost_models::two_piece::TwoPieceAffine,
     ) {
-        let oracle: CanonicalDP<
+        let oracle: DpOracle<
             crate::align::cost_models::two_piece::TwoPieceAffine,
             POAGraph<u32>,
-        > = CanonicalDP::new(costs);
+        > = DpOracle::new(costs);
         let expected = oracle.align(graph, query).unwrap();
 
         let dijkstra_engine: AstarEngineTwoPiece<POAGraph<u32>, DijkstraHeuristic> =
@@ -976,7 +979,7 @@ mod tests {
     //
     // No DP oracle exists for EndsFree on this branch (per the interface doc),
     // so these are hand-checked: each case's expected score is computed by
-    // hand from the cost model, not cross-checked against CanonicalDP.
+    // hand from the cost model, not cross-checked against DpOracle.
 
     fn free_ends(
         qry_free_begin: std::ops::Bound<usize>,
