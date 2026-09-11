@@ -12,7 +12,7 @@ use poasta::align::cost_models::affine::Affine;
 use poasta::align::cost_models::linear::Linear;
 use poasta::align::cost_models::two_piece::TwoPieceAffine;
 use poasta::align::traits::AlignOutput;
-use poasta::align::astar::{AstarEngine, AstarEngineTwoPiece};
+use poasta::align::astar::AstarEngine;
 use poasta::align::traits::AlignmentEngine;
 use poasta::cli::CostModelKind;
 use poasta::cli::poasta_vs_spoa::PoastaVsSpoaArgs;
@@ -150,7 +150,7 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
                 args.cost_gap_open2,
                 args.cost_gap_extend2,
             );
-            let engine = AstarEngineTwoPiece::<POAGraph<u32>>::new(costs);
+            let engine = AstarEngine::<POAGraph<u32>, TwoPieceAffine>::new(costs);
             run_comparison(
                 &engine,
                 &poasta_graph,

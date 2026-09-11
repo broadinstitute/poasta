@@ -1,25 +1,24 @@
-//! Visited-state storage for the A* engine, ported from `stable`'s
-//! `aligner::astar::AstarVisited` + `aligner::scoring::gap_affine`'s
-//! `BlockedVisitedStorageAffine`/`AffineAstarData`.
+//! Visited-state storage for the A* engine: the best score found so far for
+//! every `(graph node, query offset, alignment state)` triple, plus the
+//! bookkeeping bubble-exit pruning needs, plus the backtrace that turns the
+//! scores back into an alignment.
 
-use std::fmt::Write;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
+use crate::align::AlignState;
+use crate::align::astar::aln_graph::AlignmentGraphNode;
+use crate::align::astar::pruning::ReachedBubbleExitsMatch;
 use crate::align::cost_models::AlignmentCostModel;
 use crate::align::cost_models::affine::Affine;
 use crate::align::cost_models::linear::Linear;
 use crate::align::cost_models::two_piece::TwoPieceAffine;
-use crate::align::traits::AlignedPair;
-use crate::align::astar::aln_graph::AlignmentGraphNode;
 use crate::align::offsets::OffsetType;
 use crate::align::score::INF;
-use crate::align::traits::AlignableGraph;
-use crate::align::AlignState;
+use crate::align::traits::{AlignableGraph, AlignedPair};
 use crate::graph::bubbles::index::BubbleIndex;
-use crate::align::astar::pruning::ReachedBubbleExitsMatch;
 use crate::graph::traits::{GraphNodeId, GraphWithNodeOrdering};
 
 /// Insert `offset` into a per-node "reached bubble exit" list, keeping it sorted
@@ -60,14 +59,11 @@ where
     fn backtrace<G>(&self, ref_graph: &G, seq: &[u8], aln_node: &AlignmentGraphNode<N, O>) -> Vec<AlignedPair<N>>
     where
         G: AlignableGraph<Node = N>;
-
-    fn write_tsv<W: Write>(&self, writer: &mut W) -> Result<(), std::fmt::Error>;
 }
 
 /// Node-rank × query-offset space tiled into `B×B` blocks, allocated on
-/// demand. A cell is `[u32; S]` — the same layout `DPKernel` uses for a band
-/// column (slot `i` = `AlignState as u8`), so `S` is `3` for affine, `5` for
-/// two-piece, `1` for linear.
+/// demand. A cell is `[u32; S]`, indexed by `AlignState as usize`, so `S` is
+/// `1` for linear, `3` for affine and `5` for two-piece costs.
 pub struct BlockedVisitedStorage<N, O, const S: usize, const B: usize = 8> {
     node_blocks: Vec<FxHashMap<O, [[[u32; S]; B]; B]>>,
     node_ranks: Vec<usize>,
@@ -150,63 +146,31 @@ where
             false
         }
     }
-
-    pub fn write_tsv<W: Write>(&self, writer: &mut W, state_names: &[&str]) -> Result<(), std::fmt::Error> {
-        writeln!(writer, "node_id\toffset\tmatrix\tscore")?;
-
-        let mut rank_to_node_ix: Vec<usize> = (0..self.node_ranks.len()).collect();
-        rank_to_node_ix.sort_unstable_by_key(|v| self.node_ranks[*v]);
-
-        for (node_block_num, node_block) in self.node_blocks.iter().enumerate() {
-            let node_rank_base = node_block_num * B;
-            for (qry_block_num, block_data) in node_block.iter() {
-                let qry_pos_base = O::new(qry_block_num.as_usize() * B);
-                for (row_num, row) in block_data.iter().enumerate() {
-                    let node_rank = node_rank_base + row_num;
-                    if node_rank >= rank_to_node_ix.len() {
-                        break;
-                    }
-                    let node_ix = rank_to_node_ix[node_rank];
-
-                    for (col, cell) in row.iter().enumerate() {
-                        let qry_pos = qry_pos_base + O::new(col);
-                        for (state_ix, &score) in cell.iter().enumerate() {
-                            if score < INF {
-                                let name = state_names.get(state_ix).copied().unwrap_or("?");
-                                writeln!(writer, "{node_ix}\t{qry_pos:?}\t{name}\t{score}")?;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
 }
 
-/// `AstarVisited` impl for any three-state (Match/Deletion/Insertion) cost
-/// model, composing the block storage with bubble-index-based pruning.
-pub struct ThreeStateAstarData<N, O, C>
+/// Everything the A* search records per state, for any cost model: scores in
+/// blocked storage plus, per bubble exit, the query offsets at which the exit
+/// was reached in `Match` (what bubble-exit pruning checks against).
+///
+/// `S` is the cost model's state count and also selects the backtrace state
+/// machine: `1` is the one-state linear model, `3` one gap piece, `5` two.
+pub struct AstarData<N, O, C, const S: usize>
 where
     N: GraphNodeId,
     O: OffsetType,
-    C: AlignmentCostModel,
 {
     costs: C,
     seq_len: usize,
     bubble_index: Arc<BubbleIndex<N>>,
-    visited: BlockedVisitedStorage<N, O, 3>,
+    visited: BlockedVisitedStorage<N, O, S>,
     bubbles_reached_m: Vec<Vec<O>>,
 }
 
-/// Gap-affine visited-state storage (three-state data specialised to [`Affine`]).
-pub type AffineAstarData<N, O> = ThreeStateAstarData<N, O, Affine>;
+pub type LinearAstarData<N, O> = AstarData<N, O, Linear, 1>;
+pub type AffineAstarData<N, O> = AstarData<N, O, Affine, 3>;
+pub type TwoPieceAstarData<N, O> = AstarData<N, O, TwoPieceAffine, 5>;
 
-/// Linear-gap visited-state storage (three-state data specialised to [`Linear`]).
-pub type LinearAstarData<N, O> = ThreeStateAstarData<N, O, Linear>;
-
-impl<N, O, C> ThreeStateAstarData<N, O, C>
+impl<N, O, C, const S: usize> AstarData<N, O, C, S>
 where
     N: GraphNodeId,
     O: OffsetType,
@@ -224,99 +188,9 @@ where
             bubble_index,
         }
     }
-
-    /// Walk one backtrace step: given the current alignment-graph node and
-    /// state, find the predecessor `(node, state)` pair whose score is
-    /// consistent with the recorded transition, or `None` at the start of
-    /// the alignment.
-    fn get_backtrace<G>(
-        &self,
-        ref_graph: &G,
-        seq: &[u8],
-        aln_node: &AlignmentGraphNode<N, O>,
-        aln_state: AlignState,
-    ) -> Option<(AlignmentGraphNode<N, O>, AlignState)>
-    where
-        G: AlignableGraph<Node = N>,
-    {
-        let curr_score = self.visited.get_score(aln_node, aln_state);
-
-        match aln_state {
-            AlignState::Match => {
-                if aln_node.offset() > O::zero() {
-                    let is_match_or_end = ref_graph.is_symbol_equal(aln_node.node(), seq[aln_node.offset().as_usize() - 1])
-                        || aln_node.node() == ref_graph.end_node();
-                    let pred_offset = if aln_node.node() == ref_graph.end_node() {
-                        aln_node.offset()
-                    } else {
-                        aln_node.offset() - O::one()
-                    };
-
-                    for p in ref_graph.predecessors(aln_node.node()) {
-                        let pred = AlignmentGraphNode::new(p, pred_offset);
-                        let pred_score = self.visited.get_score(&pred, AlignState::Match);
-
-                        if (is_match_or_end && pred_score == curr_score)
-                            || (!is_match_or_end && pred_score == curr_score - self.costs.mismatch() as u32)
-                        {
-                            return Some((pred, AlignState::Match));
-                        }
-                    }
-                }
-
-                let pred_score = self.visited.get_score(aln_node, AlignState::Deletion);
-                if pred_score == curr_score {
-                    return Some((*aln_node, AlignState::Deletion));
-                }
-
-                let pred_score = self.visited.get_score(aln_node, AlignState::Insertion);
-                if pred_score == curr_score {
-                    return Some((*aln_node, AlignState::Insertion));
-                }
-            }
-            AlignState::Deletion => {
-                let go_ge = (self.costs.gap_open() + self.costs.gap_extend()) as u32;
-                for p in ref_graph.predecessors(aln_node.node()) {
-                    let pred = AlignmentGraphNode::new(p, aln_node.offset());
-                    let pred_score = self.visited.get_score(&pred, AlignState::Match);
-                    if pred_score == curr_score - go_ge {
-                        return Some((pred, AlignState::Match));
-                    }
-                }
-
-                for p in ref_graph.predecessors(aln_node.node()) {
-                    let pred = AlignmentGraphNode::new(p, aln_node.offset());
-                    let pred_score = self.visited.get_score(&pred, AlignState::Deletion);
-                    if pred_score == curr_score - self.costs.gap_extend() as u32 {
-                        return Some((pred, AlignState::Deletion));
-                    }
-                }
-            }
-            AlignState::Insertion => {
-                if aln_node.offset() > O::zero() {
-                    let go_ge = (self.costs.gap_open() + self.costs.gap_extend()) as u32;
-                    let pred = AlignmentGraphNode::new(aln_node.node(), aln_node.offset() - O::one());
-                    let pred_score = self.visited.get_score(&pred, AlignState::Match);
-                    if pred_score == curr_score - go_ge {
-                        return Some((pred, AlignState::Match));
-                    }
-
-                    let pred_score = self.visited.get_score(&pred, AlignState::Insertion);
-                    if pred_score == curr_score - self.costs.gap_extend() as u32 {
-                        return Some((pred, AlignState::Insertion));
-                    }
-                }
-            }
-            AlignState::Insertion2 | AlignState::Deletion2 => {
-                panic!("Invalid gap-affine state {aln_state:?}!")
-            }
-        }
-
-        None
-    }
 }
 
-impl<N, O, C> AstarVisited<N, O> for ThreeStateAstarData<N, O, C>
+impl<N, O, C, const S: usize> AstarVisited<N, O> for AstarData<N, O, C, S>
 where
     N: GraphNodeId,
     O: OffsetType,
@@ -373,324 +247,284 @@ where
     where
         G: AlignableGraph<Node = N>,
     {
-        let Some((mut curr, mut curr_state)) = self.get_backtrace(ref_graph, seq, aln_node, AlignState::Match) else {
-            panic!("No backtrace for alignment end state?");
+        if S == 1 {
+            linear_backtrace(&self.visited, &self.costs, ref_graph, seq, aln_node)
+        } else {
+            gap_backtrace(&self.visited, &self.costs, ref_graph, seq, aln_node)
+        }
+    }
+}
+
+// ─── Backtrace: one-state linear model ───────────────────────────────────────
+
+/// One backtrace step for the linear model. Returns the predecessor and the
+/// kind of move that led from it to `curr` (`Match` for the diagonal), or
+/// `None` at the start of the alignment.
+fn linear_step<N, O, C, G, const S: usize>(
+    visited: &BlockedVisitedStorage<N, O, S>,
+    costs: &C,
+    ref_graph: &G,
+    seq: &[u8],
+    curr: &AlignmentGraphNode<N, O>,
+) -> Option<(AlignmentGraphNode<N, O>, AlignState)>
+where
+    N: GraphNodeId,
+    O: OffsetType,
+    C: AlignmentCostModel,
+    G: AlignableGraph<Node = N>,
+{
+    let score = visited.get_score(curr, AlignState::Match);
+    let get = |node: N, offset: O| visited.get_score(&AlignmentGraphNode::new(node, offset), AlignState::Match);
+    let ge = costs.gap_extend() as u32;
+    let at_end = curr.node() == ref_graph.end_node();
+
+    if at_end || curr.offset() > O::zero() {
+        let (pred_offset, step) = if at_end {
+            (curr.offset(), 0)
+        } else if ref_graph.is_symbol_equal(curr.node(), seq[curr.offset().as_usize() - 1]) {
+            (curr.offset() - O::one(), 0)
+        } else {
+            (curr.offset() - O::one(), costs.mismatch() as u32)
         };
-
-        let mut alignment = Vec::new();
-
-        // `aln_node` (the alignment end state) is itself never pushed below --
-        // the loop only records `curr` once its *predecessor* has been found.
-        // For `Global` mode that's fine: the end state is always the virtual
-        // end sentinel, which has no base to record. But `EndsFree`/semi-global
-        // alignments can terminate on a real graph node (see `ends_free_is_end`),
-        // whose own base would otherwise be silently dropped. Record it here,
-        // unless it's just an alias for a just-closed indel at the same
-        // (node, offset) -- that case is handled once the loop reaches it below.
-        let is_indel_alias = curr.node() == aln_node.node() && curr.offset() == aln_node.offset();
-        if aln_node.node() != ref_graph.end_node() && !is_indel_alias {
-            alignment.push(AlignedPair::new(Some(aln_node.node()), Some(aln_node.offset().as_usize() - 1)));
+        for p in ref_graph.predecessors(curr.node()) {
+            if get(p, pred_offset) == score.wrapping_sub(step) {
+                return Some((AlignmentGraphNode::new(p, pred_offset), AlignState::Match));
+            }
         }
-
-        while let Some((bt_node, bt_state)) = self.get_backtrace(ref_graph, seq, &curr, curr_state) {
-            // If BT points towards indel, update the backtrace again to prevent double
-            // using (node, query) pairs, since closing of indels is a zero cost edge.
-            if curr_state == AlignState::Match && (bt_state == AlignState::Insertion || bt_state == AlignState::Deletion) {
-                curr = bt_node;
-                curr_state = bt_state;
-                continue;
-            }
-
-            match curr_state {
-                AlignState::Match => {
-                    alignment.push(AlignedPair::new(Some(curr.node()), Some(curr.offset().as_usize() - 1)));
-                }
-                AlignState::Insertion => {
-                    alignment.push(AlignedPair::new(None, Some(curr.offset().as_usize() - 1)));
-                }
-                AlignState::Deletion => {
-                    alignment.push(AlignedPair::new(Some(curr.node()), None));
-                }
-                AlignState::Insertion2 | AlignState::Deletion2 => {
-                    panic!("Unexpected align state {curr_state:?} in backtrace!")
-                }
-            }
-
-            if bt_node.node() == ref_graph.start_node() {
-                break;
-            }
-
-            curr = bt_node;
-            curr_state = bt_state;
-        }
-
-        alignment.reverse();
-        alignment
     }
 
-    #[inline]
-    fn write_tsv<W: Write>(&self, writer: &mut W) -> Result<(), std::fmt::Error> {
-        self.visited.write_tsv(writer, &["M", "D", "I"])
+    for p in ref_graph.predecessors(curr.node()) {
+        if get(p, curr.offset()) == score.wrapping_sub(ge) {
+            return Some((AlignmentGraphNode::new(p, curr.offset()), AlignState::Deletion));
+        }
     }
+
+    if curr.offset() > O::zero() {
+        let pred_offset = curr.offset() - O::one();
+        if get(curr.node(), pred_offset) == score.wrapping_sub(ge) {
+            return Some((AlignmentGraphNode::new(curr.node(), pred_offset), AlignState::Insertion));
+        }
+    }
+
+    None
 }
 
-/// `AstarVisited` impl for the two-piece gap-affine cost model: same shape as
-/// [`ThreeStateAstarData`] but with 5 states (`Match`/`Deletion`/`Insertion`/
-/// `Deletion2`/`Insertion2`) and backtrace logic that checks both pieces.
-pub struct TwoPieceAstarData<N, O>
+fn linear_backtrace<N, O, C, G, const S: usize>(
+    visited: &BlockedVisitedStorage<N, O, S>,
+    costs: &C,
+    ref_graph: &G,
+    seq: &[u8],
+    end: &AlignmentGraphNode<N, O>,
+) -> Vec<AlignedPair<N>>
 where
     N: GraphNodeId,
     O: OffsetType,
+    C: AlignmentCostModel,
+    G: AlignableGraph<Node = N>,
 {
-    costs: TwoPieceAffine,
-    seq_len: usize,
-    bubble_index: Arc<BubbleIndex<N>>,
-    visited: BlockedVisitedStorage<N, O, 5>,
-    bubbles_reached_m: Vec<Vec<O>>,
-}
+    let mut alignment = Vec::new();
+    let mut curr = *end;
 
-impl<N, O> TwoPieceAstarData<N, O>
-where
-    N: GraphNodeId,
-    O: OffsetType,
-{
-    pub fn new<G>(costs: TwoPieceAffine, ref_graph: &G, seq: &[u8], bubble_index: Arc<BubbleIndex<N>>) -> Self
-    where
-        G: GraphWithNodeOrdering<NodeType = N>,
-    {
-        Self {
-            costs,
-            seq_len: seq.len(),
-            visited: BlockedVisitedStorage::new(ref_graph),
-            bubbles_reached_m: vec![Vec::new(); ref_graph.node_count()],
-            bubble_index,
-        }
-    }
-
-    fn get_backtrace<G>(
-        &self,
-        ref_graph: &G,
-        seq: &[u8],
-        aln_node: &AlignmentGraphNode<N, O>,
-        aln_state: AlignState,
-    ) -> Option<(AlignmentGraphNode<N, O>, AlignState)>
-    where
-        G: AlignableGraph<Node = N>,
-    {
-        let curr_score = self.visited.get_score(aln_node, aln_state);
-
-        match aln_state {
+    while let Some((pred, mv)) = linear_step(visited, costs, ref_graph, seq, &curr) {
+        match mv {
+            // The move into the end sentinel consumes nothing.
+            AlignState::Match if curr.node() == ref_graph.end_node() => {}
             AlignState::Match => {
-                if aln_node.offset() > O::zero() {
-                    let is_match_or_end = ref_graph.is_symbol_equal(aln_node.node(), seq[aln_node.offset().as_usize() - 1])
-                        || aln_node.node() == ref_graph.end_node();
-                    let pred_offset = if aln_node.node() == ref_graph.end_node() {
-                        aln_node.offset()
-                    } else {
-                        aln_node.offset() - O::one()
-                    };
-
-                    for p in ref_graph.predecessors(aln_node.node()) {
-                        let pred = AlignmentGraphNode::new(p, pred_offset);
-                        let pred_score = self.visited.get_score(&pred, AlignState::Match);
-
-                        if (is_match_or_end && pred_score == curr_score)
-                            || (!is_match_or_end && pred_score == curr_score - self.costs.mismatch() as u32)
-                        {
-                            return Some((pred, AlignState::Match));
-                        }
-                    }
-                }
-
-                // Close deletion (either piece)
-                if self.visited.get_score(aln_node, AlignState::Deletion) == curr_score {
-                    return Some((*aln_node, AlignState::Deletion));
-                }
-                if self.visited.get_score(aln_node, AlignState::Deletion2) == curr_score {
-                    return Some((*aln_node, AlignState::Deletion2));
-                }
-
-                // Close insertion (either piece)
-                if self.visited.get_score(aln_node, AlignState::Insertion) == curr_score {
-                    return Some((*aln_node, AlignState::Insertion));
-                }
-                if self.visited.get_score(aln_node, AlignState::Insertion2) == curr_score {
-                    return Some((*aln_node, AlignState::Insertion2));
-                }
+                alignment.push(AlignedPair::new(Some(curr.node()), Some(curr.offset().as_usize() - 1)));
             }
-            AlignState::Deletion => {
-                let go1_ge1 = (self.costs.gap_open() + self.costs.gap_extend()) as u32;
-                for p in ref_graph.predecessors(aln_node.node()) {
-                    let pred = AlignmentGraphNode::new(p, aln_node.offset());
-                    if self.visited.get_score(&pred, AlignState::Match) == curr_score - go1_ge1 {
-                        return Some((pred, AlignState::Match));
-                    }
-                }
-                for p in ref_graph.predecessors(aln_node.node()) {
-                    let pred = AlignmentGraphNode::new(p, aln_node.offset());
-                    if self.visited.get_score(&pred, AlignState::Deletion) == curr_score - self.costs.gap_extend() as u32 {
-                        return Some((pred, AlignState::Deletion));
-                    }
-                }
-            }
-            AlignState::Deletion2 => {
-                let go2_ge2 = (self.costs.gap_open2() + self.costs.gap_extend2()) as u32;
-                for p in ref_graph.predecessors(aln_node.node()) {
-                    let pred = AlignmentGraphNode::new(p, aln_node.offset());
-                    if self.visited.get_score(&pred, AlignState::Match) == curr_score - go2_ge2 {
-                        return Some((pred, AlignState::Match));
-                    }
-                }
-                for p in ref_graph.predecessors(aln_node.node()) {
-                    let pred = AlignmentGraphNode::new(p, aln_node.offset());
-                    if self.visited.get_score(&pred, AlignState::Deletion2) == curr_score - self.costs.gap_extend2() as u32 {
-                        return Some((pred, AlignState::Deletion2));
-                    }
-                }
-            }
-            AlignState::Insertion => {
-                if aln_node.offset() > O::zero() {
-                    let go1_ge1 = (self.costs.gap_open() + self.costs.gap_extend()) as u32;
-                    let pred = AlignmentGraphNode::new(aln_node.node(), aln_node.offset() - O::one());
-                    if self.visited.get_score(&pred, AlignState::Match) == curr_score - go1_ge1 {
-                        return Some((pred, AlignState::Match));
-                    }
-                    if self.visited.get_score(&pred, AlignState::Insertion) == curr_score - self.costs.gap_extend() as u32 {
-                        return Some((pred, AlignState::Insertion));
-                    }
-                }
-            }
-            AlignState::Insertion2 => {
-                if aln_node.offset() > O::zero() {
-                    let go2_ge2 = (self.costs.gap_open2() + self.costs.gap_extend2()) as u32;
-                    let pred = AlignmentGraphNode::new(aln_node.node(), aln_node.offset() - O::one());
-                    if self.visited.get_score(&pred, AlignState::Match) == curr_score - go2_ge2 {
-                        return Some((pred, AlignState::Match));
-                    }
-                    if self.visited.get_score(&pred, AlignState::Insertion2) == curr_score - self.costs.gap_extend2() as u32 {
-                        return Some((pred, AlignState::Insertion2));
-                    }
-                }
-            }
+            AlignState::Deletion => alignment.push(AlignedPair::new(Some(curr.node()), None)),
+            AlignState::Insertion => alignment.push(AlignedPair::new(None, Some(curr.offset().as_usize() - 1))),
+            AlignState::Deletion2 | AlignState::Insertion2 => unreachable!("linear model has one gap piece"),
         }
-
-        None
+        curr = pred;
     }
+
+    alignment.reverse();
+    alignment
 }
 
-impl<N, O> AstarVisited<N, O> for TwoPieceAstarData<N, O>
+// ─── Backtrace: gap-affine models (one or two pieces) ────────────────────────
+
+#[derive(Clone, Copy)]
+struct GapPiece {
+    open_extend: u32,
+    extend: u32,
+    del: AlignState,
+    ins: AlignState,
+}
+
+/// The gap pieces a storage with `S` slots can hold: one for `S == 3`, two
+/// for `S == 5`.
+fn gap_pieces<C: AlignmentCostModel>(costs: &C, n_states: usize) -> Vec<GapPiece> {
+    let mut pieces = vec![GapPiece {
+        open_extend: (costs.gap_open() + costs.gap_extend()) as u32,
+        extend: costs.gap_extend() as u32,
+        del: AlignState::Deletion,
+        ins: AlignState::Insertion,
+    }];
+    if n_states == 5 {
+        pieces.push(GapPiece {
+            open_extend: (costs.gap_open2() + costs.gap_extend2()) as u32,
+            extend: costs.gap_extend2() as u32,
+            del: AlignState::Deletion2,
+            ins: AlignState::Insertion2,
+        });
+    }
+    pieces
+}
+
+/// One backtrace step: find the predecessor `(node, state)` whose score is
+/// consistent with a transition into `aln_node`/`aln_state`, or `None` at the
+/// start of the alignment.
+fn gap_step<N, O, C, G, const S: usize>(
+    visited: &BlockedVisitedStorage<N, O, S>,
+    costs: &C,
+    pieces: &[GapPiece],
+    ref_graph: &G,
+    seq: &[u8],
+    aln_node: &AlignmentGraphNode<N, O>,
+    aln_state: AlignState,
+) -> Option<(AlignmentGraphNode<N, O>, AlignState)>
 where
     N: GraphNodeId,
     O: OffsetType,
+    C: AlignmentCostModel,
+    G: AlignableGraph<Node = N>,
 {
-    #[inline]
-    fn get_score(&self, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> u32 {
-        self.visited.get_score(aln_node, aln_state)
+    let curr_score = visited.get_score(aln_node, aln_state);
+    let get = |node: N, offset: O, state: AlignState| visited.get_score(&AlignmentGraphNode::new(node, offset), state);
+
+    if aln_state == AlignState::Match {
+        if aln_node.offset() > O::zero() {
+            let at_end = aln_node.node() == ref_graph.end_node();
+            let is_match_or_end =
+                at_end || ref_graph.is_symbol_equal(aln_node.node(), seq[aln_node.offset().as_usize() - 1]);
+            let pred_offset = if at_end { aln_node.offset() } else { aln_node.offset() - O::one() };
+            let expected = if is_match_or_end {
+                curr_score
+            } else {
+                curr_score.wrapping_sub(costs.mismatch() as u32)
+            };
+
+            for p in ref_graph.predecessors(aln_node.node()) {
+                if get(p, pred_offset, AlignState::Match) == expected {
+                    return Some((AlignmentGraphNode::new(p, pred_offset), AlignState::Match));
+                }
+            }
+        }
+
+        // Closing a gap into Match is free, so an equal gap score means the
+        // gap state is where this Match came from.
+        for piece in pieces {
+            if visited.get_score(aln_node, piece.del) == curr_score {
+                return Some((*aln_node, piece.del));
+            }
+        }
+        for piece in pieces {
+            if visited.get_score(aln_node, piece.ins) == curr_score {
+                return Some((*aln_node, piece.ins));
+            }
+        }
+        return None;
     }
 
-    #[inline]
-    fn set_score(&mut self, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState, score: u32) {
-        self.visited.set_score(aln_node, aln_state, score)
-    }
+    let piece = pieces
+        .iter()
+        .find(|p| p.del == aln_state || p.ins == aln_state)
+        .expect("gap state without a matching piece");
 
-    fn mark_reached(&mut self, _score: u32, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) {
-        if aln_state == AlignState::Match && self.bubble_index.is_exit(aln_node.node()) {
-            insert_reached(&mut self.bubbles_reached_m[aln_node.node().index()], aln_node.offset());
+    if aln_state == piece.del {
+        for p in ref_graph.predecessors(aln_node.node()) {
+            if get(p, aln_node.offset(), AlignState::Match) == curr_score.wrapping_sub(piece.open_extend) {
+                return Some((AlignmentGraphNode::new(p, aln_node.offset()), AlignState::Match));
+            }
+        }
+        for p in ref_graph.predecessors(aln_node.node()) {
+            if get(p, aln_node.offset(), piece.del) == curr_score.wrapping_sub(piece.extend) {
+                return Some((AlignmentGraphNode::new(p, aln_node.offset()), piece.del));
+            }
+        }
+    } else if aln_node.offset() > O::zero() {
+        let pred = AlignmentGraphNode::new(aln_node.node(), aln_node.offset() - O::one());
+        if visited.get_score(&pred, AlignState::Match) == curr_score.wrapping_sub(piece.open_extend) {
+            return Some((pred, AlignState::Match));
+        }
+        if visited.get_score(&pred, piece.ins) == curr_score.wrapping_sub(piece.extend) {
+            return Some((pred, piece.ins));
         }
     }
 
-    fn dfa_match(&mut self, score: u32, _parent: &AlignmentGraphNode<N, O>, child: &AlignmentGraphNode<N, O>) {
-        self.mark_reached(score, child, AlignState::Match);
+    None
+}
+
+fn gap_backtrace<N, O, C, G, const S: usize>(
+    visited: &BlockedVisitedStorage<N, O, S>,
+    costs: &C,
+    ref_graph: &G,
+    seq: &[u8],
+    aln_node: &AlignmentGraphNode<N, O>,
+) -> Vec<AlignedPair<N>>
+where
+    N: GraphNodeId,
+    O: OffsetType,
+    C: AlignmentCostModel,
+    G: AlignableGraph<Node = N>,
+{
+    let pieces = gap_pieces(costs, S);
+    let step = |node: &AlignmentGraphNode<N, O>, state: AlignState| {
+        gap_step(visited, costs, &pieces, ref_graph, seq, node, state)
+    };
+
+    let Some((mut curr, mut curr_state)) = step(aln_node, AlignState::Match) else {
+        panic!("No backtrace for alignment end state?");
+    };
+
+    let mut alignment = Vec::new();
+
+    // `aln_node` (the alignment end state) is itself never pushed below: the
+    // loop only records `curr` once its predecessor has been found. For
+    // `Global` mode that's fine, since the end state is always the virtual
+    // end sentinel, which has no base to record. But `EndsFree` alignments
+    // can terminate on a real graph node (see `ends_free_is_end`), whose own
+    // base would otherwise be silently dropped. Record it here, unless it's
+    // just an alias for a just-closed indel at the same (node, offset), which
+    // the loop handles once it reaches it.
+    let is_indel_alias = curr.node() == aln_node.node() && curr.offset() == aln_node.offset();
+    if aln_node.node() != ref_graph.end_node() && !is_indel_alias {
+        alignment.push(AlignedPair::new(Some(aln_node.node()), Some(aln_node.offset().as_usize() - 1)));
     }
 
-    #[inline]
-    fn prune(&self, score: u32, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> bool {
-        if !self.bubble_index.node_is_part_of_bubble(aln_node.node()) {
-            return false;
-        }
-
-        !self.bubble_index.get_node_bubbles(aln_node.node()).iter().all(|bubble| {
-            let reached = &self.bubbles_reached_m[bubble.bubble_exit.index()];
-            let get_match_score = |node: N, offset: O| self.visited.get_score(&AlignmentGraphNode::new(node, offset), AlignState::Match);
-
-            ReachedBubbleExitsMatch::new(get_match_score, &self.costs, reached, self.seq_len)
-                .can_improve_bubble(&self.bubble_index, bubble, aln_node, aln_state, score)
-        })
-    }
-
-    #[inline]
-    fn update_score_if_lower(
-        &mut self,
-        aln_node: &AlignmentGraphNode<N, O>,
-        aln_state: AlignState,
-        _parent: &AlignmentGraphNode<N, O>,
-        _parent_state: AlignState,
-        score: u32,
-    ) -> bool {
-        self.visited.update_score_if_lower_block(aln_node, aln_state, score)
-    }
-
-    fn backtrace<G>(&self, ref_graph: &G, seq: &[u8], aln_node: &AlignmentGraphNode<N, O>) -> Vec<AlignedPair<N>>
-    where
-        G: AlignableGraph<Node = N>,
-    {
-        let Some((mut curr, mut curr_state)) = self.get_backtrace(ref_graph, seq, aln_node, AlignState::Match) else {
-            panic!("No backtrace for alignment end state?");
-        };
-
-        let mut alignment = Vec::new();
-
-        // See the analogous comment in `ThreeStateAstarData::backtrace`: the
-        // end state itself is never pushed by the loop below, which is only
-        // correct when it's the virtual end sentinel (`Global` mode). For
-        // `EndsFree`/semi-global alignments ending on a real node, record it
-        // here unless it's an alias for a just-closed indel at the same
-        // (node, offset).
-        let is_indel_alias = curr.node() == aln_node.node() && curr.offset() == aln_node.offset();
-        if aln_node.node() != ref_graph.end_node() && !is_indel_alias {
-            alignment.push(AlignedPair::new(Some(aln_node.node()), Some(aln_node.offset().as_usize() - 1)));
-        }
-
-        while let Some((bt_node, bt_state)) = self.get_backtrace(ref_graph, seq, &curr, curr_state) {
-            if curr_state == AlignState::Match
-                && matches!(
-                    bt_state,
-                    AlignState::Insertion | AlignState::Deletion | AlignState::Insertion2 | AlignState::Deletion2
-                )
-            {
-                curr = bt_node;
-                curr_state = bt_state;
-                continue;
-            }
-
-            match curr_state {
-                AlignState::Match => {
-                    alignment.push(AlignedPair::new(Some(curr.node()), Some(curr.offset().as_usize() - 1)));
-                }
-                AlignState::Insertion | AlignState::Insertion2 => {
-                    alignment.push(AlignedPair::new(None, Some(curr.offset().as_usize() - 1)));
-                }
-                AlignState::Deletion | AlignState::Deletion2 => {
-                    alignment.push(AlignedPair::new(Some(curr.node()), None));
-                }
-            }
-
-            if bt_node.node() == ref_graph.start_node() {
-                break;
-            }
-
+    while let Some((bt_node, bt_state)) = step(&curr, curr_state) {
+        // A Match that came from a gap state at the same cell is the free
+        // gap-closing edge; skip it so the cell is recorded once, as the gap.
+        if curr_state == AlignState::Match && bt_state != AlignState::Match {
             curr = bt_node;
             curr_state = bt_state;
+            continue;
         }
 
-        alignment.reverse();
-        alignment
+        match curr_state {
+            AlignState::Match => {
+                alignment.push(AlignedPair::new(Some(curr.node()), Some(curr.offset().as_usize() - 1)));
+            }
+            AlignState::Insertion | AlignState::Insertion2 => {
+                alignment.push(AlignedPair::new(None, Some(curr.offset().as_usize() - 1)));
+            }
+            AlignState::Deletion | AlignState::Deletion2 => {
+                alignment.push(AlignedPair::new(Some(curr.node()), None));
+            }
+        }
+
+        if bt_node.node() == ref_graph.start_node() {
+            break;
+        }
+
+        curr = bt_node;
+        curr_state = bt_state;
     }
 
-    #[inline]
-    fn write_tsv<W: Write>(&self, writer: &mut W) -> Result<(), std::fmt::Error> {
-        self.visited.write_tsv(writer, &["M", "D1", "I1", "D2", "I2"])
-    }
+    alignment.reverse();
+    alignment
 }
 
 #[cfg(test)]

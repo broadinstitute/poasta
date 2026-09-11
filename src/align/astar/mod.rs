@@ -1,11 +1,9 @@
 //! A* alignment engine: best-first search over the alignment graph, with
-//! greedy 0-cost match extension and bubble-index-based pruning. Ported from
-//! `stable`'s `aligner` module. See `astar_engine_interface.md` for the
-//! design/porting plan.
+//! greedy zero-cost match extension and bubble-index-based pruning.
 //!
-//! Supports gap-affine, linear, and two-piece cost models (via [`AstarEngine`]
-//! and [`AstarEngineTwoPiece`]), and both `Global` and `EndsFree` alignment
-//! modes.
+//! One [`AstarEngine`] serves the linear, affine and two-piece cost models;
+//! [`AstarCostModel`] picks the state machine for each. Both `Global` and
+//! `EndsFree` alignment modes are supported.
 
 pub mod aln_graph;
 pub mod dfa;
@@ -24,24 +22,27 @@ use std::sync::Arc;
 
 use crate::align::cost_models::AlignmentCostModel;
 use crate::align::cost_models::affine::Affine;
+use crate::align::cost_models::linear::Linear;
 use crate::align::cost_models::two_piece::TwoPieceAffine;
 use crate::align::astar::aln_graph::{
-    AlignmentGraph, AlignmentGraphNode, ThreeStateAlignmentGraph, TwoPieceAlignmentGraph,
+    AffineAlignmentGraph, AlignmentGraph, AlignmentGraphNode, LinearAlignmentGraph, TwoPieceAlignmentGraph,
 };
 use crate::align::astar::dfa::{DepthFirstGreedyAlignment, ExtendResult};
 use crate::align::astar::heuristic::{AstarHeuristic, Dijkstra, MinimumGapCost};
-use crate::align::astar::queue::{AffineLayeredQueue, AstarQueue, TwoPieceLayeredQueue};
-use crate::align::astar::visited::{AstarVisited, ThreeStateAstarData, TwoPieceAstarData};
+use crate::align::astar::queue::{AffineLayeredQueue, AstarQueue, LinearLayeredQueue, TwoPieceLayeredQueue};
+use crate::align::astar::visited::{
+    AffineAstarData, AstarData, AstarVisited, LinearAstarData, TwoPieceAstarData,
+};
 use crate::align::traits::{AlignOutput, AlignmentStats};
 use crate::align::traits::{AlignableGraph, AlignmentEngine};
 use crate::align::{AlignState, AlignmentMode};
 use crate::graph::bubbles::index::BubbleIndex;
-use crate::graph::traits::GraphNodeId;
+use crate::align::offsets::OffsetType;
+use crate::graph::traits::{GraphNodeId, GraphWithNodeOrdering};
 
-/// Query offset width used internally. Only `u32` is built for now (per the
-/// interface doc's resolved decisions); a `u64` fallback for >~4 Gbp queries
-/// can be added later without changing the public API.
-type Offset = u32;
+/// Query offset width. Only `u32` is built; a `u64` variant for queries over
+/// 4 Gbp could be added without changing the public API.
+pub type Offset = u32;
 
 /// Selects which [`AstarHeuristic`] an [`AstarEngine`] builds.
 ///
@@ -144,10 +145,86 @@ impl fmt::Display for AstarError {
 
 impl Error for AstarError {}
 
-/// A* alignment engine for any three-state (Match/Deletion/Insertion) cost
-/// model — [`Affine`] or [`Linear`](crate::align::cost_models::linear::Linear).
-/// Two-piece costs need a fifth/fourth state (`Deletion2`/`Insertion2`) that
-/// this shape can't express; see [`AstarEngineTwoPiece`] for that model.
+/// Ties a cost model to the A* machinery shaped for it: how many visited
+/// slots a cell needs, which alignment graph expands its states, how scores
+/// are stored, and how the queue buckets them. This is what lets one
+/// [`AstarEngine`] serve linear (1 state), affine (3) and two-piece affine
+/// (5) costs.
+pub trait AstarCostModel<N, O>: AlignmentCostModel + Copy + 'static
+where
+    N: GraphNodeId,
+    O: OffsetType,
+{
+    /// Visited-storage slots per `(node, offset)` cell.
+    const STATES: usize;
+    type AlnGraph: AlignmentGraph;
+    type Visited: AstarVisited<N, O>;
+    type Queue: AstarQueue<N, O>;
+
+    fn aln_graph(&self, mode: AlignmentMode) -> Self::AlnGraph;
+
+    fn visited<G>(&self, graph: &G, seq: &[u8], bubbles: Arc<BubbleIndex<N>>) -> Self::Visited
+    where
+        G: GraphWithNodeOrdering<NodeType = N>;
+}
+
+impl<N: GraphNodeId, O: OffsetType> AstarCostModel<N, O> for Linear {
+    const STATES: usize = 1;
+    type AlnGraph = LinearAlignmentGraph;
+    type Visited = LinearAstarData<N, O>;
+    type Queue = LinearLayeredQueue<N, O>;
+
+    fn aln_graph(&self, mode: AlignmentMode) -> Self::AlnGraph {
+        LinearAlignmentGraph::new(*self, mode)
+    }
+
+    fn visited<G>(&self, graph: &G, seq: &[u8], bubbles: Arc<BubbleIndex<N>>) -> Self::Visited
+    where
+        G: GraphWithNodeOrdering<NodeType = N>,
+    {
+        AstarData::new(*self, graph, seq, bubbles)
+    }
+}
+
+impl<N: GraphNodeId, O: OffsetType> AstarCostModel<N, O> for Affine {
+    const STATES: usize = 3;
+    type AlnGraph = AffineAlignmentGraph;
+    type Visited = AffineAstarData<N, O>;
+    type Queue = AffineLayeredQueue<N, O>;
+
+    fn aln_graph(&self, mode: AlignmentMode) -> Self::AlnGraph {
+        AffineAlignmentGraph::new(*self, mode, 1)
+    }
+
+    fn visited<G>(&self, graph: &G, seq: &[u8], bubbles: Arc<BubbleIndex<N>>) -> Self::Visited
+    where
+        G: GraphWithNodeOrdering<NodeType = N>,
+    {
+        AstarData::new(*self, graph, seq, bubbles)
+    }
+}
+
+impl<N: GraphNodeId, O: OffsetType> AstarCostModel<N, O> for TwoPieceAffine {
+    const STATES: usize = 5;
+    type AlnGraph = TwoPieceAlignmentGraph;
+    type Visited = TwoPieceAstarData<N, O>;
+    type Queue = TwoPieceLayeredQueue<N, O>;
+
+    fn aln_graph(&self, mode: AlignmentMode) -> Self::AlnGraph {
+        TwoPieceAlignmentGraph::new(*self, mode, 2)
+    }
+
+    fn visited<G>(&self, graph: &G, seq: &[u8], bubbles: Arc<BubbleIndex<N>>) -> Self::Visited
+    where
+        G: GraphWithNodeOrdering<NodeType = N>,
+    {
+        AstarData::new(*self, graph, seq, bubbles)
+    }
+}
+
+/// The A* alignment engine. `C` picks the cost model and, through
+/// [`AstarCostModel`], the state machine shaped for it; `H` picks the
+/// heuristic.
 pub struct AstarEngine<G, C = Affine, H = MinGapCostHeuristic>
 where
     G: AlignableGraph,
@@ -200,6 +277,8 @@ where
         }
     }
 
+    /// Reuse a bubble index built earlier for the same graph, for callers
+    /// that align many queries against one read-only graph.
     pub fn with_existing_bubbles(mut self, bubbles: Arc<BubbleIndex<G::Node>>) -> Self {
         self.existing_bubbles = Some(bubbles);
         self
@@ -215,7 +294,7 @@ impl<G, C, H> AlignmentEngine<&[u8]> for AstarEngine<G, C, H>
 where
     G: AlignableGraph,
     G::Node: 'static,
-    C: AlignmentCostModel + Copy + 'static,
+    C: AstarCostModel<G::Node, Offset>,
     H: HeuristicConfig,
 {
     type Graph = G;
@@ -223,8 +302,6 @@ where
     type Error = AstarError;
 
     fn align(&self, graph: &G, query: &[u8]) -> Result<AlignOutput<G>, Self::Error> {
-        type O = Offset;
-
         let _span = tracing::info_span!(
             "align_sequence",
             engine = "astar",
@@ -238,16 +315,15 @@ where
             .clone()
             .unwrap_or_else(|| Arc::new(BubbleIndex::new(graph)));
 
-        let aln_graph = ThreeStateAlignmentGraph::new(self.costs, self.mode);
-        let mut visited: ThreeStateAstarData<G::Node, O, C> =
-            ThreeStateAstarData::new(self.costs, graph, query, bubble_index.clone());
-        let heuristic = self.heuristic_cfg.build::<C, G::Node, O>(
+        let aln_graph = self.costs.aln_graph(self.mode);
+        let mut visited = self.costs.visited(graph, query, bubble_index.clone());
+        let heuristic = self.heuristic_cfg.build::<C, G::Node, Offset>(
             &self.costs,
             bubble_index,
             query.len(),
             self.mode,
         );
-        let mut queue: AffineLayeredQueue<G::Node, O> = AffineLayeredQueue::default();
+        let mut queue = C::Queue::default();
 
         let (end_score, end_node, num_visited) = run_astar_search(
             graph,
@@ -266,142 +342,17 @@ where
             end_score,
             end_node,
             num_visited,
-            3,
-        ))
-    }
-}
-
-/// A* alignment engine for the two-piece gap-affine cost model
-/// ([`TwoPieceAffine`]). Kept as a separate concrete engine rather than
-/// folded into [`AstarEngine`]'s `C` type parameter: two-piece needs a
-/// genuinely different alignment graph/visited-storage shape (5 states, with
-/// piece-transition edges), not just different cost values plugged into the
-/// same 3-state recurrence — see `aln_graph::TwoPieceAlignmentGraph`.
-pub struct AstarEngineTwoPiece<G, H = MinGapCostHeuristic>
-where
-    G: AlignableGraph,
-{
-    costs: TwoPieceAffine,
-    mode: AlignmentMode,
-    heuristic_cfg: H,
-    existing_bubbles: Option<Arc<BubbleIndex<G::Node>>>,
-    enable_pruning: bool,
-    _graph: PhantomData<G>,
-}
-
-impl<G> AstarEngineTwoPiece<G, MinGapCostHeuristic>
-where
-    G: AlignableGraph,
-{
-    /// Global alignment, min-gap-cost heuristic, pruning enabled.
-    pub fn new(costs: TwoPieceAffine) -> Self {
-        Self {
-            costs,
-            mode: AlignmentMode::Global,
-            heuristic_cfg: MinGapCostHeuristic,
-            existing_bubbles: None,
-            enable_pruning: true,
-            _graph: PhantomData,
-        }
-    }
-}
-
-impl<G, H> AstarEngineTwoPiece<G, H>
-where
-    G: AlignableGraph,
-{
-    pub fn with_mode(mut self, mode: AlignmentMode) -> Self {
-        self.mode = mode;
-        self
-    }
-
-    pub fn with_heuristic<H2>(self, heuristic_cfg: H2) -> AstarEngineTwoPiece<G, H2> {
-        AstarEngineTwoPiece {
-            costs: self.costs,
-            mode: self.mode,
-            heuristic_cfg,
-            existing_bubbles: self.existing_bubbles,
-            enable_pruning: self.enable_pruning,
-            _graph: PhantomData,
-        }
-    }
-
-    pub fn with_existing_bubbles(mut self, bubbles: Arc<BubbleIndex<G::Node>>) -> Self {
-        self.existing_bubbles = Some(bubbles);
-        self
-    }
-
-    pub fn without_pruning(mut self) -> Self {
-        self.enable_pruning = false;
-        self
-    }
-}
-
-impl<G, H> AlignmentEngine<&[u8]> for AstarEngineTwoPiece<G, H>
-where
-    G: AlignableGraph,
-    G::Node: 'static,
-    H: HeuristicConfig,
-{
-    type Graph = G;
-    type Success = AlignOutput<G>;
-    type Error = AstarError;
-
-    fn align(&self, graph: &G, query: &[u8]) -> Result<AlignOutput<G>, Self::Error> {
-        type O = Offset;
-
-        let _span = tracing::info_span!(
-            "align_sequence",
-            engine = "astar_two_piece",
-            query_len = query.len(),
-            graph_nodes = graph.node_count(),
-        )
-        .entered();
-
-        let bubble_index = self
-            .existing_bubbles
-            .clone()
-            .unwrap_or_else(|| Arc::new(BubbleIndex::new(graph)));
-
-        let aln_graph = TwoPieceAlignmentGraph::new(self.costs, self.mode);
-        let mut visited: TwoPieceAstarData<G::Node, O> =
-            TwoPieceAstarData::new(self.costs, graph, query, bubble_index.clone());
-        let heuristic = self.heuristic_cfg.build::<TwoPieceAffine, G::Node, O>(
-            &self.costs,
-            bubble_index,
-            query.len(),
-            self.mode,
-        );
-        let mut queue: TwoPieceLayeredQueue<G::Node, O> = TwoPieceLayeredQueue::default();
-
-        let (end_score, end_node, num_visited) = run_astar_search(
-            graph,
-            query,
-            &aln_graph,
-            &mut visited,
-            &mut queue,
-            heuristic.as_ref(),
-            self.enable_pruning,
-        )?;
-
-        Ok(finish_alignment(
-            graph,
-            query,
-            &visited,
-            end_score,
-            end_node,
-            num_visited,
-            5,
+            C::STATES,
         ))
     }
 }
 
 /// The A* main loop, shared across every cost-model shape: best-first search
-/// with greedy 0-cost match extension via [`DepthFirstGreedyAlignment`],
-/// re-entering the queue only at mismatches / graph-end / query-end. Every
-/// argument is behind a trait (`AlignmentGraph`/`AstarVisited`/`AstarQueue`),
-/// so this one function drives the 3-state (affine/linear) and 5-state
-/// (two-piece) engines alike — only the concrete types differ per caller.
+/// with greedy zero-cost match extension via [`DepthFirstGreedyAlignment`],
+/// re-entering the queue only at mismatches, the graph end, or the query end.
+/// Every argument is behind a trait (`AlignmentGraph`, `AstarVisited`,
+/// `AstarQueue`), so this one function drives the 1-, 3- and 5-state
+/// machines alike.
 #[allow(clippy::too_many_arguments)]
 fn run_astar_search<G, AG, V, Q>(
     graph: &G,
@@ -527,9 +478,8 @@ where
 }
 
 /// Backtrace + wrap the search result into an [`AlignOutput`], shared by
-/// every cost-model engine. `n_states` is the visited-storage state count
-/// (3 for affine/linear, 5 for two-piece), used only for the
-/// fraction-of-full-matrix stat.
+/// every cost model. `n_states` is the visited-storage state count, used only
+/// for the fraction-of-full-matrix stat.
 fn finish_alignment<G, V>(
     graph: &G,
     query: &[u8],
@@ -722,7 +672,7 @@ mod tests {
     /// Block size `B` (`BlockedVisitedStorage`'s const generic, default 8)
     /// and the `u64` offset-width fallback aren't swept here: neither is
     /// exposed as a tunable yet (`Offset` is hardcoded to `u32`, `B` is
-    /// baked into `ThreeStateAstarData`/`TwoPieceAstarData`), and adding
+    /// baked into `AstarData`), and adding
     /// that knob before profiling shows it matters would be tuning without
     /// a signal to tune against.
     #[test]
@@ -917,7 +867,30 @@ mod tests {
         }
     }
 
-    // ─── Two-piece cost model (Task 13) ─────────────────────────────────────
+    /// The one-state linear engine: pruning must not change the score, and
+    /// its own backtrace must re-score to what it reported.
+    #[test]
+    fn linear_pruning_and_backtrace_are_consistent() {
+        let costs = Linear::new(1, 2);
+        let g = multi_branch_graph();
+        for query in [
+            b"ACGTACAT".as_slice(),
+            b"ACGACGT".as_slice(),
+            b"ACGTTACGTA".as_slice(),
+            b"AGGT".as_slice(),
+        ] {
+            let pruned: AstarEngine<POAGraph<u32>, Linear> = AstarEngine::new(costs);
+            let unpruned: AstarEngine<POAGraph<u32>, Linear> = AstarEngine::new(costs).without_pruning();
+            let p = pruned.align(&g, query).unwrap();
+            let u = unpruned.align(&g, query).unwrap();
+            assert_eq!(p.score, u.score, "pruning changed the linear score");
+            assert!(p.stats.cells_computed <= u.stats.cells_computed);
+            assert_eq!(score_from_alignment(&g, query, &p.alignment, &costs), p.score);
+            assert_eq!(score_from_alignment(&g, query, &u.alignment, &costs), u.score);
+        }
+    }
+
+    // ─── Two-piece cost model ─────────────────────────────────────
 
     fn assert_astar_matches_oracle_two_piece(
         graph: &POAGraph<u32>,
@@ -930,16 +903,16 @@ mod tests {
         > = DpOracle::new(costs);
         let expected = oracle.align(graph, query).unwrap();
 
-        let dijkstra_engine: AstarEngineTwoPiece<POAGraph<u32>, DijkstraHeuristic> =
-            AstarEngineTwoPiece::new(costs).with_heuristic(DijkstraHeuristic);
+        let dijkstra_engine: AstarEngine<POAGraph<u32>, TwoPieceAffine, DijkstraHeuristic> =
+            AstarEngine::new(costs).with_heuristic(DijkstraHeuristic);
         let dijkstra_result = dijkstra_engine.align(graph, query).unwrap();
         assert_eq!(
             dijkstra_result.score, expected.score,
             "Dijkstra A* (two-piece) score mismatch"
         );
 
-        let mingapcost_engine: AstarEngineTwoPiece<POAGraph<u32>, MinGapCostHeuristic> =
-            AstarEngineTwoPiece::new(costs);
+        let mingapcost_engine: AstarEngine<POAGraph<u32>, TwoPieceAffine, MinGapCostHeuristic> =
+            AstarEngine::new(costs);
         let mingapcost_result = mingapcost_engine.align(graph, query).unwrap();
         assert_eq!(
             mingapcost_result.score, expected.score,
@@ -1134,8 +1107,8 @@ mod tests {
             not_free(),
         );
         let costs = crate::align::cost_models::two_piece::TwoPieceAffine::new(1, 2, 2, 6, 1);
-        let engine: AstarEngineTwoPiece<POAGraph<u32>, MinGapCostHeuristic> =
-            AstarEngineTwoPiece::new(costs).with_mode(mode);
+        let engine: AstarEngine<POAGraph<u32>, TwoPieceAffine, MinGapCostHeuristic> =
+            AstarEngine::new(costs).with_mode(mode);
         let result = engine.align(&g, b"ACGTXXXX").unwrap();
         assert_eq!(
             result.score, 0,

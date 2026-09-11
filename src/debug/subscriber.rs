@@ -1,11 +1,30 @@
+//! A `tracing` layer that dumps the A* search, one file pair per aligned
+//! sequence, for plotting and debugging.
+//!
+//! The layer watches for spans carrying a `seq_id` field. When one opens it
+//! creates `<seq_id>_visited.tsv` and `<seq_id>_queued.tsv` in the output
+//! directory, and every A* trace event fired inside that span (however deeply
+//! nested) is appended to one of them:
+//!
+//! | event target                | file    | meaning                                 |
+//! |-----------------------------|---------|-----------------------------------------|
+//! | `poasta::astar::set_visited` | visited | a state popped from the queue and expanded |
+//! | `poasta::astar::extend`      | visited | a state reached by greedy match extension  |
+//! | `poasta::astar::queue_item`  | queued  | a state pushed onto the queue              |
+//!
+//! Both files are tab separated with a header row: `score`, `node` (the graph
+//! node index), `offset` (query offset) and `state`; the queued file adds
+//! `priority` (`score + heuristic`).
+
 use std::fmt;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use crate::align::AlignState;
 use tracing::span;
 use tracing_subscriber::Layer;
+
+use crate::debug::sanitise_filename;
 
 pub struct AlignStateLayer {
     output_dir: PathBuf,
@@ -30,130 +49,109 @@ where
         id: &span::Id,
         ctx: tracing_subscriber::layer::Context<'_, S>,
     ) {
-        let span = ctx.span(id).expect("Span not found");
-        let mut fname = SeqId::default();
-        attrs.record(&mut fname);
+        let mut seq_id = SeqId::default();
+        attrs.record(&mut seq_id);
+        let Some(seq_id) = seq_id.0 else {
+            return;
+        };
+        let Some(span) = ctx.span(id) else {
+            return;
+        };
 
-        if let Some(seq_id) = fname.0 {
-            let visited_fname = self.output_dir.join(format!("{seq_id}_visited.tsv"));
-            let queued_fname = self.output_dir.join(format!("{seq_id}_queued.tsv"));
-
-            let mut file_visited = File::create(&visited_fname)
-                .map(BufWriter::new)
-                .expect("Could not create file");
-            let mut file_queued = File::create(&queued_fname)
-                .map(BufWriter::new)
-                .expect("Could not create file");
-
-            match writeln!(&mut file_visited, "score\tnode\tdiag\toffset\tstate") {
-                Ok(_) => (),
+        let stem = sanitise_filename(&seq_id);
+        let open = |suffix: &str, header: &str| -> Option<BufWriter<File>> {
+            let path = self.output_dir.join(format!("{stem}_{suffix}.tsv"));
+            let mut file = match File::create(&path) {
+                Ok(f) => BufWriter::new(f),
                 Err(e) => {
-                    eprintln!("Could not open visited file {:?}: {}", visited_fname, e);
-                    return;
+                    eprintln!("Could not create {}: {e}", path.display());
+                    return None;
                 }
+            };
+            if let Err(e) = writeln!(file, "{header}") {
+                eprintln!("Could not write {}: {e}", path.display());
+                return None;
             }
-            match writeln!(
-                &mut file_queued,
-                "score\tnode\tdiag\toffset\tstate\tpriority"
-            ) {
-                Ok(_) => (),
-                Err(e) => {
-                    eprintln!("Could not open queued file {:?}: {}", queued_fname, e);
-                    return;
-                }
-            }
+            Some(file)
+        };
 
-            let mut extensions = span.extensions_mut();
-            extensions.insert::<SpanOutputFiles>(SpanOutputFiles {
-                visited: file_visited,
-                queued: file_queued,
-            });
-        }
+        let (Some(visited), Some(queued)) = (
+            open("visited", "score\tnode\toffset\tstate"),
+            open("queued", "score\tnode\toffset\tstate\tpriority"),
+        ) else {
+            return;
+        };
+
+        span.extensions_mut()
+            .insert::<SpanOutputFiles>(SpanOutputFiles { visited, queued });
     }
 
     fn on_event(&self, event: &tracing::Event<'_>, ctx: tracing_subscriber::layer::Context<'_, S>) {
-        if event.metadata().target().ends_with("set_visited") {
-            let mut visited_state = VisitedAlignmentState::default();
-            event.record(&mut visited_state);
+        let target = event.metadata().target();
+        let kind = if target.ends_with("set_visited") {
+            EventKind::Visited
+        } else if target.ends_with("extend") {
+            EventKind::Extend
+        } else if target.ends_with("queue_item") {
+            EventKind::Queued
+        } else {
+            return;
+        };
 
-            let Some(span) = ctx.event_span(event) else {
-                eprintln!("No span found for {:?}", visited_state);
-                return;
-            };
-            let mut extensions = span.extensions_mut();
+        // Events fire inside the engine's own spans; the files hang on the
+        // enclosing `seq_id` span, so walk outwards to find them.
+        let Some(span) = ctx
+            .event_span(event)
+            .and_then(|s| s.scope().find(|s| s.extensions().get::<SpanOutputFiles>().is_some()))
+        else {
+            return;
+        };
+        let mut extensions = span.extensions_mut();
+        let Some(files) = extensions.get_mut::<SpanOutputFiles>() else {
+            return;
+        };
 
-            if let Some(files) = extensions.get_mut::<SpanOutputFiles>() {
-                let visited = &mut files.visited;
-                let result = writeln!(
-                    visited,
-                    "{}\t{}\t{}\t{}\t{}",
-                    visited_state.score.unwrap_or(usize::MAX),
-                    visited_state.node.unwrap_or(usize::MAX),
-                    visited_state.diag.unwrap_or(isize::MAX),
-                    visited_state.offset.unwrap_or(usize::MAX),
-                    visited_state
-                        .state
-                        .unwrap_or(format!("{:?}", AlignState::Match))
-                );
+        let mut state = AlignmentState::default();
+        event.record(&mut state);
 
-                match result {
-                    Ok(_) => (),
-                    Err(e) => {
-                        eprintln!("Could not write to visited file: {}", e);
-                        eprintln!("state: {:?}", visited)
-                    }
-                }
-            }
-        } else if event.metadata().target().ends_with("extend") {
-            let mut extended_state = ExtendedState::default();
-            event.record(&mut extended_state);
-
-            let Some(span) = ctx.event_span(event) else {
-                eprintln!("No span found for {:?}", extended_state);
-                return;
-            };
-            let mut extensions = span.extensions_mut();
-
-            if let Some(files) = extensions.get_mut::<SpanOutputFiles>() {
-                let visited = &mut files.visited;
-
-                let Some(ostart) = &extended_state.offset else {
-                    return;
-                };
-
-                let Some(oend) = &extended_state.extended_offset else {
-                    return;
-                };
-
-                let default_str = format!("{:?}", AlignState::Match);
-                let state_str = format!(
-                    "{:?}",
-                    &extended_state.state.as_ref().unwrap_or(&default_str)
-                );
-
-                for visited_offset in *ostart + 1..=*oend {
-                    let result = writeln!(
-                        visited,
-                        "{}\t{}\t{}\t{}\t{}",
-                        extended_state.score.unwrap_or(usize::MAX),
-                        extended_state.node.unwrap_or(usize::MAX),
-                        extended_state.diag.unwrap_or(isize::MAX),
-                        visited_offset,
-                        &state_str
+        let result = match kind {
+            EventKind::Visited => writeln!(
+                files.visited,
+                "{}\t{}\t{}\t{}",
+                state.score, state.node, state.offset, state.state
+            ),
+            EventKind::Extend => {
+                let mut r = Ok(());
+                for offset in state.offset + 1..=state.extended_offset {
+                    r = writeln!(
+                        files.visited,
+                        "{}\t{}\t{}\t{}",
+                        state.score, state.node, offset, state.state
                     );
-
-                    match result {
-                        Ok(_) => (),
-                        Err(e) => {
-                            eprintln!("Could not write to visited file: {}", e);
-                            eprintln!("state: {:?}", visited)
-                        }
-                    }
                 }
+                r
             }
-        } else if event.metadata().target().ends_with("queue_item") {
+            EventKind::Queued => writeln!(
+                files.queued,
+                "{}\t{}\t{}\t{}\t{}",
+                state.score, state.node, state.offset, state.state, state.priority
+            ),
+        };
+        if let Err(e) = result {
+            eprintln!("Could not write A* debug output: {e}");
         }
     }
+}
+
+enum EventKind {
+    Visited,
+    Extend,
+    Queued,
+}
+
+struct SpanOutputFiles {
+    visited: BufWriter<File>,
+    queued: BufWriter<File>,
 }
 
 #[derive(Debug, Default)]
@@ -163,106 +161,50 @@ impl tracing::field::Visit for SeqId {
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
         if field.name() == "seq_id" {
             self.0 = Some(String::from(value))
-        } else {
-            self.record_debug(field, &value as &dyn fmt::Debug)
         }
     }
 
-    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        eprintln!("Ignoring field {} = {:?}", field.name(), value);
-    }
+    fn record_debug(&mut self, _field: &tracing::field::Field, _value: &dyn fmt::Debug) {}
 }
 
-struct SpanOutputFiles {
-    visited: BufWriter<File>,
-    #[allow(dead_code)]
-    queued: BufWriter<File>,
-}
-
+/// Fields shared by all three event kinds; unused ones stay at their default.
 #[derive(Debug, Default)]
-struct VisitedAlignmentState {
-    score: Option<usize>,
-    node: Option<usize>,
-    diag: Option<isize>,
-    offset: Option<usize>,
-    state: Option<String>,
+struct AlignmentState {
+    score: u64,
+    node: u64,
+    offset: u64,
+    extended_offset: u64,
+    priority: u64,
+    state: String,
 }
 
-impl tracing::field::Visit for VisitedAlignmentState {
+impl tracing::field::Visit for AlignmentState {
     fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
         match field.name() {
-            "score" => self.score = Some(value as usize),
-            "node" => self.node = Some(value as usize),
-            "offset" => self.offset = Some(value as usize),
-            _ => self.record_debug(field, &value),
+            "score" => self.score = value,
+            "node" => self.node = value,
+            "offset" => self.offset = value,
+            "extended_offset" => self.extended_offset = value,
+            "priority" => self.priority = value,
+            _ => {}
         }
     }
 
     fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
-        match field.name() {
-            "diag" => self.diag = Some(value as isize),
-            _ => self.record_debug(field, &value),
+        if value >= 0 {
+            self.record_u64(field, value as u64)
         }
     }
 
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        match field.name() {
-            "state" => self.state = Some(String::from(value)),
-            "message" => (),
-            _ => self.record_debug(field, &value),
+        if field.name() == "state" {
+            self.state = value.to_owned();
         }
     }
 
-    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        match field.name() {
-            "state" => self.state = Some(format!("{:?}", value)),
-            "message" => (),
-            _ => eprintln!("Ignoring field {} = {:?}", field.name(), value),
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-struct ExtendedState {
-    score: Option<usize>,
-    node: Option<usize>,
-    diag: Option<isize>,
-    offset: Option<usize>,
-    extended_offset: Option<usize>,
-    state: Option<String>,
-}
-
-impl tracing::field::Visit for ExtendedState {
-    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
-        match field.name() {
-            "score" => self.score = Some(value as usize),
-            "node" => self.node = Some(value as usize),
-            "offset" => self.offset = Some(value as usize),
-            "extended_offset" => self.extended_offset = Some(value as usize),
-            _ => self.record_debug(field, &value),
-        }
-    }
-
-    fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
-        match field.name() {
-            "diag" => self.diag = Some(value as isize),
-            _ => self.record_debug(field, &value),
-        }
-    }
-
-    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        match field.name() {
-            "state" => self.state = Some(String::from(value)),
-            "message" => (),
-            _ => self.record_debug(field, &value),
-        }
-    }
-
-    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        match field.name() {
-            "state" => self.state = Some(format!("{:?}", value)),
-            "message" => (),
-            _ => eprintln!("Ignoring field {} = {:?}", field.name(), value),
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn fmt::Debug) {
+        if field.name() == "state" {
+            self.state = format!("{value:?}");
         }
     }
 }

@@ -1,5 +1,8 @@
-//! Priority (bucket) queue for the A* engine, ported from `stable`'s
-//! `aligner::queue` + the queue-layer half of `aligner::scoring::gap_affine`.
+//! Priority (bucket) queue for the A* engine.
+//!
+//! Priorities are small integers (`score + heuristic`), so the queue is a
+//! deque of buckets rather than a heap: pushing and popping are O(1) and the
+//! bucket for the current minimum is always at the front.
 
 use std::collections::VecDeque;
 use std::fmt::Debug;
@@ -15,7 +18,6 @@ pub trait QueueLayer: Default + Clone {
     fn queue(&mut self, item: Self::QueueItem);
     fn pop(&mut self) -> Option<Self::QueueItem>;
     fn is_empty(&self) -> bool;
-    fn capacity(&self) -> usize;
 }
 
 /// Layered (bucket) queue of items, keyed by priority `f = g + h`.
@@ -126,21 +128,59 @@ where
     fn queue_aln_state(&mut self, node: AlignmentGraphNode<N, O>, aln_state: AlignState, score: u32, h: usize);
 }
 
-/// A queue layer (bucket) for the gap-affine scoring model: keeps queued
-/// alignment-graph nodes in different alignment states in separate vectors
-/// to reduce branch mispredicts in the main A* loop.
+impl<N, O, L> AstarQueue<N, O> for LayeredQueue<L>
+where
+    N: GraphNodeId,
+    O: OffsetType,
+    L: QueueLayer<QueueItem = AstarQueuedItem<N, O>>,
+{
+    fn pop_aln_state(&mut self) -> Option<AstarQueuedItem<N, O>> {
+        self.pop()
+    }
+
+    fn queue_aln_state(&mut self, node: AlignmentGraphNode<N, O>, aln_state: AlignState, score: u32, h: usize) {
+        let priority = score as usize + h;
+        self.queue(AstarQueuedItem(score, node, aln_state), priority)
+    }
+}
+
+/// Pop order within one bucket: matches first, then deletions, then
+/// insertions, piece one before piece two. States whose index is `>= S` are
+/// skipped, so the same order serves every state count.
+const POP_ORDER: [AlignState; 5] = [
+    AlignState::Match,
+    AlignState::Deletion,
+    AlignState::Deletion2,
+    AlignState::Insertion,
+    AlignState::Insertion2,
+];
+
+/// One bucket of the layered queue. States in different alignment states go
+/// in separate vectors, which keeps the main loop's state dispatch
+/// predictable. `S` is the cost model's state count: 1 for linear, 3 for
+/// affine, 5 for two-piece affine.
 #[derive(Clone)]
-pub struct AffineQueueLayer<N, O>
+pub struct StateQueueLayer<N, O, const S: usize>
 where
     N: GraphNodeId,
     O: OffsetType,
 {
-    queued_states_m: Vec<(u32, AlignmentGraphNode<N, O>)>,
-    queued_states_i: Vec<(u32, AlignmentGraphNode<N, O>)>,
-    queued_states_d: Vec<(u32, AlignmentGraphNode<N, O>)>,
+    states: [Vec<(u32, AlignmentGraphNode<N, O>)>; S],
 }
 
-impl<N, O> QueueLayer for AffineQueueLayer<N, O>
+impl<N, O, const S: usize> Default for StateQueueLayer<N, O, S>
+where
+    N: GraphNodeId,
+    O: OffsetType,
+{
+    fn default() -> Self {
+        Self {
+            states: std::array::from_fn(|i| Vec::with_capacity(if i == 0 { 16 } else { 4 })),
+        }
+    }
+}
+
+impl<N, O, const S: usize> QueueLayer for StateQueueLayer<N, O, S>
 where
     N: GraphNodeId,
     O: OffsetType,
@@ -148,182 +188,30 @@ where
     type QueueItem = AstarQueuedItem<N, O>;
 
     fn queue(&mut self, item: Self::QueueItem) {
-        match item.aln_state() {
-            AlignState::Match => self.queued_states_m.push((item.score(), item.aln_node())),
-            AlignState::Insertion => self.queued_states_i.push((item.score(), item.aln_node())),
-            AlignState::Deletion => self.queued_states_d.push((item.score(), item.aln_node())),
-            AlignState::Insertion2 | AlignState::Deletion2 => {
-                panic!("Invalid gap-affine state {:?}", item.aln_state())
+        self.states[item.aln_state() as usize].push((item.score(), item.aln_node()));
+    }
+
+    fn pop(&mut self) -> Option<Self::QueueItem> {
+        for state in POP_ORDER {
+            let ix = state as usize;
+            if ix >= S {
+                continue;
+            }
+            if let Some((score, node)) = self.states[ix].pop() {
+                return Some(AstarQueuedItem(score, node, state));
             }
         }
-    }
-
-    fn pop(&mut self) -> Option<Self::QueueItem> {
-        self.queued_states_m
-            .pop()
-            .map(|(score, node)| AstarQueuedItem(score, node, AlignState::Match))
-            .or_else(|| {
-                self.queued_states_d
-                    .pop()
-                    .map(|(score, node)| AstarQueuedItem(score, node, AlignState::Deletion))
-                    .or_else(|| {
-                        self.queued_states_i
-                            .pop()
-                            .map(|(score, node)| AstarQueuedItem(score, node, AlignState::Insertion))
-                    })
-            })
+        None
     }
 
     fn is_empty(&self) -> bool {
-        self.queued_states_m.is_empty() && self.queued_states_d.is_empty() && self.queued_states_i.is_empty()
-    }
-
-    fn capacity(&self) -> usize {
-        self.queued_states_m.capacity() + self.queued_states_d.capacity() + self.queued_states_i.capacity()
+        self.states.iter().all(Vec::is_empty)
     }
 }
 
-impl<N, O> Default for AffineQueueLayer<N, O>
-where
-    N: GraphNodeId,
-    O: OffsetType,
-{
-    fn default() -> Self {
-        Self {
-            queued_states_m: Vec::with_capacity(16),
-            queued_states_i: Vec::with_capacity(4),
-            queued_states_d: Vec::with_capacity(4),
-        }
-    }
-}
-
-pub type AffineLayeredQueue<N, O> = LayeredQueue<AffineQueueLayer<N, O>>;
-
-impl<N, O> AstarQueue<N, O> for AffineLayeredQueue<N, O>
-where
-    N: GraphNodeId,
-    O: OffsetType,
-{
-    fn pop_aln_state(&mut self) -> Option<AstarQueuedItem<N, O>> {
-        self.pop()
-    }
-
-    fn queue_aln_state(&mut self, node: AlignmentGraphNode<N, O>, aln_state: AlignState, score: u32, h: usize) {
-        let priority = score as usize + h;
-        let item = AstarQueuedItem(score, node, aln_state);
-        self.queue(item, priority)
-    }
-}
-
-/// A queue layer (bucket) for the two-piece gap-affine scoring model: same
-/// branch-reducing idea as [`AffineQueueLayer`], with two extra vectors for
-/// the second piece's Insertion2/Deletion2 states.
-#[derive(Clone)]
-pub struct TwoPieceQueueLayer<N, O>
-where
-    N: GraphNodeId,
-    O: OffsetType,
-{
-    queued_states_m: Vec<(u32, AlignmentGraphNode<N, O>)>,
-    queued_states_i1: Vec<(u32, AlignmentGraphNode<N, O>)>,
-    queued_states_i2: Vec<(u32, AlignmentGraphNode<N, O>)>,
-    queued_states_d1: Vec<(u32, AlignmentGraphNode<N, O>)>,
-    queued_states_d2: Vec<(u32, AlignmentGraphNode<N, O>)>,
-}
-
-impl<N, O> QueueLayer for TwoPieceQueueLayer<N, O>
-where
-    N: GraphNodeId,
-    O: OffsetType,
-{
-    type QueueItem = AstarQueuedItem<N, O>;
-
-    fn queue(&mut self, item: Self::QueueItem) {
-        match item.aln_state() {
-            AlignState::Match => self.queued_states_m.push((item.score(), item.aln_node())),
-            AlignState::Insertion => self.queued_states_i1.push((item.score(), item.aln_node())),
-            AlignState::Insertion2 => self.queued_states_i2.push((item.score(), item.aln_node())),
-            AlignState::Deletion => self.queued_states_d1.push((item.score(), item.aln_node())),
-            AlignState::Deletion2 => self.queued_states_d2.push((item.score(), item.aln_node())),
-        }
-    }
-
-    fn pop(&mut self) -> Option<Self::QueueItem> {
-        self.queued_states_m
-            .pop()
-            .map(|(score, node)| AstarQueuedItem(score, node, AlignState::Match))
-            .or_else(|| {
-                self.queued_states_d1
-                    .pop()
-                    .map(|(score, node)| AstarQueuedItem(score, node, AlignState::Deletion))
-            })
-            .or_else(|| {
-                self.queued_states_d2
-                    .pop()
-                    .map(|(score, node)| AstarQueuedItem(score, node, AlignState::Deletion2))
-            })
-            .or_else(|| {
-                self.queued_states_i1
-                    .pop()
-                    .map(|(score, node)| AstarQueuedItem(score, node, AlignState::Insertion))
-            })
-            .or_else(|| {
-                self.queued_states_i2
-                    .pop()
-                    .map(|(score, node)| AstarQueuedItem(score, node, AlignState::Insertion2))
-            })
-    }
-
-    fn is_empty(&self) -> bool {
-        self.queued_states_m.is_empty()
-            && self.queued_states_i1.is_empty()
-            && self.queued_states_i2.is_empty()
-            && self.queued_states_d1.is_empty()
-            && self.queued_states_d2.is_empty()
-    }
-
-    fn capacity(&self) -> usize {
-        self.queued_states_m.capacity()
-            + self.queued_states_i1.capacity()
-            + self.queued_states_i2.capacity()
-            + self.queued_states_d1.capacity()
-            + self.queued_states_d2.capacity()
-    }
-}
-
-impl<N, O> Default for TwoPieceQueueLayer<N, O>
-where
-    N: GraphNodeId,
-    O: OffsetType,
-{
-    fn default() -> Self {
-        Self {
-            queued_states_m: Vec::with_capacity(16),
-            queued_states_i1: Vec::with_capacity(4),
-            queued_states_i2: Vec::with_capacity(4),
-            queued_states_d1: Vec::with_capacity(4),
-            queued_states_d2: Vec::with_capacity(4),
-        }
-    }
-}
-
-pub type TwoPieceLayeredQueue<N, O> = LayeredQueue<TwoPieceQueueLayer<N, O>>;
-
-impl<N, O> AstarQueue<N, O> for TwoPieceLayeredQueue<N, O>
-where
-    N: GraphNodeId,
-    O: OffsetType,
-{
-    fn pop_aln_state(&mut self) -> Option<AstarQueuedItem<N, O>> {
-        self.pop()
-    }
-
-    fn queue_aln_state(&mut self, node: AlignmentGraphNode<N, O>, aln_state: AlignState, score: u32, h: usize) {
-        let priority = score as usize + h;
-        let item = AstarQueuedItem(score, node, aln_state);
-        self.queue(item, priority)
-    }
-}
+pub type LinearLayeredQueue<N, O> = LayeredQueue<StateQueueLayer<N, O, 1>>;
+pub type AffineLayeredQueue<N, O> = LayeredQueue<StateQueueLayer<N, O, 3>>;
+pub type TwoPieceLayeredQueue<N, O> = LayeredQueue<StateQueueLayer<N, O, 5>>;
 
 #[cfg(test)]
 mod tests {
@@ -342,10 +230,6 @@ mod tests {
 
         fn is_empty(&self) -> bool {
             <[usize]>::is_empty(self)
-        }
-
-        fn capacity(&self) -> usize {
-            Vec::capacity(self)
         }
     }
 
@@ -377,8 +261,8 @@ mod tests {
         assert_eq!(queue.layers[2], vec![12]);
     }
 
-    /// Popping must always return the lowest-priority item queued so far
-    /// (monotone by priority), regardless of insertion order.
+    /// Popping must always return the lowest-priority item queued so far,
+    /// regardless of insertion order; within a bucket the order is LIFO.
     #[test]
     fn pop_order_is_monotone_by_priority() {
         let mut queue: LayeredQueue<Vec<usize>> = LayeredQueue::new();
@@ -388,15 +272,32 @@ mod tests {
             queue.queue(item, priority);
         }
 
-        let mut popped_priorities = Vec::new();
-        // Re-derive priority by tracking which bucket we popped last is hard
-        // without extra bookkeeping, so instead assert the values pop out
-        // grouped in non-decreasing priority order by construction: items at
-        // priority 1, then 3 (LIFO: 2 before 1), then 20.
+        let mut popped = Vec::new();
         while let Some(v) = queue.pop() {
-            popped_priorities.push(v);
+            popped.push(v);
         }
 
-        assert_eq!(popped_priorities, vec![0, 2, 1, 42, 100]);
+        assert_eq!(popped, vec![0, 2, 1, 42, 100]);
+    }
+
+    #[test]
+    fn state_layer_pops_matches_before_deletions_before_insertions() {
+        use crate::graph::mock::NIx;
+
+        let mut layer: StateQueueLayer<NIx, u32, 5> = StateQueueLayer::default();
+        let node = AlignmentGraphNode::new(NIx::new(0), 0u32);
+        for state in [
+            AlignState::Insertion2,
+            AlignState::Insertion,
+            AlignState::Deletion2,
+            AlignState::Deletion,
+            AlignState::Match,
+        ] {
+            layer.queue(AstarQueuedItem(0, node, state));
+        }
+
+        let order: Vec<AlignState> = std::iter::from_fn(|| layer.pop().map(|i| i.aln_state())).collect();
+        assert_eq!(order, POP_ORDER.to_vec());
+        assert!(layer.is_empty());
     }
 }

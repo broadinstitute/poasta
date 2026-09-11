@@ -1,21 +1,21 @@
-//! Alignment-graph state and expansion, ported from `stable`'s `aligner::aln_graph`
-//! + `aligner::scoring::gap_affine`.
+//! Alignment-graph state and expansion: the state machines A* searches over,
+//! one per cost-model shape.
 
 use std::collections::HashSet;
 use std::ops::Bound;
 
+use crate::align::astar::visited::AstarVisited;
 use crate::align::cost_models::AlignmentCostModel;
 use crate::align::cost_models::affine::Affine;
 use crate::align::cost_models::linear::Linear;
 use crate::align::cost_models::two_piece::TwoPieceAffine;
-use crate::align::astar::visited::AstarVisited;
 use crate::align::offsets::OffsetType;
 use crate::align::traits::AlignableGraph;
 use crate::align::{AlignState, AlignmentMode};
 use crate::graph::traits::GraphNodeId;
 
 /// A node in the alignment graph: a cursor into the POA graph paired with a
-/// query offset. Does not carry the alignment state (Match/Insertion/...) —
+/// query offset. Does not carry the alignment state (Match/Insertion/...);
 /// that is tracked separately by callers (queue items, visited cells).
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct AlignmentGraphNode<N, O> {
@@ -44,17 +44,30 @@ where
 }
 
 /// Expands alignment-graph states according to a particular cost model and
-/// alignment mode. Implementations have no DP-kernel analogue — this is the
-/// A*-specific counterpart to `DPKernel`.
+/// alignment mode.
+///
+/// Every expansion method calls `f` with `(score_delta, successor_node,
+/// successor_state)` for each successor whose score improved (that is, when
+/// `AstarVisited::update_score_if_lower` returned `true`), so the caller can
+/// queue exactly those. The main loop only expands `Match` states through
+/// the greedy match DFA, which reports where extension stopped and why; the
+/// three `expand_*` methods below handle each of those stops. Gap states are
+/// expanded through `expand_all`.
 pub trait AlignmentGraph {
-    type CostModel: AlignmentCostModel;
-
-    fn get_costs(&self) -> &Self::CostModel;
+    fn mode(&self) -> AlignmentMode;
 
     fn initial_states<G, O>(&self, ref_graph: &G, seq: &[u8]) -> Vec<AlignmentGraphNode<G::Node, O>>
     where
         G: AlignableGraph,
-        O: OffsetType;
+        O: OffsetType,
+    {
+        match self.mode() {
+            AlignmentMode::Global => vec![AlignmentGraphNode::new(ref_graph.start_node(), O::zero())],
+            AlignmentMode::EndsFree { qry_free_begin, graph_free_begin, .. } => {
+                ends_free_initial_states(ref_graph, seq, qry_free_begin, graph_free_begin)
+            }
+        }
+    }
 
     fn is_end<G, O>(
         &self,
@@ -65,12 +78,21 @@ pub trait AlignmentGraph {
     ) -> bool
     where
         G: AlignableGraph,
-        O: OffsetType;
+        O: OffsetType,
+    {
+        match self.mode() {
+            AlignmentMode::Global => {
+                aln_state == AlignState::Match
+                    && node.node() == ref_graph.end_node()
+                    && node.offset().as_usize() == seq.len()
+            }
+            AlignmentMode::EndsFree { qry_free_end, graph_free_end, .. } => {
+                ends_free_is_end(ref_graph, seq, node, aln_state, qry_free_end, graph_free_end)
+            }
+        }
+    }
 
-    /// Expand all successor states of `node` in state `state`. Calls `f` with
-    /// `(score_delta, successor_node, successor_state)` for each successor
-    /// whose score was actually improved (`AstarVisited::update_score_if_lower`
-    /// returned `true`).
+    /// Expand all successor states of `node` in gap state `state`.
     #[allow(clippy::too_many_arguments)]
     fn expand_all<V, G, O, F>(
         &self,
@@ -117,7 +139,7 @@ pub trait AlignmentGraph {
         F: FnMut(u8, AlignmentGraphNode<N, O>, AlignState);
 
     /// Expand a mismatch found during greedy match extension: queues the
-    /// mismatch (Match state) plus the indel states opened from `parent`.
+    /// mismatch (Match state) plus the indels opened from `parent`.
     fn expand_mismatch<V, N, O, F>(
         &self,
         visited_data: &mut V,
@@ -150,8 +172,8 @@ pub(crate) fn resolve_bound(bound: Bound<usize>, max: usize) -> usize {
 ///
 /// ponytail: recomputed on every `initial_states`/`is_end` call rather than
 /// cached on the `AlignmentGraph` struct (which isn't generic over the graph
-/// type, so it can't hold a `HashSet<G::Node>` field). Fine for now — bump if
-/// EndsFree alignments on large graphs show up in profiles; the fix is to
+/// type, so it can't hold a `HashSet<G::Node>` field). Fine for now; bump if
+/// EndsFree alignments on large graphs show up in profiles. The fix is to
 /// precompute this once in `align()` and thread it through.
 fn free_prefix_nodes<G: AlignableGraph>(ref_graph: &G, max_hops: usize) -> HashSet<G::Node> {
     let start = ref_graph.start_node();
@@ -262,75 +284,180 @@ where
     qry_ok && graph_ok
 }
 
-/// Three-state (`Match`/`Deletion`/`Insertion`) alignment graph, generic over
-/// any cost model shaped like gap-affine (linear is the `gap_open() == 0`
-/// special case of the same recurrence — no separate implementation needed).
-pub struct ThreeStateAlignmentGraph<C> {
+// ─── Linear: one state ───────────────────────────────────────────────────────
+
+/// Linear-gap alignment graph. With no gap-open cost there is nothing to
+/// remember between steps, so every state is `Match` and a gap is just an
+/// edge that costs `gap_extend` and moves along one axis.
+pub struct LinearAlignmentGraph {
+    costs: Linear,
+    mode: AlignmentMode,
+}
+
+impl LinearAlignmentGraph {
+    pub fn new(costs: Linear, mode: AlignmentMode) -> Self {
+        Self { costs, mode }
+    }
+}
+
+impl AlignmentGraph for LinearAlignmentGraph {
+    fn mode(&self) -> AlignmentMode {
+        self.mode
+    }
+
+    fn expand_all<V, G, O, F>(
+        &self,
+        _visited_data: &mut V,
+        _ref_graph: &G,
+        _seq: &[u8],
+        _score: u32,
+        _node: &AlignmentGraphNode<G::Node, O>,
+        state: AlignState,
+        _f: F,
+    ) where
+        V: AstarVisited<G::Node, O>,
+        G: AlignableGraph,
+        O: OffsetType,
+        F: FnMut(u8, AlignmentGraphNode<G::Node, O>, AlignState),
+    {
+        unreachable!("linear model has no gap states to expand, got {state:?}")
+    }
+
+    fn expand_ref_graph_end<V, N, O, F>(
+        &self,
+        visited_data: &mut V,
+        parent: &AlignmentGraphNode<N, O>,
+        score: u32,
+        mut f: F,
+    ) where
+        V: AstarVisited<N, O>,
+        N: GraphNodeId,
+        O: OffsetType,
+        F: FnMut(u8, AlignmentGraphNode<N, O>, AlignState),
+    {
+        let ge = self.costs.gap_extend();
+        let ins = AlignmentGraphNode::new(parent.node(), parent.offset().increase_one());
+        if visited_data.update_score_if_lower(&ins, AlignState::Match, parent, AlignState::Match, score + ge as u32) {
+            f(ge, ins, AlignState::Match);
+        }
+    }
+
+    fn expand_query_end<V, N, O, F>(
+        &self,
+        visited_data: &mut V,
+        parent: &AlignmentGraphNode<N, O>,
+        child: N,
+        score: u32,
+        mut f: F,
+    ) where
+        V: AstarVisited<N, O>,
+        N: GraphNodeId,
+        O: OffsetType,
+        F: FnMut(u8, AlignmentGraphNode<N, O>, AlignState),
+    {
+        let ge = self.costs.gap_extend();
+        let del = AlignmentGraphNode::new(child, parent.offset());
+        if visited_data.update_score_if_lower(&del, AlignState::Match, parent, AlignState::Match, score + ge as u32) {
+            f(ge, del, AlignState::Match);
+        }
+    }
+
+    fn expand_mismatch<V, N, O, F>(
+        &self,
+        visited_data: &mut V,
+        parent: &AlignmentGraphNode<N, O>,
+        child: &AlignmentGraphNode<N, O>,
+        score: u32,
+        mut f: F,
+    ) where
+        V: AstarVisited<N, O>,
+        N: GraphNodeId,
+        O: OffsetType,
+        F: FnMut(u8, AlignmentGraphNode<N, O>, AlignState),
+    {
+        let mm = self.costs.mismatch();
+        if visited_data.update_score_if_lower(child, AlignState::Match, parent, AlignState::Match, score + mm as u32) {
+            f(mm, *child, AlignState::Match);
+        }
+
+        let ge = self.costs.gap_extend();
+        let ins = AlignmentGraphNode::new(parent.node(), parent.offset().increase_one());
+        if visited_data.update_score_if_lower(&ins, AlignState::Match, parent, AlignState::Match, score + ge as u32) {
+            f(ge, ins, AlignState::Match);
+        }
+
+        let del = AlignmentGraphNode::new(child.node(), parent.offset());
+        if visited_data.update_score_if_lower(&del, AlignState::Match, parent, AlignState::Match, score + ge as u32) {
+            f(ge, del, AlignState::Match);
+        }
+    }
+}
+
+// ─── Gap-affine: one or two independent gap pieces ───────────────────────────
+
+/// One gap piece: its costs and the two states (deletion, insertion) it owns.
+#[derive(Clone, Copy)]
+struct GapPiece {
+    open_extend: u8,
+    extend: u8,
+    del: AlignState,
+    ins: AlignState,
+}
+
+/// Gap-affine alignment graph with `Match` plus one deletion and one
+/// insertion state per gap piece. Each piece opens directly from `Match`
+/// under its own open+extend cost and only ever extends within itself; the
+/// zero-cost edge back to `Match` closes it.
+///
+/// With two pieces (two-piece affine) this means no piece-to-piece
+/// transitions, matching the "two independent tracks" recurrence
+/// `D2 = min(M + go2 + ge2, D2 + ge2)` rather than a model where piece two is
+/// only reachable from piece one mid-gap.
+pub struct GapAlignmentGraph<C> {
     costs: C,
     mode: AlignmentMode,
+    pieces: [GapPiece; 2],
+    n_pieces: usize,
 }
 
-impl<C> ThreeStateAlignmentGraph<C>
+pub type AffineAlignmentGraph = GapAlignmentGraph<Affine>;
+pub type TwoPieceAlignmentGraph = GapAlignmentGraph<TwoPieceAffine>;
+
+impl<C> GapAlignmentGraph<C>
 where
     C: AlignmentCostModel,
 {
-    pub fn new(costs: C, mode: AlignmentMode) -> Self {
-        Self { costs, mode }
+    pub fn new(costs: C, mode: AlignmentMode, n_pieces: usize) -> Self {
+        assert!(n_pieces == 1 || n_pieces == 2, "gap-affine graphs have one or two pieces");
+        let pieces = [
+            GapPiece {
+                open_extend: costs.gap_open() + costs.gap_extend(),
+                extend: costs.gap_extend(),
+                del: AlignState::Deletion,
+                ins: AlignState::Insertion,
+            },
+            GapPiece {
+                open_extend: costs.gap_open2() + costs.gap_extend2(),
+                extend: costs.gap_extend2(),
+                del: AlignState::Deletion2,
+                ins: AlignState::Insertion2,
+            },
+        ];
+        Self { costs, mode, pieces, n_pieces }
+    }
+
+    #[inline(always)]
+    fn pieces(&self) -> &[GapPiece] {
+        &self.pieces[..self.n_pieces]
     }
 }
 
-/// Gap-affine alignment graph (three-state graph specialised to [`Affine`]).
-pub type AffineAlignmentGraph = ThreeStateAlignmentGraph<Affine>;
-
-/// Linear-gap alignment graph (three-state graph specialised to [`Linear`]);
-/// `Linear::gap_open() == 0` degenerates the affine recurrence into a plain
-/// per-base gap cost.
-pub type LinearAlignmentGraph = ThreeStateAlignmentGraph<Linear>;
-
-impl<C> AlignmentGraph for ThreeStateAlignmentGraph<C>
+impl<C> AlignmentGraph for GapAlignmentGraph<C>
 where
     C: AlignmentCostModel,
 {
-    type CostModel = C;
-
-    fn get_costs(&self) -> &Self::CostModel {
-        &self.costs
-    }
-
-    fn initial_states<G, O>(&self, ref_graph: &G, seq: &[u8]) -> Vec<AlignmentGraphNode<G::Node, O>>
-    where
-        G: AlignableGraph,
-        O: OffsetType,
-    {
-        match self.mode {
-            AlignmentMode::Global => vec![AlignmentGraphNode::new(ref_graph.start_node(), O::zero())],
-            AlignmentMode::EndsFree { qry_free_begin, graph_free_begin, .. } => {
-                ends_free_initial_states(ref_graph, seq, qry_free_begin, graph_free_begin)
-            }
-        }
-    }
-
-    fn is_end<G, O>(
-        &self,
-        ref_graph: &G,
-        seq: &[u8],
-        node: &AlignmentGraphNode<G::Node, O>,
-        aln_state: AlignState,
-    ) -> bool
-    where
-        G: AlignableGraph,
-        O: OffsetType,
-    {
-        match self.mode {
-            AlignmentMode::Global => {
-                aln_state == AlignState::Match
-                    && node.node() == ref_graph.end_node()
-                    && node.offset().as_usize() == seq.len()
-            }
-            AlignmentMode::EndsFree { qry_free_end, graph_free_end, .. } => {
-                ends_free_is_end(ref_graph, seq, node, aln_state, qry_free_end, graph_free_end)
-            }
-        }
+    fn mode(&self) -> AlignmentMode {
+        self.mode
     }
 
     fn expand_all<V, G, O, F>(
@@ -348,73 +475,29 @@ where
         O: OffsetType,
         F: FnMut(u8, AlignmentGraphNode<G::Node, O>, AlignState),
     {
-        let go_ge = self.costs.gap_open() + self.costs.gap_extend();
+        let piece = match state {
+            AlignState::Deletion | AlignState::Insertion => self.pieces[0],
+            AlignState::Deletion2 | AlignState::Insertion2 => self.pieces[1],
+            AlignState::Match => unreachable!("Match states are expanded through the match DFA"),
+        };
 
-        match state {
-            AlignState::Match => {
-                let child_offset = node.offset().increase_one();
-                for ref_succ in ref_graph.successors(node.node()) {
-                    let new_node_mis = AlignmentGraphNode::new(ref_succ, child_offset);
+        // Closing the gap is free.
+        if visited_data.update_score_if_lower(node, AlignState::Match, node, state, score) {
+            f(0, *node, AlignState::Match);
+        }
 
-                    let score_delta = if ref_graph.is_symbol_equal(ref_succ, seq[child_offset.as_usize() - 1]) {
-                        0u8
-                    } else {
-                        self.costs.mismatch()
-                    };
-                    let new_score_mis = score + score_delta as u32;
-
-                    if visited_data.update_score_if_lower(&new_node_mis, AlignState::Match, node, state, new_score_mis) {
-                        f(score_delta, new_node_mis, AlignState::Match);
-                    }
-
-                    // Open deletion
-                    let new_node_del = AlignmentGraphNode::new(ref_succ, node.offset());
-                    let new_score_del = score + go_ge as u32;
-                    if visited_data.update_score_if_lower(&new_node_del, AlignState::Deletion, node, state, new_score_del) {
-                        f(go_ge, new_node_del, AlignState::Deletion);
-                    }
-                }
-
-                // Open insertion
-                let new_node_ins = AlignmentGraphNode::new(node.node(), child_offset);
-                let new_score_ins = score + go_ge as u32;
-                if child_offset.as_usize() <= seq.len()
-                    && visited_data.update_score_if_lower(&new_node_ins, AlignState::Insertion, node, state, new_score_ins)
-                {
-                    f(go_ge, new_node_ins, AlignState::Insertion);
+        let extended = score + piece.extend as u32;
+        if state == piece.del {
+            for ref_succ in ref_graph.successors(node.node()) {
+                let del = AlignmentGraphNode::new(ref_succ, node.offset());
+                if visited_data.update_score_if_lower(&del, state, node, state, extended) {
+                    f(piece.extend, del, state);
                 }
             }
-            AlignState::Insertion => {
-                // I -> M edge has zero cost
-                if visited_data.update_score_if_lower(node, AlignState::Match, node, AlignState::Insertion, score) {
-                    f(0, *node, AlignState::Match);
-                }
-
-                let new_node_ins = AlignmentGraphNode::new(node.node(), node.offset().increase_one());
-                let new_score_ins = score + self.costs.gap_extend() as u32;
-                if node.offset().as_usize() < seq.len()
-                    && visited_data.update_score_if_lower(&new_node_ins, AlignState::Insertion, node, state, new_score_ins)
-                {
-                    f(self.costs.gap_extend(), new_node_ins, AlignState::Insertion);
-                }
-            }
-            AlignState::Deletion => {
-                // D -> M edge has zero cost
-                if visited_data.update_score_if_lower(node, AlignState::Match, node, AlignState::Deletion, score) {
-                    f(0, *node, AlignState::Match);
-                }
-
-                for ref_succ in ref_graph.successors(node.node()) {
-                    let score_delta = self.costs.gap_extend();
-                    let new_node_del = AlignmentGraphNode::new(ref_succ, node.offset());
-                    let new_score_del = score + score_delta as u32;
-                    if visited_data.update_score_if_lower(&new_node_del, AlignState::Deletion, node, state, new_score_del) {
-                        f(score_delta, new_node_del, AlignState::Deletion);
-                    }
-                }
-            }
-            AlignState::Insertion2 | AlignState::Deletion2 => {
-                panic!("Invalid gap-affine state {state:?}!")
+        } else if node.offset().as_usize() < seq.len() {
+            let ins = AlignmentGraphNode::new(node.node(), node.offset().increase_one());
+            if visited_data.update_score_if_lower(&ins, state, node, state, extended) {
+                f(piece.extend, ins, state);
             }
         }
     }
@@ -431,11 +514,12 @@ where
         O: OffsetType,
         F: FnMut(u8, AlignmentGraphNode<N, O>, AlignState),
     {
-        let go_ge = self.costs.gap_open() + self.costs.gap_extend();
-        let new_node_ins = AlignmentGraphNode::new(parent.node(), parent.offset().increase_one());
-        let new_score_ins = score + go_ge as u32;
-        if visited_data.update_score_if_lower(&new_node_ins, AlignState::Insertion, parent, AlignState::Match, new_score_ins) {
-            f(go_ge, new_node_ins, AlignState::Insertion);
+        let ins = AlignmentGraphNode::new(parent.node(), parent.offset().increase_one());
+        for piece in self.pieces() {
+            let opened = score + piece.open_extend as u32;
+            if visited_data.update_score_if_lower(&ins, piece.ins, parent, AlignState::Match, opened) {
+                f(piece.open_extend, ins, piece.ins);
+            }
         }
     }
 
@@ -452,11 +536,12 @@ where
         O: OffsetType,
         F: FnMut(u8, AlignmentGraphNode<N, O>, AlignState),
     {
-        let go_ge = self.costs.gap_open() + self.costs.gap_extend();
-        let new_node_del = AlignmentGraphNode::new(child, parent.offset());
-        let new_score_del = score + go_ge as u32;
-        if visited_data.update_score_if_lower(&new_node_del, AlignState::Deletion, parent, AlignState::Match, new_score_del) {
-            f(go_ge, new_node_del, AlignState::Deletion);
+        let del = AlignmentGraphNode::new(child, parent.offset());
+        for piece in self.pieces() {
+            let opened = score + piece.open_extend as u32;
+            if visited_data.update_score_if_lower(&del, piece.del, parent, AlignState::Match, opened) {
+                f(piece.open_extend, del, piece.del);
+            }
         }
     }
 
@@ -473,314 +558,25 @@ where
         O: OffsetType,
         F: FnMut(u8, AlignmentGraphNode<N, O>, AlignState),
     {
-        let new_score_mis = score + self.costs.mismatch() as u32;
-        if visited_data.update_score_if_lower(child, AlignState::Match, parent, AlignState::Match, new_score_mis) {
-            f(self.costs.mismatch(), *child, AlignState::Match);
+        let mm = self.costs.mismatch();
+        if visited_data.update_score_if_lower(child, AlignState::Match, parent, AlignState::Match, score + mm as u32) {
+            f(mm, *child, AlignState::Match);
         }
 
-        let go_ge = self.costs.gap_open() + self.costs.gap_extend();
-
-        let new_node_ins = AlignmentGraphNode::new(parent.node(), parent.offset().increase_one());
-        let new_score_ins = score + go_ge as u32;
-        if visited_data.update_score_if_lower(&new_node_ins, AlignState::Insertion, parent, AlignState::Match, new_score_ins) {
-            f(go_ge, new_node_ins, AlignState::Insertion);
-        }
-
-        let new_node_del = AlignmentGraphNode::new(child.node(), parent.offset());
-        let new_score_del = score + go_ge as u32;
-        if visited_data.update_score_if_lower(&new_node_del, AlignState::Deletion, parent, AlignState::Match, new_score_del) {
-            f(go_ge, new_node_del, AlignState::Deletion);
-        }
-    }
-}
-
-/// Two-piece gap-affine alignment graph: two fully independent gap tracks,
-/// `Deletion`/`Insertion` under piece 1 (go1, ge1) and `Deletion2`/`Insertion2`
-/// under piece 2 (go2, ge2). Each track opens directly from `Match` under its
-/// own open+extend cost and only ever extends within itself — no piece1 <->
-/// piece2 transition edges.
-///
-/// This intentionally diverges from `stable`'s `Affine2PieceAlignmentGraph`,
-/// which only ever opens gaps under piece 1 and reaches piece 2 by
-/// transitioning mid-gap. That shape doesn't match this crate's
-/// `TwoPieceAffineKernel` DP recurrence (`kernels/two_piece.rs`), which models
-/// the two pieces as fully independent tracks, each directly reachable from
-/// `M` (`D2[v][q] = min(M[u][q] + go2+ge2, ...)`) with no cross-talk. Since
-/// `CanonicalDP` is this crate's oracle (per `CLAUDE.md`), the A* state
-/// machine is built to match that recurrence instead of stable's.
-pub struct TwoPieceAlignmentGraph {
-    costs: TwoPieceAffine,
-    mode: AlignmentMode,
-}
-
-impl TwoPieceAlignmentGraph {
-    pub fn new(costs: TwoPieceAffine, mode: AlignmentMode) -> Self {
-        Self { costs, mode }
-    }
-}
-
-impl AlignmentGraph for TwoPieceAlignmentGraph {
-    type CostModel = TwoPieceAffine;
-
-    fn get_costs(&self) -> &Self::CostModel {
-        &self.costs
-    }
-
-    fn initial_states<G, O>(&self, ref_graph: &G, seq: &[u8]) -> Vec<AlignmentGraphNode<G::Node, O>>
-    where
-        G: AlignableGraph,
-        O: OffsetType,
-    {
-        match self.mode {
-            AlignmentMode::Global => vec![AlignmentGraphNode::new(ref_graph.start_node(), O::zero())],
-            AlignmentMode::EndsFree { qry_free_begin, graph_free_begin, .. } => {
-                ends_free_initial_states(ref_graph, seq, qry_free_begin, graph_free_begin)
+        let ins = AlignmentGraphNode::new(parent.node(), parent.offset().increase_one());
+        for piece in self.pieces() {
+            let opened = score + piece.open_extend as u32;
+            if visited_data.update_score_if_lower(&ins, piece.ins, parent, AlignState::Match, opened) {
+                f(piece.open_extend, ins, piece.ins);
             }
         }
-    }
 
-    fn is_end<G, O>(
-        &self,
-        ref_graph: &G,
-        seq: &[u8],
-        node: &AlignmentGraphNode<G::Node, O>,
-        aln_state: AlignState,
-    ) -> bool
-    where
-        G: AlignableGraph,
-        O: OffsetType,
-    {
-        match self.mode {
-            AlignmentMode::Global => {
-                aln_state == AlignState::Match
-                    && node.node() == ref_graph.end_node()
-                    && node.offset().as_usize() == seq.len()
+        let del = AlignmentGraphNode::new(child.node(), parent.offset());
+        for piece in self.pieces() {
+            let opened = score + piece.open_extend as u32;
+            if visited_data.update_score_if_lower(&del, piece.del, parent, AlignState::Match, opened) {
+                f(piece.open_extend, del, piece.del);
             }
-            AlignmentMode::EndsFree { qry_free_end, graph_free_end, .. } => {
-                ends_free_is_end(ref_graph, seq, node, aln_state, qry_free_end, graph_free_end)
-            }
-        }
-    }
-
-    fn expand_all<V, G, O, F>(
-        &self,
-        visited_data: &mut V,
-        ref_graph: &G,
-        seq: &[u8],
-        score: u32,
-        node: &AlignmentGraphNode<G::Node, O>,
-        state: AlignState,
-        mut f: F,
-    ) where
-        V: AstarVisited<G::Node, O>,
-        G: AlignableGraph,
-        O: OffsetType,
-        F: FnMut(u8, AlignmentGraphNode<G::Node, O>, AlignState),
-    {
-        let go1_ge1 = self.costs.gap_open() + self.costs.gap_extend();
-        let go2_ge2 = self.costs.gap_open2() + self.costs.gap_extend2();
-
-        match state {
-            AlignState::Match => {
-                let child_offset = node.offset().increase_one();
-                for ref_succ in ref_graph.successors(node.node()) {
-                    let new_node_mis = AlignmentGraphNode::new(ref_succ, child_offset);
-
-                    let score_delta = if ref_graph.is_symbol_equal(ref_succ, seq[child_offset.as_usize() - 1]) {
-                        0u8
-                    } else {
-                        self.costs.mismatch()
-                    };
-                    let new_score_mis = score + score_delta as u32;
-
-                    if visited_data.update_score_if_lower(&new_node_mis, AlignState::Match, node, state, new_score_mis) {
-                        f(score_delta, new_node_mis, AlignState::Match);
-                    }
-
-                    // Open deletion, piece 1
-                    let new_node_del = AlignmentGraphNode::new(ref_succ, node.offset());
-                    let new_score_del1 = score + go1_ge1 as u32;
-                    if visited_data.update_score_if_lower(&new_node_del, AlignState::Deletion, node, state, new_score_del1) {
-                        f(go1_ge1, new_node_del, AlignState::Deletion);
-                    }
-
-                    // Open deletion, piece 2
-                    let new_score_del2 = score + go2_ge2 as u32;
-                    if visited_data.update_score_if_lower(&new_node_del, AlignState::Deletion2, node, state, new_score_del2) {
-                        f(go2_ge2, new_node_del, AlignState::Deletion2);
-                    }
-                }
-
-                if child_offset.as_usize() <= seq.len() {
-                    // Open insertion, piece 1
-                    let new_node_ins = AlignmentGraphNode::new(node.node(), child_offset);
-                    let new_score_ins1 = score + go1_ge1 as u32;
-                    if visited_data.update_score_if_lower(&new_node_ins, AlignState::Insertion, node, state, new_score_ins1) {
-                        f(go1_ge1, new_node_ins, AlignState::Insertion);
-                    }
-
-                    // Open insertion, piece 2
-                    let new_score_ins2 = score + go2_ge2 as u32;
-                    if visited_data.update_score_if_lower(&new_node_ins, AlignState::Insertion2, node, state, new_score_ins2) {
-                        f(go2_ge2, new_node_ins, AlignState::Insertion2);
-                    }
-                }
-            }
-            AlignState::Insertion => {
-                // I1 -> M edge has zero cost
-                if visited_data.update_score_if_lower(node, AlignState::Match, node, AlignState::Insertion, score) {
-                    f(0, *node, AlignState::Match);
-                }
-
-                let new_node_ins = AlignmentGraphNode::new(node.node(), node.offset().increase_one());
-                let new_score_ins = score + self.costs.gap_extend() as u32;
-                if node.offset().as_usize() < seq.len()
-                    && visited_data.update_score_if_lower(&new_node_ins, AlignState::Insertion, node, state, new_score_ins)
-                {
-                    f(self.costs.gap_extend(), new_node_ins, AlignState::Insertion);
-                }
-            }
-            AlignState::Insertion2 => {
-                // I2 -> M edge has zero cost
-                if visited_data.update_score_if_lower(node, AlignState::Match, node, AlignState::Insertion2, score) {
-                    f(0, *node, AlignState::Match);
-                }
-
-                let new_node_ins = AlignmentGraphNode::new(node.node(), node.offset().increase_one());
-                let new_score_ins = score + self.costs.gap_extend2() as u32;
-                if node.offset().as_usize() < seq.len()
-                    && visited_data.update_score_if_lower(&new_node_ins, AlignState::Insertion2, node, state, new_score_ins)
-                {
-                    f(self.costs.gap_extend2(), new_node_ins, AlignState::Insertion2);
-                }
-            }
-            AlignState::Deletion => {
-                // D1 -> M edge has zero cost
-                if visited_data.update_score_if_lower(node, AlignState::Match, node, AlignState::Deletion, score) {
-                    f(0, *node, AlignState::Match);
-                }
-
-                for ref_succ in ref_graph.successors(node.node()) {
-                    let score_delta = self.costs.gap_extend();
-                    let new_node_del = AlignmentGraphNode::new(ref_succ, node.offset());
-                    let new_score_del = score + score_delta as u32;
-                    if visited_data.update_score_if_lower(&new_node_del, AlignState::Deletion, node, state, new_score_del) {
-                        f(score_delta, new_node_del, AlignState::Deletion);
-                    }
-                }
-            }
-            AlignState::Deletion2 => {
-                // D2 -> M edge has zero cost
-                if visited_data.update_score_if_lower(node, AlignState::Match, node, AlignState::Deletion2, score) {
-                    f(0, *node, AlignState::Match);
-                }
-
-                for ref_succ in ref_graph.successors(node.node()) {
-                    let score_delta = self.costs.gap_extend2();
-                    let new_node_del = AlignmentGraphNode::new(ref_succ, node.offset());
-                    let new_score_del = score + score_delta as u32;
-                    if visited_data.update_score_if_lower(&new_node_del, AlignState::Deletion2, node, state, new_score_del) {
-                        f(score_delta, new_node_del, AlignState::Deletion2);
-                    }
-                }
-            }
-        }
-    }
-
-    fn expand_ref_graph_end<V, N, O, F>(
-        &self,
-        visited_data: &mut V,
-        parent: &AlignmentGraphNode<N, O>,
-        score: u32,
-        mut f: F,
-    ) where
-        V: AstarVisited<N, O>,
-        N: GraphNodeId,
-        O: OffsetType,
-        F: FnMut(u8, AlignmentGraphNode<N, O>, AlignState),
-    {
-        let go1_ge1 = self.costs.gap_open() + self.costs.gap_extend();
-        let go2_ge2 = self.costs.gap_open2() + self.costs.gap_extend2();
-
-        let new_node_ins = AlignmentGraphNode::new(parent.node(), parent.offset().increase_one());
-        let new_score_ins1 = score + go1_ge1 as u32;
-        if visited_data.update_score_if_lower(&new_node_ins, AlignState::Insertion, parent, AlignState::Match, new_score_ins1) {
-            f(go1_ge1, new_node_ins, AlignState::Insertion);
-        }
-
-        let new_score_ins2 = score + go2_ge2 as u32;
-        if visited_data.update_score_if_lower(&new_node_ins, AlignState::Insertion2, parent, AlignState::Match, new_score_ins2) {
-            f(go2_ge2, new_node_ins, AlignState::Insertion2);
-        }
-    }
-
-    fn expand_query_end<V, N, O, F>(
-        &self,
-        visited_data: &mut V,
-        parent: &AlignmentGraphNode<N, O>,
-        child: N,
-        score: u32,
-        mut f: F,
-    ) where
-        V: AstarVisited<N, O>,
-        N: GraphNodeId,
-        O: OffsetType,
-        F: FnMut(u8, AlignmentGraphNode<N, O>, AlignState),
-    {
-        let go1_ge1 = self.costs.gap_open() + self.costs.gap_extend();
-        let go2_ge2 = self.costs.gap_open2() + self.costs.gap_extend2();
-
-        let new_node_del = AlignmentGraphNode::new(child, parent.offset());
-        let new_score_del1 = score + go1_ge1 as u32;
-        if visited_data.update_score_if_lower(&new_node_del, AlignState::Deletion, parent, AlignState::Match, new_score_del1) {
-            f(go1_ge1, new_node_del, AlignState::Deletion);
-        }
-
-        let new_score_del2 = score + go2_ge2 as u32;
-        if visited_data.update_score_if_lower(&new_node_del, AlignState::Deletion2, parent, AlignState::Match, new_score_del2) {
-            f(go2_ge2, new_node_del, AlignState::Deletion2);
-        }
-    }
-
-    fn expand_mismatch<V, N, O, F>(
-        &self,
-        visited_data: &mut V,
-        parent: &AlignmentGraphNode<N, O>,
-        child: &AlignmentGraphNode<N, O>,
-        score: u32,
-        mut f: F,
-    ) where
-        V: AstarVisited<N, O>,
-        N: GraphNodeId,
-        O: OffsetType,
-        F: FnMut(u8, AlignmentGraphNode<N, O>, AlignState),
-    {
-        let new_score_mis = score + self.costs.mismatch() as u32;
-        if visited_data.update_score_if_lower(child, AlignState::Match, parent, AlignState::Match, new_score_mis) {
-            f(self.costs.mismatch(), *child, AlignState::Match);
-        }
-
-        let go1_ge1 = self.costs.gap_open() + self.costs.gap_extend();
-        let go2_ge2 = self.costs.gap_open2() + self.costs.gap_extend2();
-
-        let new_node_ins = AlignmentGraphNode::new(parent.node(), parent.offset().increase_one());
-        let new_score_ins1 = score + go1_ge1 as u32;
-        if visited_data.update_score_if_lower(&new_node_ins, AlignState::Insertion, parent, AlignState::Match, new_score_ins1) {
-            f(go1_ge1, new_node_ins, AlignState::Insertion);
-        }
-        let new_score_ins2 = score + go2_ge2 as u32;
-        if visited_data.update_score_if_lower(&new_node_ins, AlignState::Insertion2, parent, AlignState::Match, new_score_ins2) {
-            f(go2_ge2, new_node_ins, AlignState::Insertion2);
-        }
-
-        let new_node_del = AlignmentGraphNode::new(child.node(), parent.offset());
-        let new_score_del1 = score + go1_ge1 as u32;
-        if visited_data.update_score_if_lower(&new_node_del, AlignState::Deletion, parent, AlignState::Match, new_score_del1) {
-            f(go1_ge1, new_node_del, AlignState::Deletion);
-        }
-        let new_score_del2 = score + go2_ge2 as u32;
-        if visited_data.update_score_if_lower(&new_node_del, AlignState::Deletion2, parent, AlignState::Match, new_score_del2) {
-            f(go2_ge2, new_node_del, AlignState::Deletion2);
         }
     }
 }

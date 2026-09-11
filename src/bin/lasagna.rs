@@ -17,12 +17,11 @@ use crossbeam_channel::{Receiver, Sender, bounded};
 use rustc_hash::FxHashMap;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-use poasta::align::cost_models::AlignmentCostModel;
 use poasta::align::cost_models::affine::Affine;
 use poasta::align::cost_models::linear::Linear;
 use poasta::align::cost_models::two_piece::TwoPieceAffine;
 use poasta::align::traits::AlignOutput;
-use poasta::align::astar::{AstarEngine, AstarEngineTwoPiece};
+use poasta::align::astar::{AstarCostModel, AstarEngine, Offset};
 use poasta::align::traits::AlignmentEngine;
 use poasta::cli::CostModelKind;
 use poasta::cli::lasagna::LasagnaCli;
@@ -152,14 +151,13 @@ fn run(args: LasagnaCli) -> Result<(), CliError> {
                 args.cost_gap_open2,
                 args.cost_gap_extend2,
             );
-            let engine =
-                AstarEngineTwoPiece::<POAGraph<u32>>::new(costs).with_existing_bubbles(bubbles);
+            let engine = astar_engine(costs, bubbles);
             run_threaded(&engine, &args, &graph, &graph_segments, &node_to_segment)
         }
     }
 }
 
-fn astar_engine<C: AlignmentCostModel + Copy + 'static>(
+fn astar_engine<C: AstarCostModel<POANodeIndex<u32>, Offset>>(
     costs: C,
     bubbles: Arc<BubbleIndex<POANodeIndex<u32>>>,
 ) -> AstarEngine<POAGraph<u32>, C> {

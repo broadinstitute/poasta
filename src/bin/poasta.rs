@@ -11,12 +11,11 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use poasta::align::AlignmentMode;
 use poasta::align::PoastaAligner;
-use poasta::align::cost_models::AlignmentCostModel;
 use poasta::align::cost_models::affine::Affine;
 use poasta::align::cost_models::linear::Linear;
 use poasta::align::cost_models::two_piece::TwoPieceAffine;
 use poasta::align::traits::AlignOutput;
-use poasta::align::astar::{AstarEngine, AstarEngineTwoPiece, DijkstraHeuristic};
+use poasta::align::astar::{AstarCostModel, AstarEngine, DijkstraHeuristic, Offset};
 use poasta::align::traits::AlignmentEngine;
 use poasta::cli::CostModelKind;
 use poasta::cli::poasta::{AlignArgs, CliArgs, CliSubcommand, HeuristicKind, OutputType};
@@ -26,7 +25,7 @@ use poasta::errors::PoastaIOError;
 use poasta::graph::io::fasta::{FastaOutputOptions, load_graph_from_fasta_msa, poa_graph_to_fasta};
 use poasta::graph::io::gfa::{GfaOutputOptions, poa_graph_to_gfa};
 use poasta::graph::io::seq::open_sequences;
-use poasta::graph::poa::POAGraph;
+use poasta::graph::poa::{POAGraph, POANodeIndex};
 use poasta::graph::traits::GraphBase;
 
 fn main() -> ExitCode {
@@ -209,13 +208,7 @@ fn dispatch(
                 args.cost_gap_open2,
                 args.cost_gap_extend2,
             );
-            let engine = AstarEngineTwoPiece::<POAGraph<u32>>::new(costs).with_mode(mode);
-            match args.heuristic {
-                HeuristicKind::MinGapCost => run_with(engine, args, graph, sequences),
-                HeuristicKind::Dijkstra => {
-                    run_with(engine.with_heuristic(DijkstraHeuristic), args, graph, sequences)
-                }
-            }
+            run_astar(costs, mode, args, graph, sequences)
         }
     }
 }
@@ -228,7 +221,7 @@ fn run_astar<C>(
     sequences: &[(String, Vec<u8>)],
 ) -> Result<POAGraph<u32>, CliError>
 where
-    C: AlignmentCostModel + Copy + 'static,
+    C: AstarCostModel<POANodeIndex<u32>, Offset>,
 {
     let engine = AstarEngine::<POAGraph<u32>, C>::new(costs).with_mode(mode);
     match args.heuristic {
