@@ -69,8 +69,8 @@ where
         }
 
         // j^min and j^max
-        let target_offset_min = aln_node.offset() + O::new(bubble.min_dist_to_exit);
-        let target_offset_max = aln_node.offset() + O::new(bubble.max_dist_to_exit);
+        let target_offset_min = aln_node.offset() + O::new(bubble.min_dist_to_exit as usize);
+        let target_offset_max = aln_node.offset() + O::new(bubble.max_dist_to_exit as usize);
 
         let min_dist_to_end = bubble_index
             .get_min_dist_to_end(bubble.bubble_exit)
