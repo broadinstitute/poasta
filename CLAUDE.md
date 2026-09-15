@@ -33,8 +33,8 @@ Binaries after a release build: `target/release/poasta`, `target/release/lasagna
   `AlignmentMode` and `AlignState`; `traits.rs` has `AlignableGraph`,
   `AlignmentEngine` and `AlignOutput`. `cost_models/` has the three cost models.
 - `src/align/astar/`: the engine. `mod.rs` (`AstarEngine`, `AstarCostModel`,
-  main loop), `aln_graph.rs` (state machines), `visited.rs` (scores and
-  backtrace), `queue.rs` (bucket queue), `dfa.rs` (free match extension),
+  main loop), `aln_graph.rs` (state machines), `visited.rs` (block storage,
+  reached bits and backtrace), `queue.rs` (bucket queue), `dfa.rs` (free match extension),
   `heuristic.rs`, `pruning.rs`, and the test-only `dp_oracle.rs`.
 - `src/graph/`: `POAGraph` (`poa.rs`), graph traits, `AddAlignment`,
   consensus, superbubbles (`bubbles/`), and I/O (`io/`: FASTA, GFA, GAF, DOT).
@@ -53,6 +53,8 @@ Binaries after a release build: `target/release/poasta`, `target/release/lasagna
   (`test_support::score_from_alignment`).
 - Query offsets are `u32`. Visited slots and queue vectors are indexed by
   `AlignState as usize`.
+- `AlignmentEngine::align` takes `&mut self` so the engine can keep scratch
+  storage between alignments. Every thread owns its engine.
 - Queue pop order within a bucket is LIFO, Match before deletions before
   insertions. It decides which equal-score alignment is returned, so
   changing it changes MSA output.

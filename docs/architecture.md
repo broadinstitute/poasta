@@ -26,7 +26,7 @@ src/
 │   └── astar/              the A* engine
 │       ├── mod.rs          AstarEngine, AstarCostModel, HeuristicConfig, main loop
 │       ├── aln_graph.rs    alignment-graph state machines (1, 3 or 5 states)
-│       ├── visited.rs      BlockedVisitedStorage, AstarData, backtrace
+│       ├── visited.rs      BlockStorage, ReachedBits, AstarData, backtrace
 │       ├── queue.rs        LayeredQueue bucket queue, StateQueueLayer
 │       ├── dfa.rs          DepthFirstGreedyAlignment: free match extension
 │       ├── heuristic.rs    Dijkstra, MinimumGapCost
@@ -39,7 +39,6 @@ src/
 │   ├── poa.rs              POAGraph on a petgraph StableDiGraph
 │   ├── alignment.rs        AddAlignment: fold an alignment into a graph
 │   ├── consensus.rs        heaviest-bundle consensus
-│   ├── utils.rs            reverse post-order helper
 │   ├── bubbles/            superbubble detection and index
 │   │   ├── finder.rs       SuperbubbleFinder (Gärtner et al. 2018)
 │   │   └── index.rs        BubbleIndex: node to bubble map, distances to end
@@ -80,8 +79,9 @@ from `align::traits`. Nothing else in `graph/` may import from `align/`.
 4. The graph is written as a FASTA MSA or GFA, optionally with a consensus.
 
 `lasagna` aligns reads to a fixed GFA graph. It builds the graph and its
-`BubbleIndex` once, shares one engine across worker threads with
-`with_existing_bubbles`, and emits one GAF record per read. The graph is
+`BubbleIndex` once, gives every worker thread its own engine, all sharing
+that index through `with_existing_bubbles`, and emits one GAF record per
+read. The graph is
 never modified.
 
 The engine only ever reads the graph. Mutation happens afterwards, through
@@ -177,16 +177,26 @@ budget and its node can reach the end within the free trailing-graph budget.
 
 ### Visited storage
 
-`BlockedVisitedStorage<N, O, S, B>` (`visited.rs`) stores one `[u32; S]` per
-`(node rank, query offset)` cell, in `B × B` blocks (`B = 8`) allocated on
-demand in a hash map per block row. Blocking keeps the cells a search
-touches next close in memory. Unreached cells read as `INF`
-(`score.rs`), and `update_score_if_lower` is a plain comparison against it.
+`BlockStorage<N, O, S, B>` (`visited.rs`) stores one `[u32; S]` per
+`(node rank, query offset)` cell, in `B × B` blocks (`B = 8`). Each group of
+`B` ranks keeps one contiguous window of blocks over the query offsets it
+touched, so a lookup is a subtraction, a bounds check and a load. A window
+starts at two blocks and doubles in either direction. Square blocks keep
+the cells one expansion touches close in memory. Unreached cells read as
+`INF` (`score.rs`), and `update_score_if_lower` is a plain comparison
+against it.
 
-`AstarData<N, O, C, S>` wraps that storage with the cost model, the bubble
-index and, per bubble exit, the sorted query offsets at which the exit was
-reached in `Match`. It implements `AstarVisited`, the interface the main
-loop, the DFA and the heuristic see.
+Next to the scores, `ReachedBits` keeps one bit per query offset per rank,
+set for every `Match` state that was reached. The pruning check scans the
+exit's bits for the reached offsets below, inside and above its window.
+
+The engine keeps this storage between alignments. `reset` clears only the
+rows and bitmaps the previous alignment touched and reads the new node
+ranks. Keeping it is the reason `AlignmentEngine::align` takes `&mut self`.
+
+`AstarData<N, O, C, S>` wraps the storage with the cost model and the bubble
+index. It implements `AstarVisited`, the interface the main loop, the DFA
+and the heuristic see.
 
 ### The queue
 
@@ -196,7 +206,9 @@ always the minimum. `StateQueueLayer<N, O, S>` is one bucket, with a vector
 per alignment state so the main loop's state dispatch stays predictable.
 Within a bucket, pops are LIFO and ordered Match, Deletion, Deletion2,
 Insertion, Insertion2, which keeps the search depth-first among equals and
-pairs with the greedy extension below.
+pairs with the greedy extension below. Emptied layers go to a spare list and
+come back for new priorities, with each vector capped at 64 entries so that
+one large bucket does not inflate every later one.
 
 ### Main loop and greedy match extension
 
@@ -234,7 +246,11 @@ there, which keeps it admissible.
 `BubbleIndex` (`bubbles/index.rs`) records, per node, which bubbles it lies
 in and its distance to each exit, plus the shortest and longest distance to
 the graph end. It is built once per alignment, or once per graph for
-lasagna.
+lasagna. The build is three passes over ranks: the finder's, one for the
+distances to the end, and a sweep with a stack of open bubbles that fills a
+CSR membership table. The sweep works because a superbubble is an interval
+in the rank order, and a node's distance to an exit is its distance to the
+end minus the exit's.
 
 Every path through a bubble reaches the bubble's exit. Once the exit has
 been reached in `Match` at some offset and score, a state inside the bubble
@@ -331,6 +347,8 @@ Everything is unit tested in-tree. `tests/` contains only fixture files.
   would need a wider `OffsetType`.
 - `INF` is `1 << 28`, so adding any realistic cost to it cannot overflow.
 - Visited slots and queue vectors are indexed by `AlignState as usize`.
+- `AlignmentEngine::align` takes `&mut self` so the engine can keep scratch
+  storage. Every thread owns its engine.
 - Within a queue bucket, order is LIFO and Match before deletions before
   insertions. Changing it changes which of several equal-score alignments
   is returned, and so the MSA layout.
