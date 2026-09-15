@@ -684,7 +684,7 @@ mod tests {
     /// `fraction_of_full_matrix` statistics come through unchanged from
     /// `AlignOutput`, so this also guards the fraction-of-matrix metric.
     ///
-    /// Block size `B` (`BlockedVisitedStorage`'s const generic, default 8)
+    /// Block size `B` (`BlockStorage`'s const generic, default 8)
     /// and the `u64` offset-width fallback aren't swept here: neither is
     /// exposed as a tunable yet (`Offset` is hardcoded to `u32`, `B` is
     /// baked into `AstarData`), and adding

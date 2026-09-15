@@ -1,12 +1,14 @@
 //! Visited-state storage for the A* engine: the best score found so far for
-//! every `(graph node, query offset, alignment state)` triple, plus the
-//! bookkeeping bubble-exit pruning needs, plus the backtrace that turns the
-//! scores back into an alignment.
+//! every `(graph node, query offset, alignment state)` triple, the reached
+//! bits bubble-exit pruning reads, and the backtrace that turns the scores
+//! back into an alignment.
+//!
+//! Scores live in `B×B` blocks, one window of blocks over the query offsets
+//! per group of `B` ranks. Reached `Match` states are one bit per query
+//! offset per rank.
 
 use std::marker::PhantomData;
 use std::sync::Arc;
-
-use rustc_hash::FxHashMap;
 
 use crate::align::AlignState;
 use crate::align::astar::aln_graph::AlignmentGraphNode;
@@ -20,14 +22,6 @@ use crate::align::score::INF;
 use crate::align::traits::{AlignableGraph, AlignedPair};
 use crate::graph::bubbles::index::BubbleIndex;
 use crate::graph::traits::{GraphNodeId, GraphWithNodeOrdering};
-
-/// Insert `offset` into a per-node "reached bubble exit" list, keeping it sorted
-/// ascending so `ReachedBubbleExitsMatch` can binary-search it.
-#[inline]
-fn insert_reached<O: OffsetType>(reached: &mut Vec<O>, offset: O) {
-    let idx = reached.partition_point(|v| *v < offset);
-    reached.insert(idx, offset);
-}
 
 /// State tracked by the A* engine for every `(alignment-graph node, state)`
 /// pair it has queued or visited.
@@ -61,16 +55,215 @@ where
         G: AlignableGraph<Node = N>;
 }
 
-/// Node-rank × query-offset space tiled into `B×B` blocks, allocated on
-/// demand. A cell is `[u32; S]`, indexed by `AlignState as usize`, so `S` is
-/// `1` for linear, `3` for affine and `5` for two-piece costs.
-pub struct BlockedVisitedStorage<N, O, const S: usize, const B: usize = 8> {
-    node_blocks: Vec<FxHashMap<O, [[[u32; S]; B]; B]>>,
-    node_ranks: Vec<usize>,
-    _marker: PhantomData<N>,
+/// The blocks of one group of `B` ranks over a window of query offsets.
+///
+/// A window instead of a hash map because the offsets the search touches
+/// for one rank form a band around the diagonal. A lookup is then a
+/// subtraction, a bounds check and a load, where the hashed blocks probed
+/// and often rehashed on every read and write. Memory is still
+/// proportional to the band.
+///
+/// The blocks stay square. A* expands neighbours: the successors of a
+/// state sit one rank down and at most one offset over, so with `B×B`
+/// blocks the cells one pop touches share a block and a few cache lines.
+pub struct BlockRow<const S: usize, const B: usize> {
+    /// Offset block index of `blocks[0]`. Block `i` covers offsets
+    /// `(base + i) * B .. (base + i + 1) * B`.
+    base: u32,
+    /// Rank-major inside a block, `[u32; S]` per cell, `INF` when unreached.
+    blocks: Vec<[[[u32; S]; B]; B]>,
 }
 
-impl<N, O, const S: usize, const B: usize> BlockedVisitedStorage<N, O, S, B>
+impl<const S: usize, const B: usize> BlockRow<S, B> {
+    const EMPTY: [[[u32; S]; B]; B] = [[[INF; S]; B]; B];
+
+    fn new() -> Self {
+        Self { base: 0, blocks: Vec::new() }
+    }
+
+    #[inline]
+    fn get(&self, rank_in_block: usize, offset: u32, state: usize) -> u32 {
+        // `wrapping_sub` folds "below the window" into "past the end", so one
+        // bounds check covers both.
+        let block = ((offset >> B.ilog2()) as usize).wrapping_sub(self.base as usize);
+        match self.blocks.get(block) {
+            Some(b) => b[rank_in_block][offset as usize & (B - 1)][state],
+            None => INF,
+        }
+    }
+
+    #[inline]
+    fn cell_mut(&mut self, rank_in_block: usize, offset: u32) -> &mut [u32; S] {
+        let block = (offset >> B.ilog2()) as usize;
+        let base = self.base as usize;
+        if block < base || block >= base + self.blocks.len() {
+            self.grow_to(block);
+        }
+        &mut self.blocks[block - self.base as usize][rank_in_block][offset as usize & (B - 1)]
+    }
+
+    // The first window is small on purpose. On similar sequences a rank is
+    // touched at one to three offsets, and a graph with tens of thousands of
+    // ranks would pay a large fill per alignment for a wide first window.
+    // Growth doubles in either direction, so the total copy cost stays
+    // linear in the final window. The base is a whole unit (a block, a
+    // word), so growing downward is a prepend and never shifts anything
+    // inside a unit.
+    #[cold]
+    #[inline(never)]
+    fn grow_to(&mut self, block: usize) {
+        let base = self.base as usize;
+        if self.blocks.is_empty() {
+            self.base = block as u32;
+            self.blocks.resize(2, Self::EMPTY);
+        } else if block < base {
+            let grow = (base - block).max(self.blocks.len()).min(base);
+            self.blocks.splice(0..0, std::iter::repeat_n(Self::EMPTY, grow));
+            self.base -= grow as u32;
+        } else {
+            let needed = block - base + 1;
+            self.blocks.resize(needed.max(2 * self.blocks.len()), Self::EMPTY);
+        }
+    }
+}
+
+/// One bit per query offset at which the `Match` state of one rank was
+/// reached.
+///
+/// This replaces a sorted `Vec` of offsets per bubble exit. The pruning
+/// check needs the reached offsets just below, inside and just above a
+/// window. On high-error reads an exit is reached at hundreds to
+/// thousands of offsets, so the sorted vector cost two binary searches
+/// per check and a memmove per reached exit. That was half the run. With
+/// bits each lookup is a masked word scan.
+///
+/// The bits are set for every reached `Match` state, not only at bubble
+/// exits: setting a bit is cheaper than testing whether the node is an
+/// exit, and a uniform meaning is what a unipath extension needs later.
+/// Only exit ranks are read.
+#[derive(Default)]
+pub struct ReachedBits {
+    /// Query offset of bit 0 of `words[0]`, always a multiple of 64.
+    base: u32,
+    words: Vec<u64>,
+    /// Set bits in `words`. The pruning check returns early while it is
+    /// zero, which on similar sequences is most checks: an exit is reached at
+    /// one offset and most exits have not been reached yet when a state
+    /// inside their bubble is expanded.
+    n_reached: u32,
+}
+
+// Every scan below is over absolute offsets. `i = offset - base` is the bit
+// index in the window, `i >> 6` the word and `i & 63` the bit. The masks:
+// `u64::MAX >> (63 - k)` keeps bits `0..=k` and `u64::MAX << k` keeps bits
+// `k..=63`, both with a shift in `0..=63`.
+impl ReachedBits {
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.n_reached == 0
+    }
+
+    /// One past the last offset the window covers.
+    fn end(&self) -> u32 {
+        self.base + 64 * self.words.len() as u32
+    }
+
+    pub fn mark(&mut self, offset: u32) {
+        let word = (offset >> 6) as usize;
+        let base_word = (self.base >> 6) as usize;
+        // Grows like `BlockRow::grow_to`, one word at first, doubling after.
+        if self.words.is_empty() {
+            self.base = offset & !63;
+            self.words.push(0);
+        } else if word < base_word {
+            let grow = (base_word - word).max(self.words.len()).min(base_word);
+            self.words.splice(0..0, std::iter::repeat_n(0, grow));
+            self.base -= 64 * grow as u32;
+        } else if word >= base_word + self.words.len() {
+            let needed = word - base_word + 1;
+            self.words.resize(needed.max(2 * self.words.len()), 0);
+        }
+        let slot = &mut self.words[word - (self.base >> 6) as usize];
+        let bit = 1u64 << (offset & 63);
+        if *slot & bit == 0 {
+            *slot |= bit;
+            self.n_reached += 1;
+        }
+    }
+
+    /// Largest reached offset `<= offset`.
+    pub fn last_reached_at_or_below(&self, offset: u32) -> Option<u32> {
+        if self.words.is_empty() || offset < self.base {
+            return None;
+        }
+        let i = (offset.min(self.end() - 1) - self.base) as usize;
+        let mut w = i >> 6;
+        let mut word = self.words[w] & (u64::MAX >> (63 - (i & 63)));
+        loop {
+            if word != 0 {
+                return Some(self.base + 64 * w as u32 + 63 - word.leading_zeros());
+            }
+            if w == 0 {
+                return None;
+            }
+            w -= 1;
+            word = self.words[w];
+        }
+    }
+
+    /// Smallest reached offset `>= offset`.
+    pub fn first_reached_at_or_above(&self, offset: u32) -> Option<u32> {
+        if self.words.is_empty() || offset >= self.end() {
+            return None;
+        }
+        let i = (offset.max(self.base) - self.base) as usize;
+        let mut w = i >> 6;
+        let mut word = self.words[w] & (u64::MAX << (i & 63));
+        loop {
+            if word != 0 {
+                return Some(self.base + 64 * w as u32 + word.trailing_zeros());
+            }
+            w += 1;
+            if w == self.words.len() {
+                return None;
+            }
+            word = self.words[w];
+        }
+    }
+
+    /// Largest reached offset `< offset`.
+    #[inline]
+    pub fn last_reached_below(&self, offset: u32) -> Option<u32> {
+        self.last_reached_at_or_below(offset.checked_sub(1)?)
+    }
+
+    /// Smallest reached offset `> offset`.
+    #[inline]
+    pub fn first_reached_above(&self, offset: u32) -> Option<u32> {
+        self.first_reached_at_or_above(offset.checked_add(1)?)
+    }
+
+    /// Reached offsets in `lo..=hi`, ascending.
+    pub fn reached_in(&self, lo: u32, hi: u32) -> impl Iterator<Item = u32> + '_ {
+        std::iter::successors(self.first_reached_at_or_above(lo), move |&o| self.first_reached_above(o))
+            .take_while(move |&o| o <= hi)
+    }
+}
+
+/// Scores in block windows per group of `B` ranks, and reached bits per
+/// rank. A cell is `[u32; S]`, indexed by `AlignState as usize`, so `S` is
+/// `1` for linear, `3` for affine and `5` for two-piece costs.
+pub struct BlockStorage<N, O, const S: usize, const B: usize = 8> {
+    /// By `rank / B`.
+    block_rows: Vec<BlockRow<S, B>>,
+    /// By rank. Empty until the first bit is set.
+    reached: Vec<ReachedBits>,
+    /// By node index.
+    node_ranks: Vec<u32>,
+    _marker: PhantomData<(N, O)>,
+}
+
+impl<N, O, const S: usize, const B: usize> BlockStorage<N, O, S, B>
 where
     N: GraphNodeId,
     O: OffsetType,
@@ -80,65 +273,44 @@ where
         G: GraphWithNodeOrdering<NodeType = N>,
     {
         assert!(B.is_power_of_two(), "Block size B should be a power of 2!");
-
         let node_count = graph.node_count();
-        let num_blocks_nodes = (node_count / B) + 1;
-        let mut node_ranks = vec![0usize; node_count];
+        let mut node_ranks = vec![0u32; node_count];
         for node in graph.all_nodes_iter() {
-            node_ranks[node.index()] = graph.node_rank(node);
+            node_ranks[node.index()] = graph.node_rank(node) as u32;
         }
-
         Self {
-            node_blocks: vec![FxHashMap::default(); num_blocks_nodes],
+            block_rows: std::iter::repeat_with(BlockRow::new).take(node_count.div_ceil(B)).collect(),
+            reached: std::iter::repeat_with(ReachedBits::default).take(node_count).collect(),
             node_ranks,
             _marker: PhantomData,
         }
     }
 
     #[inline(always)]
-    fn calc_block_ix(&self, aln_node: &AlignmentGraphNode<N, O>) -> (usize, O, usize, usize) {
-        let node_rank = self.node_ranks[aln_node.node().index()];
-        let node_block = node_rank >> B.ilog2();
-
-        let offset = aln_node.offset().as_usize();
-        let offset_block = O::new(offset >> B.ilog2());
-
-        let within_block_node = node_rank & (B - 1);
-        let within_block_qry = offset & (B - 1);
-
-        (node_block, offset_block, within_block_node, within_block_qry)
+    fn rank(&self, aln_node: &AlignmentGraphNode<N, O>) -> usize {
+        self.node_ranks[aln_node.node().index()] as usize
     }
 
     #[inline]
     pub fn get_score(&self, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> u32 {
-        let (node_block, offset_block, wn, wq) = self.calc_block_ix(aln_node);
-        self.node_blocks[node_block]
-            .get(&offset_block)
-            .map(|v| v[wn][wq][aln_state as usize])
-            .unwrap_or(INF)
+        let rank = self.rank(aln_node);
+        self.block_rows[rank >> B.ilog2()].get(rank & (B - 1), aln_node.offset().as_usize() as u32, aln_state as usize)
+    }
+
+    #[inline]
+    fn cell_mut(&mut self, aln_node: &AlignmentGraphNode<N, O>) -> &mut [u32; S] {
+        let rank = self.rank(aln_node);
+        self.block_rows[rank >> B.ilog2()].cell_mut(rank & (B - 1), aln_node.offset().as_usize() as u32)
     }
 
     #[inline]
     pub fn set_score(&mut self, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState, score: u32) {
-        let (node_block, offset_block, wn, wq) = self.calc_block_ix(aln_node);
-        let map = &mut self.node_blocks[node_block];
-        if map.is_empty() {
-            map.reserve(4);
-        }
-        let v = map.entry(offset_block).or_insert_with(|| [[[INF; S]; B]; B]);
-        v[wn][wq][aln_state as usize] = score;
+        self.cell_mut(aln_node)[aln_state as usize] = score;
     }
 
     #[inline]
     pub fn update_score_if_lower_block(&mut self, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState, score: u32) -> bool {
-        let (node_block, offset_block, wn, wq) = self.calc_block_ix(aln_node);
-        let map = &mut self.node_blocks[node_block];
-        if map.is_empty() {
-            map.reserve(4);
-        }
-        let v = map.entry(offset_block).or_insert_with(|| [[[INF; S]; B]; B]);
-        let cell = &mut v[wn][wq][aln_state as usize];
-
+        let cell = &mut self.cell_mut(aln_node)[aln_state as usize];
         if score < *cell {
             *cell = score;
             true
@@ -146,11 +318,22 @@ where
             false
         }
     }
+
+    #[inline]
+    pub fn mark_reached(&mut self, aln_node: &AlignmentGraphNode<N, O>) {
+        let rank = self.rank(aln_node);
+        self.reached[rank].mark(aln_node.offset().as_usize() as u32);
+    }
+
+    #[inline]
+    pub fn reached(&self, node: N) -> &ReachedBits {
+        &self.reached[self.node_ranks[node.index()] as usize]
+    }
 }
 
 /// Everything the A* search records per state, for any cost model: scores in
-/// blocked storage plus, per bubble exit, the query offsets at which the exit
-/// was reached in `Match` (what bubble-exit pruning checks against).
+/// block windows per rank group, and per rank the query offsets at which its
+/// `Match` state was reached (what bubble-exit pruning checks against).
 ///
 /// `S` is the cost model's state count and also selects the backtrace state
 /// machine: `1` is the one-state linear model, `3` one gap piece, `5` two.
@@ -162,8 +345,7 @@ where
     costs: C,
     seq_len: usize,
     bubble_index: Arc<BubbleIndex<N>>,
-    visited: BlockedVisitedStorage<N, O, S>,
-    bubbles_reached_m: Vec<Vec<O>>,
+    visited: BlockStorage<N, O, S>,
 }
 
 pub type LinearAstarData<N, O> = AstarData<N, O, Linear, 1>;
@@ -183,8 +365,7 @@ where
         Self {
             costs,
             seq_len: seq.len(),
-            visited: BlockedVisitedStorage::new(ref_graph),
-            bubbles_reached_m: vec![Vec::new(); ref_graph.node_count()],
+            visited: BlockStorage::new(ref_graph),
             bubble_index,
         }
     }
@@ -207,8 +388,8 @@ where
     }
 
     fn mark_reached(&mut self, _score: u32, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) {
-        if aln_state == AlignState::Match && self.bubble_index.is_exit(aln_node.node()) {
-            insert_reached(&mut self.bubbles_reached_m[aln_node.node().index()], aln_node.offset());
+        if aln_state == AlignState::Match {
+            self.visited.mark_reached(aln_node);
         }
     }
 
@@ -223,7 +404,7 @@ where
         }
 
         !self.bubble_index.get_node_bubbles(aln_node.node()).iter().all(|bubble| {
-            let reached = &self.bubbles_reached_m[bubble.bubble_exit.index()];
+            let reached = self.visited.reached(bubble.bubble_exit);
             let get_match_score = |node: N, offset: O| self.visited.get_score(&AlignmentGraphNode::new(node, offset), AlignState::Match);
 
             ReachedBubbleExitsMatch::new(get_match_score, &self.costs, reached, self.seq_len)
@@ -261,7 +442,7 @@ where
 /// kind of move that led from it to `curr` (`Match` for the diagonal), or
 /// `None` at the start of the alignment.
 fn linear_step<N, O, C, G, const S: usize>(
-    visited: &BlockedVisitedStorage<N, O, S>,
+    visited: &BlockStorage<N, O, S>,
     costs: &C,
     ref_graph: &G,
     seq: &[u8],
@@ -310,7 +491,7 @@ where
 }
 
 fn linear_backtrace<N, O, C, G, const S: usize>(
-    visited: &BlockedVisitedStorage<N, O, S>,
+    visited: &BlockStorage<N, O, S>,
     costs: &C,
     ref_graph: &G,
     seq: &[u8],
@@ -377,7 +558,7 @@ fn gap_pieces<C: AlignmentCostModel>(costs: &C, n_states: usize) -> Vec<GapPiece
 /// consistent with a transition into `aln_node`/`aln_state`, or `None` at the
 /// start of the alignment.
 fn gap_step<N, O, C, G, const S: usize>(
-    visited: &BlockedVisitedStorage<N, O, S>,
+    visited: &BlockStorage<N, O, S>,
     costs: &C,
     pieces: &[GapPiece],
     ref_graph: &G,
@@ -458,7 +639,7 @@ where
 }
 
 fn gap_backtrace<N, O, C, G, const S: usize>(
-    visited: &BlockedVisitedStorage<N, O, S>,
+    visited: &BlockStorage<N, O, S>,
     costs: &C,
     ref_graph: &G,
     seq: &[u8],
@@ -529,35 +710,57 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
     use crate::graph::mock::create_test_graph1;
-    use crate::graph::traits::{GraphBase, GraphWithNodeOrdering};
+    use crate::graph::traits::GraphWithNodeOrdering;
 
     type O = u32;
 
     #[test]
-    fn get_set_round_trip_on_small_grid() {
+    fn get_set_round_trip() {
         let g = create_test_graph1();
-        let mut storage: BlockedVisitedStorage<_, O, 3> = BlockedVisitedStorage::new(&g);
+        let mut storage: BlockStorage<_, O, 3> = BlockStorage::new(&g);
 
-        let n0 = g.rank_to_node(0);
-        let node = AlignmentGraphNode::new(n0, 5u32);
+        let node = AlignmentGraphNode::new(g.rank_to_node(0), 5u32);
+        let next_rank = AlignmentGraphNode::new(g.rank_to_node(1), 5u32);
 
         assert_eq!(storage.get_score(&node, AlignState::Match), INF, "unset cell should read INF");
 
         storage.set_score(&node, AlignState::Match, 7);
         assert_eq!(storage.get_score(&node, AlignState::Match), 7);
-        // Other states at the same (node, offset) stay untouched.
+        // Other states in the same cell stay untouched.
         assert_eq!(storage.get_score(&node, AlignState::Deletion), INF);
+        // The next rank at the same offset shares the block but not the cell.
+        assert_eq!(storage.get_score(&next_rank, AlignState::Match), INF);
+    }
+
+    #[test]
+    fn grows_in_both_directions() {
+        let g = create_test_graph1();
+        let mut storage: BlockStorage<_, O, 3> = BlockStorage::new(&g);
+        let n = g.rank_to_node(2);
+        let at = |offset: u32| AlignmentGraphNode::new(n, offset);
+
+        for (offset, score) in [(100, 1), (20, 2), (900, 3)] {
+            storage.set_score(&at(offset), AlignState::Match, score);
+        }
+
+        assert_eq!(storage.get_score(&at(100), AlignState::Match), 1);
+        assert_eq!(storage.get_score(&at(20), AlignState::Match), 2);
+        assert_eq!(storage.get_score(&at(900), AlignState::Match), 3);
+        for offset in [19, 21, 899] {
+            assert_eq!(storage.get_score(&at(offset), AlignState::Match), INF);
+        }
     }
 
     #[test]
     fn update_score_if_lower_only_updates_on_improvement() {
         let g = create_test_graph1();
-        let mut storage: BlockedVisitedStorage<_, O, 3> = BlockedVisitedStorage::new(&g);
+        let mut storage: BlockStorage<_, O, 3> = BlockStorage::new(&g);
 
-        let n0 = g.rank_to_node(2);
-        let node = AlignmentGraphNode::new(n0, 3u32);
+        let node = AlignmentGraphNode::new(g.rank_to_node(2), 3u32);
 
         assert!(storage.update_score_if_lower_block(&node, AlignState::Match, 10));
         assert_eq!(storage.get_score(&node, AlignState::Match), 10);
@@ -572,28 +775,46 @@ mod tests {
     }
 
     #[test]
-    fn blocks_spanning_node_and_offset_do_not_alias() {
-        let g = create_test_graph1();
-        let mut storage: BlockedVisitedStorage<_, O, 3> = BlockedVisitedStorage::new(&g);
-
-        // Exercise several nodes/offsets spanning multiple B=8 blocks.
-        let n_ranks = g.node_count().min(10);
-        for rank in 0..n_ranks {
-            let node = g.rank_to_node(rank);
-            for offset in [0u32, 1, 7, 8, 9, 17] {
-                let aln_node = AlignmentGraphNode::new(node, offset);
-                let score = (rank as u32) * 100 + offset;
-                storage.set_score(&aln_node, AlignState::Match, score);
-            }
+    fn reached_bits_survive_growth() {
+        let mut bits = ReachedBits::default();
+        for offset in [130, 700, 5] {
+            bits.mark(offset);
         }
+        assert_eq!(bits.reached_in(0, u32::MAX).collect::<Vec<_>>(), vec![5, 130, 700]);
+        assert_eq!(bits.n_reached, 3);
 
-        for rank in 0..n_ranks {
-            let node = g.rank_to_node(rank);
-            for offset in [0u32, 1, 7, 8, 9, 17] {
-                let aln_node = AlignmentGraphNode::new(node, offset);
-                let expected = (rank as u32) * 100 + offset;
-                assert_eq!(storage.get_score(&aln_node, AlignState::Match), expected);
-            }
+        bits.mark(130);
+        assert_eq!(bits.n_reached, 3);
+    }
+
+    /// Guards the pruning check's equivalence with the sorted offset vector
+    /// it replaced: every scan must agree with a `BTreeSet`.
+    #[test]
+    fn bit_scans_match_btreeset() {
+        let mut x = 42u64;
+        let mut next = || {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (x >> 33) as u32 % 2000
+        };
+
+        let mut bits = ReachedBits::default();
+        let mut set = BTreeSet::new();
+        for _ in 0..300 {
+            let offset = next();
+            bits.mark(offset);
+            set.insert(offset);
+        }
+        assert_eq!(bits.n_reached as usize, set.len());
+
+        for x in 0..2000u32 {
+            assert_eq!(bits.last_reached_below(x), set.range(..x).next_back().copied(), "below {x}");
+            assert_eq!(bits.first_reached_above(x), set.range(x + 1..).next().copied(), "above {x}");
+            assert_eq!(
+                bits.reached_in(x, x + 37).collect::<Vec<_>>(),
+                set.range(x..=x + 37).copied().collect::<Vec<_>>(),
+                "in {x}..={}",
+                x + 37
+            );
         }
     }
 }
