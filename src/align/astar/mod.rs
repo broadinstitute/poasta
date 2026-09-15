@@ -378,6 +378,7 @@ where
         visited.set_score(&initial_state, AlignState::Match, 0);
     }
 
+    let mut dfa = DepthFirstGreedyAlignment::new(graph, query);
     let (end_score, end_node) = 'main: loop {
         let Some(item) = queue.pop_aln_state() else {
             return Err(AstarError::NoAlignmentFound);
@@ -406,7 +407,7 @@ where
         num_expanded += 1;
 
         if aln_state == AlignState::Match {
-            let mut dfa = DepthFirstGreedyAlignment::new(graph, query, score, &aln_node);
+            dfa.start(score, &aln_node);
             let is_end_check = |n: &AlignmentGraphNode<G::Node, O>| {
                 aln_graph.is_end(graph, query, n, AlignState::Match)
             };

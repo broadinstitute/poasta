@@ -89,6 +89,13 @@ where
     SuccessorsExhausted,
 }
 
+/// Greedy zero-cost match extension, depth first.
+///
+/// One instance serves a whole search. `start` restarts it from a popped
+/// `Match` state and reuses the stack allocation. Nine out of ten popped
+/// states are `Match` states on high-error reads, and allocating a fresh
+/// one-element stack for each of them was the entire malloc share of the
+/// profile, about 5 % of the run.
 pub struct DepthFirstGreedyAlignment<'a, G, O>
 where
     G: AlignableGraph + 'a,
@@ -106,14 +113,17 @@ where
     G: AlignableGraph,
     O: OffsetType,
 {
-    pub fn new(ref_graph: &'a G, seq: &'a [u8], score: u32, start_node: &AlignmentGraphNode<G::Node, O>) -> Self {
-        Self {
-            ref_graph,
-            seq,
-            score,
-            num_visited: 0,
-            stack: vec![StackNode::new(*start_node, ref_graph.successors(start_node.node()))],
-        }
+    pub fn new(ref_graph: &'a G, seq: &'a [u8]) -> Self {
+        Self { ref_graph, seq, score: 0, num_visited: 0, stack: Vec::new() }
+    }
+
+    /// Restart extension from `start_node` at `score`. Clears the stack but
+    /// keeps its capacity, which is the point of reusing the struct.
+    pub fn start(&mut self, score: u32, start_node: &AlignmentGraphNode<G::Node, O>) {
+        self.stack.clear();
+        self.stack.push(StackNode::new(*start_node, self.ref_graph.successors(start_node.node())));
+        self.score = score;
+        self.num_visited = 0;
     }
 
     pub fn get_num_visited(&self) -> usize {
