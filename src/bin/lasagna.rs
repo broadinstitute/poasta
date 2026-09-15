@@ -135,13 +135,11 @@ fn run(args: LasagnaCli) -> Result<(), CliError> {
     match args.cost_model {
         CostModelKind::Affine => {
             let costs = Affine::new(args.cost_mismatch, args.cost_gap_open, args.cost_gap_extend);
-            let engine = astar_engine(costs, bubbles);
-            run_threaded(&engine, &args, &graph, &graph_segments, &node_to_segment)
+            run_threaded(|| astar_engine(costs, bubbles.clone()), &args, &graph, &graph_segments, &node_to_segment)
         }
         CostModelKind::Linear => {
             let costs = Linear::new(args.cost_mismatch, args.cost_gap_extend);
-            let engine = astar_engine(costs, bubbles);
-            run_threaded(&engine, &args, &graph, &graph_segments, &node_to_segment)
+            run_threaded(|| astar_engine(costs, bubbles.clone()), &args, &graph, &graph_segments, &node_to_segment)
         }
         CostModelKind::TwoPiece => {
             let costs = TwoPieceAffine::new(
@@ -151,8 +149,7 @@ fn run(args: LasagnaCli) -> Result<(), CliError> {
                 args.cost_gap_open2,
                 args.cost_gap_extend2,
             );
-            let engine = astar_engine(costs, bubbles);
-            run_threaded(&engine, &args, &graph, &graph_segments, &node_to_segment)
+            run_threaded(|| astar_engine(costs, bubbles.clone()), &args, &graph, &graph_segments, &node_to_segment)
         }
     }
 }
@@ -221,15 +218,14 @@ fn node_to_segment_covers_all_real_nodes<Ix: petgraph::graph::IndexType>(
 }
 
 fn run_threaded<E>(
-    engine: &E,
+    make_engine: impl Fn() -> E + Sync,
     args: &LasagnaCli,
     graph: &POAGraph<u32>,
     graph_segments: &GraphSegments<u32>,
     node_to_segment: &FxHashMap<POANodeIndex<u32>, (usize, usize)>,
 ) -> Result<(), CliError>
 where
-    E: Sync
-        + for<'s> AlignmentEngine<
+    E: for<'s> AlignmentEngine<
             &'s [u8],
             Graph = POAGraph<u32>,
             Success = AlignOutput<POAGraph<u32>>,
@@ -267,11 +263,16 @@ where
         });
 
         // Aligner threads.
+        let make_engine = &make_engine;
         for _ in 0..num_threads {
             let rx_seq = rx_seq.clone();
             let tx_out = tx_out.clone();
             let thread_first_error = first_error.clone();
             s.spawn(move || {
+                // One engine per worker: `align` takes `&mut self` so the engine can keep
+                // its scratch storage, and an engine is a few words plus an `Arc` to the
+                // shared bubble index.
+                let mut engine = make_engine();
                 while let Ok((name, seq)) = rx_seq.recv() {
                     let span = tracing::info_span!("align_seq", seq_id = name.as_str());
                     let _enter = span.enter();

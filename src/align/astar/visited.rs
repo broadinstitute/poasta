@@ -53,6 +53,12 @@ where
     fn backtrace<G>(&self, ref_graph: &G, seq: &[u8], aln_node: &AlignmentGraphNode<N, O>) -> Vec<AlignedPair<N>>
     where
         G: AlignableGraph<Node = N>;
+
+    /// Forget the previous alignment and get ready for `seq` on `graph`,
+    /// keeping the allocations.
+    fn reset<G>(&mut self, graph: &G, seq: &[u8], bubbles: Arc<BubbleIndex<N>>)
+    where
+        G: GraphWithNodeOrdering<NodeType = N>;
 }
 
 /// The blocks of one group of `B` ranks over a window of query offsets.
@@ -248,6 +254,12 @@ impl ReachedBits {
         std::iter::successors(self.first_reached_at_or_above(lo), move |&o| self.first_reached_above(o))
             .take_while(move |&o| o <= hi)
     }
+
+    fn reset(&mut self) {
+        self.words.clear();
+        self.base = 0;
+        self.n_reached = 0;
+    }
 }
 
 /// Scores in block windows per group of `B` ranks, and reached bits per
@@ -260,6 +272,10 @@ pub struct BlockStorage<N, O, const S: usize, const B: usize = 8> {
     reached: Vec<ReachedBits>,
     /// By node index.
     node_ranks: Vec<u32>,
+    /// Block rows with at least one block, for `reset`.
+    touched_rows: Vec<u32>,
+    /// Ranks with at least one bit set, for `reset`.
+    touched_reached: Vec<u32>,
     _marker: PhantomData<(N, O)>,
 }
 
@@ -282,7 +298,38 @@ where
             block_rows: std::iter::repeat_with(BlockRow::new).take(node_count.div_ceil(B)).collect(),
             reached: std::iter::repeat_with(ReachedBits::default).take(node_count).collect(),
             node_ranks,
+            touched_rows: Vec::new(),
+            touched_reached: Vec::new(),
             _marker: PhantomData,
+        }
+    }
+
+    /// Clear what the previous alignment wrote and take the ranks of
+    /// `graph`, which may have changed since. `blocks.clear()` keeps each
+    /// row's capacity, which is the point. A row's `base` is stale after the
+    /// clear, but `grow_to` resets it on the first touch because the row is
+    /// empty. Every row the previous alignment wrote is cleared here, so no
+    /// stale score can be read under a new rank.
+    pub fn reset<G>(&mut self, graph: &G)
+    where
+        G: GraphWithNodeOrdering<NodeType = N>,
+    {
+        for &row in &self.touched_rows {
+            self.block_rows[row as usize].blocks.clear();
+        }
+        self.touched_rows.clear();
+        for &rank in &self.touched_reached {
+            self.reached[rank as usize].reset();
+        }
+        self.touched_reached.clear();
+
+        let node_count = graph.node_count();
+        self.block_rows.resize_with(node_count.div_ceil(B), BlockRow::new);
+        self.reached.resize_with(node_count, ReachedBits::default);
+        self.node_ranks.clear();
+        self.node_ranks.resize(node_count, 0);
+        for node in graph.all_nodes_iter() {
+            self.node_ranks[node.index()] = graph.node_rank(node) as u32;
         }
     }
 
@@ -300,7 +347,12 @@ where
     #[inline]
     fn cell_mut(&mut self, aln_node: &AlignmentGraphNode<N, O>) -> &mut [u32; S] {
         let rank = self.rank(aln_node);
-        self.block_rows[rank >> B.ilog2()].cell_mut(rank & (B - 1), aln_node.offset().as_usize() as u32)
+        let row_index = rank >> B.ilog2();
+        let row = &mut self.block_rows[row_index];
+        if row.blocks.is_empty() {
+            self.touched_rows.push(row_index as u32);
+        }
+        row.cell_mut(rank & (B - 1), aln_node.offset().as_usize() as u32)
     }
 
     #[inline]
@@ -322,7 +374,11 @@ where
     #[inline]
     pub fn mark_reached(&mut self, aln_node: &AlignmentGraphNode<N, O>) {
         let rank = self.rank(aln_node);
-        self.reached[rank].mark(aln_node.offset().as_usize() as u32);
+        let bits = &mut self.reached[rank];
+        if bits.words.is_empty() {
+            self.touched_reached.push(rank as u32);
+        }
+        bits.mark(aln_node.offset().as_usize() as u32);
     }
 
     #[inline]
@@ -433,6 +489,15 @@ where
         } else {
             gap_backtrace(&self.visited, &self.costs, ref_graph, seq, aln_node)
         }
+    }
+
+    fn reset<G>(&mut self, graph: &G, seq: &[u8], bubbles: Arc<BubbleIndex<N>>)
+    where
+        G: GraphWithNodeOrdering<NodeType = N>,
+    {
+        self.seq_len = seq.len();
+        self.bubble_index = bubbles;
+        self.visited.reset(graph);
     }
 }
 
@@ -772,6 +837,27 @@ mod tests {
         // Lower score: updates.
         assert!(storage.update_score_if_lower_block(&node, AlignState::Match, 4));
         assert_eq!(storage.get_score(&node, AlignState::Match), 4);
+    }
+
+    #[test]
+    fn reset_clears_touched_rows_and_bits() {
+        let g = create_test_graph1();
+        let mut storage: BlockStorage<_, O, 3> = BlockStorage::new(&g);
+        let a = AlignmentGraphNode::new(g.rank_to_node(1), 4u32);
+        let b = AlignmentGraphNode::new(g.rank_to_node(9), 300u32);
+
+        for node in [&a, &b] {
+            storage.set_score(node, AlignState::Match, 3);
+            storage.mark_reached(node);
+        }
+        storage.reset(&g);
+
+        for node in [&a, &b] {
+            assert_eq!(storage.get_score(node, AlignState::Match), INF);
+            assert!(storage.reached(node.node()).is_empty());
+            assert_eq!(storage.reached(node.node()).reached_in(0, u32::MAX).count(), 0);
+        }
+        assert!(storage.touched_rows.is_empty() && storage.touched_reached.is_empty());
     }
 
     #[test]

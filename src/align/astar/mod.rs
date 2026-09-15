@@ -226,20 +226,29 @@ impl<N: GraphNodeId, O: OffsetType> AstarCostModel<N, O> for TwoPieceAffine {
 pub struct AstarEngine<G, C = Affine, H = MinGapCostHeuristic>
 where
     G: AlignableGraph,
-    C: AlignmentCostModel,
+    C: AstarCostModel<G::Node, Offset>,
 {
     costs: C,
     mode: AlignmentMode,
     heuristic_cfg: H,
     existing_bubbles: Option<Arc<BubbleIndex<G::Node>>>,
     enable_pruning: bool,
+    /// Visited storage and queue kept across `align` calls. Per alignment
+    /// they would otherwise allocate one block window per touched rank group
+    /// and a queue layer per priority, and free it all at the end. That free
+    /// storm was 5 to 8 % of the run on inputs with many short alignments.
+    /// Reset walks only the rows the previous alignment touched, so a short
+    /// query after a long one does not pay for the long one's rows. So
+    /// `align` takes `&mut self`.
+    visited: Option<C::Visited>,
+    queue: C::Queue,
     _graph: PhantomData<G>,
 }
 
 impl<G, C> AstarEngine<G, C, MinGapCostHeuristic>
 where
     G: AlignableGraph,
-    C: AlignmentCostModel,
+    C: AstarCostModel<G::Node, Offset>,
 {
     /// Global alignment, min-gap-cost heuristic, pruning enabled.
     pub fn new(costs: C) -> Self {
@@ -249,6 +258,8 @@ where
             heuristic_cfg: MinGapCostHeuristic,
             existing_bubbles: None,
             enable_pruning: true,
+            visited: None,
+            queue: C::Queue::default(),
             _graph: PhantomData,
         }
     }
@@ -257,7 +268,7 @@ where
 impl<G, C, H> AstarEngine<G, C, H>
 where
     G: AlignableGraph,
-    C: AlignmentCostModel,
+    C: AstarCostModel<G::Node, Offset>,
 {
     pub fn with_mode(mut self, mode: AlignmentMode) -> Self {
         self.mode = mode;
@@ -271,6 +282,8 @@ where
             heuristic_cfg,
             existing_bubbles: self.existing_bubbles,
             enable_pruning: self.enable_pruning,
+            visited: self.visited,
+            queue: self.queue,
             _graph: PhantomData,
         }
     }
@@ -299,7 +312,7 @@ where
     type Success = AlignOutput<G>;
     type Error = AstarError;
 
-    fn align(&self, graph: &G, query: &[u8]) -> Result<AlignOutput<G>, Self::Error> {
+    fn align(&mut self, graph: &G, query: &[u8]) -> Result<AlignOutput<G>, Self::Error> {
         let _span = tracing::info_span!(
             "align_sequence",
             engine = "astar",
@@ -314,21 +327,29 @@ where
             .unwrap_or_else(|| Arc::new(BubbleIndex::new(graph)));
 
         let aln_graph = self.costs.aln_graph(self.mode);
-        let mut visited = self.costs.visited(graph, query, bubble_index.clone());
         let heuristic = self.heuristic_cfg.build::<C, G::Node, Offset>(
             &self.costs,
-            bubble_index,
+            bubble_index.clone(),
             query.len(),
             self.mode,
         );
-        let mut queue = C::Queue::default();
+
+        // `costs` is copied out so the closure does not borrow `self` while
+        // `self.visited` is borrowed. The first `align` resets a fresh
+        // storage, one pass over the nodes, once per engine.
+        let costs = self.costs;
+        let visited = self
+            .visited
+            .get_or_insert_with(|| costs.visited(graph, query, bubble_index.clone()));
+        visited.reset(graph, query, bubble_index);
+        self.queue.clear();
 
         let (end_score, end_node, num_visited, num_expanded) = run_astar_search(
             graph,
             query,
             &aln_graph,
-            &mut visited,
-            &mut queue,
+            visited,
+            &mut self.queue,
             heuristic.as_ref(),
             self.enable_pruning,
         )?;
@@ -336,7 +357,7 @@ where
         Ok(finish_alignment(
             graph,
             query,
-            &visited,
+            visited,
             end_score,
             end_node,
             num_visited,
@@ -378,6 +399,9 @@ where
         visited.set_score(&initial_state, AlignState::Match, 0);
     }
 
+    // ponytail: one stack allocation per alignment. The stack borrows the
+    // graph through its successor iterators, so keeping it in the engine
+    // would put a graph lifetime on the engine. Not worth it for one malloc.
     let mut dfa = DepthFirstGreedyAlignment::new(graph, query);
     let (end_score, end_node) = 'main: loop {
         let Some(item) = queue.pop_aln_state() else {
@@ -584,10 +608,10 @@ mod tests {
     /// Assert the A* engine (both heuristics) agrees with the DP oracle's
     /// score on `graph`/`query`.
     fn assert_astar_matches_oracle(graph: &POAGraph<u32>, query: &[u8]) {
-        let oracle: DpOracle<Affine, POAGraph<u32>> = DpOracle::new(costs());
+        let mut oracle: DpOracle<Affine, POAGraph<u32>> = DpOracle::new(costs());
         let expected = oracle.align(graph, query).unwrap();
 
-        let dijkstra_engine: AstarEngine<POAGraph<u32>, Affine, DijkstraHeuristic> =
+        let mut dijkstra_engine: AstarEngine<POAGraph<u32>, Affine, DijkstraHeuristic> =
             AstarEngine::new(costs()).with_heuristic(DijkstraHeuristic);
         let dijkstra_result = dijkstra_engine.align(graph, query).unwrap();
         assert_eq!(
@@ -597,7 +621,7 @@ mod tests {
             String::from_utf8_lossy(query)
         );
 
-        let mingapcost_engine: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
+        let mut mingapcost_engine: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
             AstarEngine::new(costs());
         let mingapcost_result = mingapcost_engine.align(graph, query).unwrap();
         assert_eq!(
@@ -670,11 +694,11 @@ mod tests {
     #[test]
     fn without_pruning_matches_oracle() {
         let g = bubble_graph(b"ACGAT", b"ACGT");
-        let engine: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
+        let mut engine: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
             AstarEngine::new(costs()).without_pruning();
         let result = engine.align(&g, b"AXGT").unwrap();
 
-        let oracle: DpOracle<Affine, POAGraph<u32>> = DpOracle::new(costs());
+        let mut oracle: DpOracle<Affine, POAGraph<u32>> = DpOracle::new(costs());
         let expected = oracle.align(&g, b"AXGT").unwrap();
         assert_eq!(result.score, expected.score);
     }
@@ -695,9 +719,9 @@ mod tests {
         let g = multi_branch_graph();
         let query = b"ACGTACAT";
 
-        let with_pruning: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
+        let mut with_pruning: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
             AstarEngine::new(costs());
-        let without_pruning: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
+        let mut without_pruning: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
             AstarEngine::new(costs()).without_pruning();
 
         let pruned = with_pruning.align(&g, query).unwrap();
@@ -720,7 +744,7 @@ mod tests {
     /// reported. Checked for both heuristics, since each is a separate
     /// `align` call and so a separate backtrace walk.
     fn assert_astar_backtrace_matches_score(graph: &POAGraph<u32>, query: &[u8]) {
-        let dijkstra_engine: AstarEngine<POAGraph<u32>, Affine, DijkstraHeuristic> =
+        let mut dijkstra_engine: AstarEngine<POAGraph<u32>, Affine, DijkstraHeuristic> =
             AstarEngine::new(costs()).with_heuristic(DijkstraHeuristic);
         let dijkstra_result = dijkstra_engine.align(graph, query).unwrap();
         let dijkstra_recomputed =
@@ -735,7 +759,7 @@ mod tests {
             dijkstra_result.alignment
         );
 
-        let mingapcost_engine: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
+        let mut mingapcost_engine: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
             AstarEngine::new(costs());
         let mingapcost_result = mingapcost_engine.align(graph, query).unwrap();
         let mingapcost_recomputed =
@@ -813,6 +837,40 @@ mod tests {
         }
     }
 
+    /// One engine reused across queries and graphs must give the same score
+    /// and do the same work as a fresh engine per query. A reset that leaves
+    /// a stale cell or reached bit shows up as a different score or count.
+    #[test]
+    fn engine_reuse_gives_same_scores() {
+        let multi = multi_branch_graph();
+        let small = linear_graph(b"ACGTTGCA");
+        let mut reused: AstarEngine<POAGraph<u32>, Affine> = AstarEngine::new(costs());
+
+        let cases = [
+            (&multi, b"ACGTACGT".as_slice()),
+            (&multi, b"ACGAACGT".as_slice()),
+            (&multi, b"ACGTCCGT".as_slice()),
+            (&multi, b"AGGTACAT".as_slice()),
+            (&multi, b"ACGTACAT".as_slice()),
+            (&multi, b"CCGTACGT".as_slice()),
+            // A long query, then a short one, then a different graph.
+            (&multi, b"ACGTTACGTAACGTTTACGTACGGT".as_slice()),
+            (&multi, b"AC".as_slice()),
+            (&small, b"ACGATGCA".as_slice()),
+            (&multi, b"ACGTACAT".as_slice()),
+        ];
+        for (graph, query) in cases {
+            let fresh = AstarEngine::<POAGraph<u32>, Affine>::new(costs()).align(graph, query).unwrap();
+            let again = reused.align(graph, query).unwrap();
+            assert_eq!(
+                (again.score, again.stats.cells_computed),
+                (fresh.score, fresh.stats.cells_computed),
+                "reused engine differs for query {:?}",
+                String::from_utf8_lossy(query)
+            );
+        }
+    }
+
     #[test]
     fn no_alignment_found_on_disconnected_graph_returns_err() {
         // A graph with an unreachable component (no path from start to end
@@ -831,11 +889,11 @@ mod tests {
         query: &[u8],
         costs: crate::align::cost_models::linear::Linear,
     ) {
-        let oracle: DpOracle<crate::align::cost_models::linear::Linear, POAGraph<u32>> =
+        let mut oracle: DpOracle<crate::align::cost_models::linear::Linear, POAGraph<u32>> =
             DpOracle::new(costs);
         let expected = oracle.align(graph, query).unwrap();
 
-        let dijkstra_engine: AstarEngine<
+        let mut dijkstra_engine: AstarEngine<
             POAGraph<u32>,
             crate::align::cost_models::linear::Linear,
             DijkstraHeuristic,
@@ -846,7 +904,7 @@ mod tests {
             "Dijkstra A* (linear) score mismatch"
         );
 
-        let mingapcost_engine: AstarEngine<
+        let mut mingapcost_engine: AstarEngine<
             POAGraph<u32>,
             crate::align::cost_models::linear::Linear,
             MinGapCostHeuristic,
@@ -894,8 +952,8 @@ mod tests {
             b"ACGTTACGTA".as_slice(),
             b"AGGT".as_slice(),
         ] {
-            let pruned: AstarEngine<POAGraph<u32>, Linear> = AstarEngine::new(costs);
-            let unpruned: AstarEngine<POAGraph<u32>, Linear> = AstarEngine::new(costs).without_pruning();
+            let mut pruned: AstarEngine<POAGraph<u32>, Linear> = AstarEngine::new(costs);
+            let mut unpruned: AstarEngine<POAGraph<u32>, Linear> = AstarEngine::new(costs).without_pruning();
             let p = pruned.align(&g, query).unwrap();
             let u = unpruned.align(&g, query).unwrap();
             assert_eq!(p.score, u.score, "pruning changed the linear score");
@@ -912,13 +970,13 @@ mod tests {
         query: &[u8],
         costs: crate::align::cost_models::two_piece::TwoPieceAffine,
     ) {
-        let oracle: DpOracle<
+        let mut oracle: DpOracle<
             crate::align::cost_models::two_piece::TwoPieceAffine,
             POAGraph<u32>,
         > = DpOracle::new(costs);
         let expected = oracle.align(graph, query).unwrap();
 
-        let dijkstra_engine: AstarEngine<POAGraph<u32>, TwoPieceAffine, DijkstraHeuristic> =
+        let mut dijkstra_engine: AstarEngine<POAGraph<u32>, TwoPieceAffine, DijkstraHeuristic> =
             AstarEngine::new(costs).with_heuristic(DijkstraHeuristic);
         let dijkstra_result = dijkstra_engine.align(graph, query).unwrap();
         assert_eq!(
@@ -926,7 +984,7 @@ mod tests {
             "Dijkstra A* (two-piece) score mismatch"
         );
 
-        let mingapcost_engine: AstarEngine<POAGraph<u32>, TwoPieceAffine, MinGapCostHeuristic> =
+        let mut mingapcost_engine: AstarEngine<POAGraph<u32>, TwoPieceAffine, MinGapCostHeuristic> =
             AstarEngine::new(costs);
         let mingapcost_result = mingapcost_engine.align(graph, query).unwrap();
         assert_eq!(
@@ -1000,7 +1058,7 @@ mod tests {
             not_free(),
             not_free(),
         );
-        let engine: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
+        let mut engine: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
             AstarEngine::new(costs()).with_mode(mode);
         let result = engine.align(&g, b"ACGTXXXX").unwrap();
         assert_eq!(
@@ -1020,7 +1078,7 @@ mod tests {
             not_free(),
             not_free(),
         );
-        let engine: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
+        let mut engine: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
             AstarEngine::new(costs()).with_mode(mode);
         let result = engine.align(&g, b"XXXXACGT").unwrap();
         assert_eq!(
@@ -1040,7 +1098,7 @@ mod tests {
             not_free(),
             std::ops::Bound::Unbounded,
         );
-        let engine: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
+        let mut engine: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
             AstarEngine::new(costs()).with_mode(mode);
         let result = engine.align(&g, b"ACGT").unwrap();
         assert_eq!(
@@ -1060,7 +1118,7 @@ mod tests {
             std::ops::Bound::Unbounded,
             not_free(),
         );
-        let engine: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
+        let mut engine: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
             AstarEngine::new(costs()).with_mode(mode);
         let result = engine.align(&g, b"ACGT").unwrap();
         assert_eq!(
@@ -1079,11 +1137,11 @@ mod tests {
             not_free(),
         );
 
-        let dijkstra: AstarEngine<POAGraph<u32>, Affine, DijkstraHeuristic> =
+        let mut dijkstra: AstarEngine<POAGraph<u32>, Affine, DijkstraHeuristic> =
             AstarEngine::new(costs())
                 .with_mode(mode)
                 .with_heuristic(DijkstraHeuristic);
-        let mingapcost: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
+        let mut mingapcost: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
             AstarEngine::new(costs()).with_mode(mode);
 
         let query = b"XXACGTAC";
@@ -1103,7 +1161,7 @@ mod tests {
             not_free(),
             not_free(),
         );
-        let engine: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
+        let mut engine: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
             AstarEngine::new(costs()).with_mode(mode);
         let result = engine.align(&g, b"AXGTXXXX").unwrap();
         assert_eq!(
@@ -1122,7 +1180,7 @@ mod tests {
             not_free(),
         );
         let costs = crate::align::cost_models::two_piece::TwoPieceAffine::new(1, 2, 2, 6, 1);
-        let engine: AstarEngine<POAGraph<u32>, TwoPieceAffine, MinGapCostHeuristic> =
+        let mut engine: AstarEngine<POAGraph<u32>, TwoPieceAffine, MinGapCostHeuristic> =
             AstarEngine::new(costs).with_mode(mode);
         let result = engine.align(&g, b"ACGTXXXX").unwrap();
         assert_eq!(
@@ -1151,7 +1209,7 @@ mod tests {
             std::ops::Bound::Unbounded,
             std::ops::Bound::Unbounded,
         );
-        let engine: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
+        let mut engine: AstarEngine<POAGraph<u32>, Affine, MinGapCostHeuristic> =
             AstarEngine::new(costs()).with_mode(mode);
         let result = engine.align(&g, seq).unwrap();
 

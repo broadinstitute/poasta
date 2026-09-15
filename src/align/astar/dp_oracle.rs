@@ -37,7 +37,7 @@ where
     type Success = AlignOutput<G>;
     type Error = Infallible;
 
-    fn align(&self, graph: &G, query: &[u8]) -> Result<AlignOutput<G>, Infallible> {
+    fn align(&mut self, graph: &G, query: &[u8]) -> Result<AlignOutput<G>, Infallible> {
         let costs = &self.0;
         let m = query.len();
         let w = m + 1;

@@ -120,9 +120,9 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
     let (total_tested, total_incorrect) = match args.cost_model {
         CostModelKind::Affine => {
             let costs = Affine::new(args.cost_mismatch, args.cost_gap_open, args.cost_gap_extend);
-            let engine = AstarEngine::<POAGraph<u32>, Affine>::new(costs);
+            let mut engine = AstarEngine::<POAGraph<u32>, Affine>::new(costs);
             run_comparison(
-                &engine,
+                &mut engine,
                 &poasta_graph,
                 &mut records,
                 &mut spoa_engine,
@@ -132,9 +132,9 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
         }
         CostModelKind::Linear => {
             let costs = Linear::new(args.cost_mismatch, args.cost_gap_extend);
-            let engine = AstarEngine::<POAGraph<u32>, Linear>::new(costs);
+            let mut engine = AstarEngine::<POAGraph<u32>, Linear>::new(costs);
             run_comparison(
-                &engine,
+                &mut engine,
                 &poasta_graph,
                 &mut records,
                 &mut spoa_engine,
@@ -150,9 +150,9 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
                 args.cost_gap_open2,
                 args.cost_gap_extend2,
             );
-            let engine = AstarEngine::<POAGraph<u32>, TwoPieceAffine>::new(costs);
+            let mut engine = AstarEngine::<POAGraph<u32>, TwoPieceAffine>::new(costs);
             run_comparison(
-                &engine,
+                &mut engine,
                 &poasta_graph,
                 &mut records,
                 &mut spoa_engine,
@@ -169,7 +169,7 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
 }
 
 fn run_comparison<E>(
-    engine: &E,
+    engine: &mut E,
     poasta_graph: &POAGraph<u32>,
     records: &mut impl Iterator<Item = std::io::Result<fasta::Record>>,
     spoa_engine: &mut spoa_rs::AlignmentEngine,

@@ -18,6 +18,7 @@ pub trait QueueLayer: Default + Clone {
     fn queue(&mut self, item: Self::QueueItem);
     fn pop(&mut self) -> Option<Self::QueueItem>;
     fn is_empty(&self) -> bool;
+    fn clear(&mut self);
 }
 
 /// Layered (bucket) queue of items, keyed by priority `f = g + h`.
@@ -27,6 +28,11 @@ pub trait QueueLayer: Default + Clone {
 pub struct LayeredQueue<L> {
     layers: VecDeque<L>,
     layer_min: usize,
+    /// Layers popped from the front go here instead of being dropped, and new
+    /// layers come from here. The priority range shifts through the whole
+    /// alignment, so without this each priority allocates and frees `S`
+    /// vectors.
+    spare: Vec<L>,
 }
 
 impl<L> LayeredQueue<L>
@@ -37,9 +43,14 @@ where
         Self::default()
     }
 
+    fn fresh_layer(&mut self) -> L {
+        self.spare.pop().unwrap_or_default()
+    }
+
     pub fn queue(&mut self, item: L::QueueItem, priority: usize) {
         if self.layers.is_empty() {
-            self.layers.push_back(L::default());
+            let layer = self.fresh_layer();
+            self.layers.push_back(layer);
             self.layer_min = priority;
         } else {
             let layer_max = self.layer_min + self.layers.len();
@@ -49,12 +60,16 @@ where
                 self.layers.reserve(diff);
 
                 for _ in 0..diff {
-                    self.layers.push_front(L::default())
+                    let layer = self.fresh_layer();
+                    self.layers.push_front(layer);
                 }
 
                 self.layer_min = priority;
             } else if priority >= layer_max {
-                self.layers.resize(priority - self.layer_min + 1, L::default());
+                for _ in layer_max..=priority {
+                    let layer = self.fresh_layer();
+                    self.layers.push_back(layer);
+                }
             }
         }
 
@@ -65,16 +80,26 @@ where
     pub fn pop(&mut self) -> Option<L::QueueItem> {
         let popped_item = self.layers.front_mut()?.pop();
 
-        while !self.layers.is_empty() {
-            if self.layers[0].is_empty() {
-                self.layers.pop_front();
-                self.layer_min += 1;
-            } else {
+        while let Some(front) = self.layers.front() {
+            if !front.is_empty() {
                 break;
             }
+            let mut layer = self.layers.pop_front().unwrap();
+            layer.clear();
+            self.spare.push(layer);
+            self.layer_min += 1;
         }
 
         popped_item
+    }
+
+    /// Empty the queue, keeping every layer's allocation in `spare`.
+    pub fn clear(&mut self) {
+        for mut layer in self.layers.drain(..) {
+            layer.clear();
+            self.spare.push(layer);
+        }
+        self.layer_min = 0;
     }
 }
 
@@ -86,6 +111,7 @@ where
         Self {
             layers: VecDeque::with_capacity(64),
             layer_min: 0,
+            spare: Vec::new(),
         }
     }
 }
@@ -126,6 +152,7 @@ where
 {
     fn pop_aln_state(&mut self) -> Option<AstarQueuedItem<N, O>>;
     fn queue_aln_state(&mut self, node: AlignmentGraphNode<N, O>, aln_state: AlignState, score: u32, h: usize);
+    fn clear(&mut self);
 }
 
 impl<N, O, L> AstarQueue<N, O> for LayeredQueue<L>
@@ -149,6 +176,10 @@ where
             priority,
         );
         self.queue(AstarQueuedItem(score, node, aln_state), priority)
+    }
+
+    fn clear(&mut self) {
+        LayeredQueue::clear(self)
     }
 }
 
@@ -215,6 +246,17 @@ where
     fn is_empty(&self) -> bool {
         self.states.iter().all(Vec::is_empty)
     }
+
+    // ponytail: a recycled layer is capped at 64 entries per state. Without
+    // the cap every spare layer kept the largest capacity any layer had
+    // reached, and rpoB set3 peaked at 654 MB instead of 470 MB. A layer that
+    // outgrows the cap pays one reallocation when it is recycled.
+    fn clear(&mut self) {
+        for state in &mut self.states {
+            state.clear();
+            state.shrink_to(64);
+        }
+    }
 }
 
 pub type LinearLayeredQueue<N, O> = LayeredQueue<StateQueueLayer<N, O, 1>>;
@@ -238,6 +280,10 @@ mod tests {
 
         fn is_empty(&self) -> bool {
             <[usize]>::is_empty(self)
+        }
+
+        fn clear(&mut self) {
+            Vec::clear(self)
         }
     }
 
@@ -286,6 +332,31 @@ mod tests {
         }
 
         assert_eq!(popped, vec![0, 2, 1, 42, 100]);
+    }
+
+    #[test]
+    fn spare_layers_are_reused() {
+        let mut queue: LayeredQueue<Vec<usize>> = LayeredQueue::new();
+
+        for p in [5, 6, 7] {
+            queue.queue(p, p);
+        }
+        while queue.pop().is_some() {}
+        assert_eq!(queue.spare.len(), 3);
+
+        queue.queue(10, 10);
+        queue.queue(11, 11);
+        assert_eq!(queue.spare.len(), 1);
+        let popped: Vec<_> = std::iter::from_fn(|| queue.pop()).collect();
+        assert_eq!(popped, vec![10, 11]);
+
+        for p in [1, 2, 3] {
+            queue.queue(p, p);
+        }
+        queue.clear();
+        assert!(queue.layers.is_empty());
+        assert_eq!(queue.spare.len(), 3);
+        assert_eq!(queue.pop(), None);
     }
 
     #[test]
