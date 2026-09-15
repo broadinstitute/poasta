@@ -278,10 +278,10 @@ where
     let max_qry_free = resolve_bound(qry_free_end, seq.len());
     let max_graph_hops = resolve_bound(graph_free_end, ref_graph.node_count());
 
-    let qry_ok = node.offset().as_usize() >= seq.len().saturating_sub(max_qry_free);
-    let graph_ok = free_suffix_nodes(ref_graph, max_graph_hops).contains(&node.node());
-
-    qry_ok && graph_ok
+    // Check the query bound first: it is a comparison, while the graph bound
+    // rebuilds the suffix set on every call (see `free_suffix_nodes`).
+    node.offset().as_usize() >= seq.len().saturating_sub(max_qry_free)
+        && free_suffix_nodes(ref_graph, max_graph_hops).contains(&node.node())
 }
 
 // ─── Linear: one state ───────────────────────────────────────────────────────

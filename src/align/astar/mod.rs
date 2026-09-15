@@ -323,7 +323,7 @@ where
         );
         let mut queue = C::Queue::default();
 
-        let (end_score, end_node, num_visited) = run_astar_search(
+        let (end_score, end_node, num_visited, num_expanded) = run_astar_search(
             graph,
             query,
             &aln_graph,
@@ -340,6 +340,7 @@ where
             end_score,
             end_node,
             num_visited,
+            num_expanded,
             C::STATES,
         ))
     }
@@ -360,7 +361,7 @@ fn run_astar_search<G, AG, V, Q>(
     queue: &mut Q,
     heuristic: &dyn AstarHeuristic<G::Node, Offset>,
     enable_pruning: bool,
-) -> Result<(u32, AlignmentGraphNode<G::Node, Offset>, usize), AstarError>
+) -> Result<(u32, AlignmentGraphNode<G::Node, Offset>, usize, usize), AstarError>
 where
     G: AlignableGraph,
     AG: AlignmentGraph,
@@ -369,6 +370,7 @@ where
 {
     type O = Offset;
     let mut num_visited = 0usize;
+    let mut num_expanded = 0usize;
 
     for initial_state in aln_graph.initial_states::<G, O>(graph, query) {
         let h = heuristic.h(&initial_state, AlignState::Match);
@@ -401,6 +403,7 @@ where
         visited.mark_reached(score, &aln_node, aln_state);
         trace_visited(score, &aln_node, aln_state);
         num_visited += 1;
+        num_expanded += 1;
 
         if aln_state == AlignState::Match {
             let mut dfa = DepthFirstGreedyAlignment::new(graph, query, score, &aln_node);
@@ -474,7 +477,7 @@ where
         }
     };
 
-    Ok((end_score, end_node, num_visited))
+    Ok((end_score, end_node, num_visited, num_expanded))
 }
 
 /// Emit the `set_visited` trace event consumed by `debug::subscriber`.
@@ -499,6 +502,7 @@ fn finish_alignment<G, V>(
     end_score: u32,
     end_node: AlignmentGraphNode<G::Node, Offset>,
     num_visited: usize,
+    num_expanded: usize,
     n_states: usize,
 ) -> AlignOutput<G>
 where
@@ -528,6 +532,7 @@ where
         alignment,
         stats: AlignmentStats {
             cells_computed: num_visited,
+            states_expanded: num_expanded,
             fraction_of_full_matrix,
         },
     }

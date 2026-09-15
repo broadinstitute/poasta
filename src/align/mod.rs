@@ -142,6 +142,7 @@ where
 pub struct RunStats {
     pub n_alignments: usize,
     pub sum_cells_computed: u128,
+    pub sum_states_expanded: u128,
     pub sum_fraction: f64,
 }
 
@@ -149,6 +150,7 @@ impl RunStats {
     fn record(&mut self, stats: &AlignmentStats) {
         self.n_alignments += 1;
         self.sum_cells_computed += stats.cells_computed as u128;
+        self.sum_states_expanded += stats.states_expanded as u128;
         self.sum_fraction += stats.fraction_of_full_matrix;
     }
 
@@ -157,6 +159,14 @@ impl RunStats {
             0.0
         } else {
             self.sum_cells_computed as f64 / self.n_alignments as f64
+        }
+    }
+
+    pub fn avg_states_expanded(&self) -> f64 {
+        if self.n_alignments == 0 {
+            0.0
+        } else {
+            self.sum_states_expanded as f64 / self.n_alignments as f64
         }
     }
 

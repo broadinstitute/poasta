@@ -262,6 +262,7 @@ where
     tracing::info!(
         n_alignments = run_stats.n_alignments,
         avg_cells_computed = run_stats.avg_cells_computed(),
+        avg_states_expanded = run_stats.avg_states_expanded(),
         avg_fraction_of_full_matrix = run_stats.avg_fraction(),
         "run alignment stats (averaged across sequences)",
     );

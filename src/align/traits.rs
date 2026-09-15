@@ -27,13 +27,16 @@ pub trait AlignableGraph: GraphWithNodeOrdering<NodeType = Self::Node> {
 
 /// Per-alignment counters emitted by the alignment engine.
 ///
-/// `cells_computed` counts every alignment state the search expanded.
-/// `fraction_of_full_matrix` divides that by the size of the full dynamic
+/// `cells_computed` counts every alignment state the search settled, both
+/// states popped from the queue and states reached by free match extension.
+/// `states_expanded` counts only the popped states, so the difference is the
+/// number of states the greedy extension covered. `fraction_of_full_matrix` divides that by the size of the full dynamic
 /// programming matrix, `(m + 1) * real_nodes * states`, so `1.0` means the
 /// search did as much work as a full-matrix DP would have.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AlignmentStats {
     pub cells_computed: usize,
+    pub states_expanded: usize,
     pub fraction_of_full_matrix: f64,
 }
 

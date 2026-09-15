@@ -127,7 +127,8 @@ where
             score,
             alignment: vec![],
             stats: AlignmentStats {
-                    cells_computed: n * w * 5,
+                cells_computed: n * w * 5,
+                states_expanded: n * w * 5,
                 fraction_of_full_matrix: 1.0,
             },
         })
