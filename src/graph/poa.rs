@@ -205,23 +205,23 @@ where
         s: POANodeIndex<Ix>,
         t: POANodeIndex<Ix>,
         sequence_id: usize,
-        weight: usize,
+        weight: u32,
     ) {
         // If edge exists, update sequence ID and weight of the existing one
         if let Some(e) = self.graph.find_edge(s, t) {
             let edge_data = self.graph.edge_weight_mut(e).unwrap();
             edge_data.sequence_ids.push(sequence_id);
-            edge_data.weight += weight;
+            edge_data.weight += weight as usize;
         } else {
             self.graph
-                .add_edge(s, t, POAEdgeData::new_with_seq_id(sequence_id, weight));
+                .add_edge(s, t, POAEdgeData::new_with_seq_id(sequence_id, weight as usize));
         }
     }
 
     pub fn add_nodes_for_sequence(
         &mut self,
         sequence: &[u8],
-        weights: &[usize],
+        weights: &[u32],
         start: usize,
         end: usize,
     ) -> Option<(POANodeIndex<Ix>, POANodeIndex<Ix>)> {
@@ -526,7 +526,7 @@ where
         sequence_name: &str,
         sequence: &[u8],
         alignment_opt: Option<&AlignOutput<POAGraph<Ix>>>,
-        weights: &[usize],
+        weights: &[u32],
     ) -> Result<(), PoastaError<Ix>> {
         if sequence.len() != weights.len() {
             return Err(PoastaError::WeightsUnequalSize(

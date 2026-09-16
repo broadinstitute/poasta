@@ -491,7 +491,7 @@ where
             Ok(gfa_line) => match gfa_line {
                 GfaLine::Segment(segment) => {
                     if let Some(seq) = segment.sequence {
-                        let weights = vec![1usize; seq.len()];
+                        let weights = vec![1u32; seq.len()];
                         let (start, end) = graph
                             .add_nodes_for_sequence(seq.as_bytes(), &weights, 0, seq.len())
                             .ok_or(PoastaIOError::InvalidFormat)?;

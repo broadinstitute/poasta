@@ -9,6 +9,6 @@ pub trait AddAlignment<T> {
         sequence_name: &str,
         sequence: &[u8],
         alignment: Option<&T>,
-        weights: &[usize],
+        weights: &[u32],
     ) -> Result<(), Self::Error>;
 }

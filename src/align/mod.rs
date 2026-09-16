@@ -227,7 +227,7 @@ where
     {
         for (i, seq) in sequences.into_iter().enumerate() {
             let name = format!("seq_{i}");
-            let weights = vec![1usize; seq.len()];
+            let weights = vec![1u32; seq.len()];
             self.align_one(&name, seq, &weights)?;
         }
         Ok(())
@@ -245,7 +245,7 @@ where
         <E as AlignmentEngine<&'s [u8]>>::Success: AlignResult,
     {
         for (name, seq) in sequences {
-            let weights = vec![1usize; seq.len()];
+            let weights = vec![1u32; seq.len()];
             self.align_one(name, seq, &weights)?;
         }
         Ok(())
@@ -258,7 +258,7 @@ where
         sequences: I,
     ) -> Result<(), PoastaAlignerError<<E as AlignmentEngine<&'s [u8]>>::Error, G::Error>>
     where
-        I: IntoIterator<Item = (&'s str, &'s [u8], &'s [usize])>,
+        I: IntoIterator<Item = (&'s str, &'s [u8], &'s [u32])>,
         E: AlignmentEngine<&'s [u8], Graph = G>,
         G: AddAlignment<<E as AlignmentEngine<&'s [u8]>>::Success>,
         <E as AlignmentEngine<&'s [u8]>>::Success: AlignResult,
@@ -280,15 +280,17 @@ where
         G: AddAlignment<<E as AlignmentEngine<&'s [u8]>>::Success>,
         <E as AlignmentEngine<&'s [u8]>>::Success: AlignResult,
     {
-        let weights = vec![1usize; seq.len()];
+        let weights = vec![1u32; seq.len()];
         self.align_one(name, seq, &weights)
     }
 
-    fn align_one<'s>(
+    /// Align one named sequence, weighting each base by `weights`.
+    /// `weights.len()` must equal `seq.len()`.
+    pub fn align_one<'s>(
         &mut self,
         name: &str,
         seq: &'s [u8],
-        weights: &[usize],
+        weights: &[u32],
     ) -> Result<(), PoastaAlignerError<<E as AlignmentEngine<&'s [u8]>>::Error, G::Error>>
     where
         E: AlignmentEngine<&'s [u8], Graph = G>,
@@ -356,10 +358,10 @@ mod tests {
 
         let s0: &[u8] = b"ACGT";
         let s1: &[u8] = b"ACCT";
-        let w0 = vec![2usize; s0.len()];
-        let w1 = vec![3usize; s1.len()];
+        let w0 = vec![2u32; s0.len()];
+        let w1 = vec![3u32; s1.len()];
 
-        let inputs: Vec<(&str, &[u8], &[usize])> = vec![("first", s0, &w0), ("second", s1, &w1)];
+        let inputs: Vec<(&str, &[u8], &[u32])> = vec![("first", s0, &w0), ("second", s1, &w1)];
 
         aligner
             .align_all_with_weights(inputs)

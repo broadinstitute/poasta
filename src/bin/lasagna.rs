@@ -344,7 +344,7 @@ fn stash_error(slot: &Arc<Mutex<Option<CliError>>>, e: CliError) {
 
 fn read_sequences(path: &Path, tx: Sender<SequenceRecord>) -> Result<(), CliError> {
     for record in open_sequences(path)? {
-        let (name, seq) = record?;
+        let (name, seq, _weights) = record?;
         if tx.send((name, seq)).is_err() {
             // Aligners have all hung up. Stop reading.
             return Ok(());

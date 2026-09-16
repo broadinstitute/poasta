@@ -138,11 +138,7 @@ fn run_align(args: AlignArgs) -> Result<(), CliError> {
         None => POAGraph::<u32>::new(),
     };
 
-    let sequences: Vec<(String, Vec<u8>)> =
-        open_sequences(&args.sequences)?.collect::<Result<Vec<_>, _>>()?;
-    tracing::info!(count = sequences.len(), "read input sequences");
-
-    let graph = dispatch(&args, graph, &sequences)?;
+    let graph = dispatch(&args, graph, open_sequences(&args.sequences)?)?;
 
     write_output(&args, &graph)?;
 
@@ -184,10 +180,14 @@ fn alignment_mode(args: &AlignArgs) -> AlignmentMode {
     }
 }
 
+/// Streaming source of input records. Sequences are aligned one at a time so a
+/// large input never sits in memory all at once.
+type SeqIter = Box<dyn Iterator<Item = Result<(String, Vec<u8>, Vec<u32>), PoastaIOError>>>;
+
 fn dispatch(
     args: &AlignArgs,
     graph: POAGraph<u32>,
-    sequences: &[(String, Vec<u8>)],
+    sequences: SeqIter,
 ) -> Result<POAGraph<u32>, CliError> {
     let mode = alignment_mode(args);
 
@@ -218,7 +218,7 @@ fn run_astar<C>(
     mode: AlignmentMode,
     args: &AlignArgs,
     graph: POAGraph<u32>,
-    sequences: &[(String, Vec<u8>)],
+    sequences: SeqIter,
 ) -> Result<POAGraph<u32>, CliError>
 where
     C: AstarCostModel<POANodeIndex<u32>, Offset>,
@@ -236,7 +236,7 @@ fn run_with<E>(
     engine: E,
     args: &AlignArgs,
     graph: POAGraph<u32>,
-    sequences: &[(String, Vec<u8>)],
+    sequences: SeqIter,
 ) -> Result<POAGraph<u32>, CliError>
 where
     E: for<'s> AlignmentEngine<
@@ -248,13 +248,15 @@ where
 {
     let mut aligner = PoastaAligner::new(engine, graph);
 
-    for (name, seq) in sequences {
+    for record in sequences {
+        let (name, seq, weights) = record?;
+
         if let Some(dir) = &args.debug_output_dir {
-            write_graph_dot(dir, name, aligner.graph(), seq)?;
+            write_graph_dot(dir, &name, aligner.graph(), &seq)?;
         }
 
         aligner
-            .align_one_named(name, seq)
+            .align_one(&name, &seq, &weights)
             .map_err(|e| CliError::Align(format!("{e}")))?;
     }
 
