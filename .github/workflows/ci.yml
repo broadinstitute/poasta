@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main, stable]
+  pull_request:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    if: github.event_name != 'schedule'
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Release, because the differential test runs 40 cases there and 8 in debug.
+      - run: cargo test --release --locked
+      - run: cargo build --locked --features disable_tracing
+      - run: cargo check --locked --all-targets --features viz
+
+  lint:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      # `bench` is left out: it builds spoa from C++ source.
+      - run: cargo clippy --locked --all-targets --features viz -- -D warnings
+      - run: cargo doc --locked --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # The PR test always uses the same seed. This job tries new random graphs
+  # every night. A failure prints the seed to reproduce it locally.
+  differential:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Differential test on 20000 random cases
+        run: |
+          export POASTA_DIFF_SEED=$(date +%s)
+          echo "POASTA_DIFF_SEED=$POASTA_DIFF_SEED"
+          POASTA_DIFF_CASES=20000 cargo test --release --locked differential

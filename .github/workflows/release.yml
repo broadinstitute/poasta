@@ -1,0 +1,151 @@
+name: Release
+
+# Push a tag `v<version>` that matches Cargo.toml and has a CHANGELOG.md
+# entry. Binaries are built first, then the crate is published (after
+# approval in the `release` environment), then the GitHub release is made.
+# The GitHub release comes last because bioconda's bot watches for it.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Tag matches Cargo.toml version
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+      - name: Release notes from CHANGELOG.md
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          awk -v v="[$version]" '/^## /{p = index($0, v)} p' CHANGELOG.md | tail -n +2 > notes.md
+          if [ ! -s notes.md ]; then
+            echo "CHANGELOG.md has no section for $version"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: notes.md
+
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: [check, ci]
+    strategy:
+      matrix:
+        include:
+          # Linux binaries link against glibc 2.17 so they run on old HPC systems.
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            glibc: "2.17"
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            glibc: "2.17"
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          # Cross-compiled on the arm64 runner, so it is not smoke-tested.
+          - target: x86_64-apple-darwin
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    env:
+      # Cargo.toml keeps debug info in release builds for profiling.
+      CARGO_PROFILE_RELEASE_DEBUG: "false"
+      CARGO_PROFILE_RELEASE_STRIP: "true"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - if: matrix.glibc
+        uses: mlugg/setup-zig@v2
+        with:
+          use-cache: false
+      - if: matrix.glibc
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+      - name: Build
+        run: |
+          if [ -n "${{ matrix.glibc }}" ]; then
+            cargo zigbuild --release --locked --target ${{ matrix.target }}.${{ matrix.glibc }}
+          else
+            cargo build --release --locked --target ${{ matrix.target }}
+          fi
+      - name: Smoke test
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: |
+          bin=target/${{ matrix.target }}/release
+          $bin/poasta --version | grep -F "${GITHUB_REF_NAME#v}"
+          $bin/lasagna --version
+      - name: Package
+        run: |
+          name=poasta-$GITHUB_REF_NAME-${{ matrix.target }}
+          mkdir $name
+          cp target/${{ matrix.target }}/release/{poasta,lasagna} LICENSE README.md $name/
+          tar czf $name.tar.gz $name
+          shasum -a 256 $name.tar.gz > $name.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: poasta-${{ matrix.target }}
+          path: poasta-*.tar.gz*
+
+  publish-crate:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+      - run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+  github-release:
+    needs: publish-crate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: poasta-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then prerelease=--prerelease; fi
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md \
+            $prerelease
