@@ -8,6 +8,7 @@ use crate::cli::{AlignmentSpan, CostModelKind, LogLevel, SearchArgs};
 
 #[derive(Parser, Debug)]
 #[command(
+    name = "lasagna",
     author,
     version,
     about = "Align reads (FASTA/FASTQ) to an existing GFA partial-order graph, emit GAF."

@@ -3,6 +3,8 @@ name = "poasta"
 version = "0.2.0-alpha.1"
 authors = ["Lucas van Dijk"]
 description = "Fast genome-scale partial order aligner"
+license = "BSD-3-Clause"
+repository = "https://github.com/broadinstitute/poasta"
 documentation = "https://github.com/broadinstitute/poasta"
 edition = "2024"
 
