@@ -5,9 +5,9 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use super::{AstarHeuristic, HeuristicConfig};
-use crate::align::astar::aln_graph::{resolve_bound, AlignmentGraphNode};
-use crate::align::cost_models::affine::Affine;
+use crate::align::astar::aln_graph::{AlignmentGraphNode, resolve_bound};
 use crate::align::cost_models::AlignmentCostModel;
+use crate::align::cost_models::affine::Affine;
 use crate::align::offsets::OffsetType;
 use crate::align::traits::AlignableGraph;
 use crate::align::{AlignState, AlignmentMode};
@@ -57,7 +57,12 @@ where
         Self::new_with_mode(costs, bubble_index, seq_length, AlignmentMode::Global)
     }
 
-    pub fn new_with_mode(costs: C, bubble_index: Arc<BubbleIndex<N>>, seq_length: usize, mode: AlignmentMode) -> Self {
+    pub fn new_with_mode(
+        costs: C,
+        bubble_index: Arc<BubbleIndex<N>>,
+        seq_length: usize,
+        mode: AlignmentMode,
+    ) -> Self {
         Self {
             costs,
             bubble_index: Some(bubble_index),
@@ -69,7 +74,13 @@ where
 
     /// For the engine, which calls `prepare` before each alignment.
     pub fn unprepared(costs: C) -> Self {
-        Self { costs, bubble_index: None, seq_length: 0, mode: AlignmentMode::Global, _marker: PhantomData }
+        Self {
+            costs,
+            bubble_index: None,
+            seq_length: 0,
+            mode: AlignmentMode::Global,
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -79,8 +90,13 @@ where
     O: OffsetType,
     C: AlignmentCostModel,
 {
-    fn prepare<G>(&mut self, _graph: &G, query: &[u8], bubbles: &Arc<BubbleIndex<N>>, mode: AlignmentMode)
-    where
+    fn prepare<G>(
+        &mut self,
+        _graph: &G,
+        query: &[u8],
+        bubbles: &Arc<BubbleIndex<N>>,
+        mode: AlignmentMode,
+    ) where
         G: AlignableGraph<Node = N>,
     {
         self.bubble_index = Some(bubbles.clone());
@@ -88,7 +104,12 @@ where
         self.mode = mode;
     }
 
-    fn h<G>(&mut self, _graph: &G, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> usize
+    fn h<G>(
+        &mut self,
+        _graph: &G,
+        aln_node: &AlignmentGraphNode<N, O>,
+        aln_state: AlignState,
+    ) -> usize
     where
         G: AlignableGraph<Node = N>,
     {
@@ -105,15 +126,23 @@ where
     /// `h` without the `&mut`, for heuristics that combine with it.
     pub fn bound(&self, aln_node: &AlignmentGraphNode<N, O>, mut aln_state: AlignState) -> usize {
         let bubbles = self.bubble_index.as_deref().expect("prepare runs before h");
-        let min_dist_to_exit = bubbles.get_min_dist_to_end(aln_node.node()).saturating_sub(1);
-        let max_dist_to_exit = bubbles.get_max_dist_to_end(aln_node.node()).saturating_sub(1);
+        let min_dist_to_exit = bubbles
+            .get_min_dist_to_end(aln_node.node())
+            .saturating_sub(1);
+        let max_dist_to_exit = bubbles
+            .get_max_dist_to_end(aln_node.node())
+            .saturating_sub(1);
 
         let target_offset_min = aln_node.offset().as_usize() + min_dist_to_exit;
         let target_offset_max = aln_node.offset().as_usize() + max_dist_to_exit;
 
         let (qry_free_end, graph_free_end) = match self.mode {
             AlignmentMode::Global => (std::ops::Bound::Excluded(0), std::ops::Bound::Excluded(0)),
-            AlignmentMode::EndsFree { qry_free_end, graph_free_end, .. } => (qry_free_end, graph_free_end),
+            AlignmentMode::EndsFree {
+                qry_free_end,
+                graph_free_end,
+                ..
+            } => (qry_free_end, graph_free_end),
         };
 
         let min_gap_length;
@@ -162,7 +191,8 @@ where
 pub struct MinGapCostHeuristic;
 
 impl HeuristicConfig for MinGapCostHeuristic {
-    type Heuristic<N: GraphNodeId, O: OffsetType, C: AlignmentCostModel + Copy> = MinimumGapCost<N, O, C>;
+    type Heuristic<N: GraphNodeId, O: OffsetType, C: AlignmentCostModel + Copy> =
+        MinimumGapCost<N, O, C>;
 
     fn instantiate<N, O, C>(&self, costs: C) -> MinimumGapCost<N, O, C>
     where
@@ -195,7 +225,8 @@ mod tests {
         let node_under_test = g.all_nodes_iter().nth(1).unwrap();
         let bubble_index = Arc::new(BubbleIndex::new(&g));
 
-        let heuristic: MinimumGapCostAffine<_, O> = MinimumGapCostAffine::new(costs, bubble_index, 10);
+        let heuristic: MinimumGapCostAffine<_, O> =
+            MinimumGapCostAffine::new(costs, bubble_index, 10);
 
         let node1 = AlignmentGraphNode::new(node_under_test, 2u32);
         assert_eq!(heuristic.bound(&node1, AlignState::Match), 14);
@@ -233,16 +264,25 @@ mod two_piece_tests {
         let costs = TwoPieceAffine::new(4, 6, 2, 24, 1);
         let seq: Vec<u8> = b"ACGT".iter().cycle().take(40).copied().collect();
         let mut g = POAGraph::<u32>::new();
-        g.add_alignment("s", &seq, None, &vec![1; seq.len()]).unwrap();
+        g.add_alignment("s", &seq, None, &vec![1; seq.len()])
+            .unwrap();
         let query = &seq[35..];
         let bubbles = Arc::new(BubbleIndex::new(&g));
-        let mut h = MinimumGapCost::<_, u32, _>::new_with_mode(costs, bubbles, query.len(), AlignmentMode::Global);
+        let mut h = MinimumGapCost::<_, u32, _>::new_with_mode(
+            costs,
+            bubbles,
+            query.len(),
+            AlignmentMode::Global,
+        );
         let oracle = DpOracle::<TwoPieceAffine, POAGraph<u32>>::new(costs);
         for rank in 1..6 {
             let v = g.rank_to_node(rank);
             let truth = oracle.cost_from(&g, query, v, 0, AlignState::Deletion as usize);
             let est = h.h(&g, &AlignmentGraphNode::new(v, 0), AlignState::Deletion);
-            assert!(est as u32 <= truth, "rank {rank}: h = {est}, true cost {truth}");
+            assert!(
+                est as u32 <= truth,
+                "rank {rank}: h = {est}, true cost {truth}"
+            );
         }
     }
 }

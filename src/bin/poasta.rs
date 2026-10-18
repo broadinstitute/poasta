@@ -10,11 +10,11 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use poasta::align::AlignmentMode;
 use poasta::align::PoastaAligner;
+use poasta::align::astar::{AstarCostModel, AstarEngine, Offset};
 use poasta::align::cost_models::affine::Affine;
 use poasta::align::cost_models::linear::Linear;
 use poasta::align::cost_models::two_piece::TwoPieceAffine;
 use poasta::align::traits::AlignOutput;
-use poasta::align::astar::{AstarCostModel, AstarEngine, Offset};
 use poasta::align::traits::AlignmentEngine;
 use poasta::cli::CostModelKind;
 use poasta::cli::poasta::{AlignArgs, CliArgs, CliSubcommand, OutputType};
@@ -77,7 +77,9 @@ fn init_tracing(default_level: &str, debug_dir: Option<&Path>) {
     let debug_layer = debug_dir.map(AlignStateLayer::new);
 
     if cfg!(feature = "disable_tracing") && debug_dir.is_some() {
-        eprintln!("warning: built with `disable_tracing`; --debug-output-dir produces no state files");
+        eprintln!(
+            "warning: built with `disable_tracing`; --debug-output-dir produces no state files"
+        );
     }
 
     tracing_subscriber::registry()
@@ -207,7 +209,12 @@ where
     C: AstarCostModel<POANodeIndex<u32>, Offset>,
 {
     let new_plain_engine = || AstarEngine::<POAGraph<u32>, C>::new(costs).with_mode(mode);
-    instantiate_engine!(&args.search, new_plain_engine, |new_engine| run_with(new_engine(), args, graph, sequences))
+    instantiate_engine!(&args.search, new_plain_engine, |new_engine| run_with(
+        new_engine(),
+        args,
+        graph,
+        sequences
+    ))
 }
 
 fn run_with<E>(

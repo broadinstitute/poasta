@@ -59,8 +59,12 @@ impl AlignmentCostModel for TwoPieceAffine {
         // Inside a gap the rest can extend the current piece, or close for
         // free and open the other piece, which is cheaper for long gaps.
         match current_state {
-            AlignState::Insertion | AlignState::Deletion => (length * self.gap_extend as usize).min(from_match),
-            AlignState::Insertion2 | AlignState::Deletion2 => (length * self.gap_extend2 as usize).min(from_match),
+            AlignState::Insertion | AlignState::Deletion => {
+                (length * self.gap_extend as usize).min(from_match)
+            }
+            AlignState::Insertion2 | AlignState::Deletion2 => {
+                (length * self.gap_extend2 as usize).min(from_match)
+            }
             AlignState::Match => from_match,
         }
     }

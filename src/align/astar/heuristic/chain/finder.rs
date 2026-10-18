@@ -52,7 +52,10 @@ pub(crate) struct SeedMatches<N> {
 
 impl<N> Default for SeedMatches<N> {
     fn default() -> Self {
-        Self { matches: Vec::new(), seed_start: Vec::new() }
+        Self {
+            matches: Vec::new(),
+            seed_start: Vec::new(),
+        }
     }
 }
 
@@ -87,7 +90,13 @@ pub(crate) struct SeedFinder<N> {
 
 impl<N> Default for SeedFinder<N> {
     fn default() -> Self {
-        Self { live: Vec::new(), live_start: Vec::new(), scratch: Vec::new(), hits: Vec::new(), walk: Vec::new() }
+        Self {
+            live: Vec::new(),
+            live_start: Vec::new(),
+            scratch: Vec::new(),
+            hits: Vec::new(),
+            walk: Vec::new(),
+        }
     }
 }
 
@@ -110,7 +119,17 @@ impl<N: GraphNodeId> SeedFinder<N> {
                 // A fresh prefix at v, and every prefix that ends at a
                 // predecessor, each extended by v's symbol.
                 self.scratch.clear();
-                extend(graph, trie, v, Partial { trie_node: 0, mismatches: 0 }, seeds.r, &mut self.scratch);
+                extend(
+                    graph,
+                    trie,
+                    v,
+                    Partial {
+                        trie_node: 0,
+                        mismatches: 0,
+                    },
+                    seeds.r,
+                    &mut self.scratch,
+                );
                 for p in graph.predecessors(v) {
                     if p == start {
                         continue;
@@ -136,7 +155,8 @@ impl<N: GraphNodeId> SeedFinder<N> {
             self.live_start.push(self.live.len() as u32);
         }
 
-        self.hits.sort_unstable_by_key(|h| (h.seed, h.m.start.index(), h.m.end.index()));
+        self.hits
+            .sort_unstable_by_key(|h| (h.seed, h.m.start.index(), h.m.end.index()));
         self.hits.dedup();
 
         out.matches.clear();
@@ -153,35 +173,67 @@ impl<N: GraphNodeId> SeedFinder<N> {
 }
 
 /// Every trie child of `p` that node v can extend, within the budget.
-fn extend<G: AlignableGraph>(graph: &G, trie: &SeedTrie, v: G::Node, p: Partial, r: usize, out: &mut Vec<Partial>) {
+fn extend<G: AlignableGraph>(
+    graph: &G,
+    trie: &SeedTrie,
+    v: G::Node,
+    p: Partial,
+    r: usize,
+    out: &mut Vec<Partial>,
+) {
     for e in trie.children(p.trie_node) {
         if graph.is_symbol_equal(v, e.byte) {
-            out.push(Partial { trie_node: e.child, mismatches: p.mismatches });
+            out.push(Partial {
+                trie_node: e.child,
+                mismatches: p.mismatches,
+            });
         } else if (p.mismatches as usize) < r {
-            out.push(Partial { trie_node: e.child, mismatches: p.mismatches + 1 });
+            out.push(Partial {
+                trie_node: e.child,
+                mismatches: p.mismatches + 1,
+            });
         }
     }
 }
 
 /// Seed j ends at `end`. Walk back k − 1 steps to the start nodes of the
 /// paths that spell it, one hit each.
-fn walk_back<G: AlignableGraph>(graph: &G, seeds: &Seeds, j: u32, end: G::Node, walk: &mut Vec<Walk<G::Node>>, hits: &mut Vec<Hit<G::Node>>) {
+fn walk_back<G: AlignableGraph>(
+    graph: &G,
+    seeds: &Seeds,
+    j: u32,
+    end: G::Node,
+    walk: &mut Vec<Walk<G::Node>>,
+    hits: &mut Vec<Hit<G::Node>>,
+) {
     let seed = seeds.seed(j as usize);
     let k = seed.len();
     walk.clear();
-    walk.push(Walk { node: end, pos: k - 1, mismatches: usize::from(!graph.is_symbol_equal(end, seed[k - 1])) });
+    walk.push(Walk {
+        node: end,
+        pos: k - 1,
+        mismatches: usize::from(!graph.is_symbol_equal(end, seed[k - 1])),
+    });
     while let Some(w) = walk.pop() {
         if w.mismatches > seeds.r {
             continue;
         }
         if w.pos == 0 {
-            hits.push(Hit { seed: j, m: SeedMatch { start: w.node, end } });
+            hits.push(Hit {
+                seed: j,
+                m: SeedMatch { start: w.node, end },
+            });
             continue;
         }
         for p in graph.predecessors(w.node) {
             if p != graph.start_node() {
-                let mismatches = w.mismatches + usize::from(!graph.is_symbol_equal(p, seed[w.pos - 1]));
-                walk.push(Walk { node: p, pos: w.pos - 1, mismatches });
+                let mismatches =
+                    w.mismatches + usize::from(!graph.is_symbol_equal(p, seed[w.pos - 1]));
+                walk.push(Walk {
+                    node: p,
+                    pos: w.pos - 1,
+                    mismatches,
+                });
             }
         }
     }
@@ -190,10 +242,20 @@ fn walk_back<G: AlignableGraph>(graph: &G, seeds: &Seeds, j: u32, end: G::Node, 
 /// Whether some path from a successor of `node` spells the rest of the
 /// seed that offset i is inside, with at most r substitutions. `walk` is
 /// scratch space.
-pub(crate) fn rest_matches<G: AlignableGraph>(graph: &G, seeds: &Seeds, node: G::Node, i: usize, walk: &mut Vec<Walk<G::Node>>) -> bool {
+pub(crate) fn rest_matches<G: AlignableGraph>(
+    graph: &G,
+    seeds: &Seeds,
+    node: G::Node,
+    i: usize,
+    walk: &mut Vec<Walk<G::Node>>,
+) -> bool {
     let rest = seeds.rest(i);
     walk.clear();
-    walk.push(Walk { node, pos: 0, mismatches: 0 });
+    walk.push(Walk {
+        node,
+        pos: 0,
+        mismatches: 0,
+    });
     while let Some(w) = walk.pop() {
         for x in graph.successors(w.node) {
             if x == graph.end_node() {
@@ -204,7 +266,11 @@ pub(crate) fn rest_matches<G: AlignableGraph>(graph: &G, seeds: &Seeds, node: G:
                 if w.pos + 1 == rest.len() {
                     return true;
                 }
-                walk.push(Walk { node: x, pos: w.pos + 1, mismatches });
+                walk.push(Walk {
+                    node: x,
+                    pos: w.pos + 1,
+                    mismatches,
+                });
             }
         }
     }
@@ -232,8 +298,13 @@ mod tests {
 
     fn random_graph(state: &mut u64) -> (G, Vec<u8>) {
         let alphabet = b"ACGT";
-        let template: Vec<u8> = (0..10 + rng(state, 30)).map(|_| alphabet[rng(state, 4)]).collect();
-        let mut aligner = PoastaAligner::new(AstarEngine::<G, Affine>::new(Affine::new(4, 6, 2)).with_heuristic(DijkstraHeuristic), POAGraph::new());
+        let template: Vec<u8> = (0..10 + rng(state, 30))
+            .map(|_| alphabet[rng(state, 4)])
+            .collect();
+        let mut aligner = PoastaAligner::new(
+            AstarEngine::<G, Affine>::new(Affine::new(4, 6, 2)).with_heuristic(DijkstraHeuristic),
+            POAGraph::new(),
+        );
         for s in 0..1 + rng(state, 5) {
             let seq: Vec<u8> = template
                 .iter()
@@ -248,7 +319,16 @@ mod tests {
                 aligner.align_one_named(&format!("s{s}"), &seq).unwrap();
             }
         }
-        let query: Vec<u8> = template.iter().map(|&b| if rng(state, 10) == 0 { alphabet[rng(state, 4)] } else { b }).collect();
+        let query: Vec<u8> = template
+            .iter()
+            .map(|&b| {
+                if rng(state, 10) == 0 {
+                    alphabet[rng(state, 4)]
+                } else {
+                    b
+                }
+            })
+            .collect();
         (aligner.into_graph(), query)
     }
 
@@ -283,7 +363,11 @@ mod tests {
         for j in 0..q.len() / k {
             let seed = &q[j * k..(j + 1) * k];
             for path in &paths {
-                let mm = path.iter().zip(seed).filter(|&(&v, &b)| !g.is_symbol_equal(v, b)).count();
+                let mm = path
+                    .iter()
+                    .zip(seed)
+                    .filter(|&(&v, &b)| !g.is_symbol_equal(v, b))
+                    .count();
                 if mm <= r {
                     out.push((j as u32, path[0].index(), path[k - 1].index()));
                 }
@@ -309,7 +393,12 @@ mod tests {
         finder.find(g, &seeds, &trie, &mut matches);
         let mut out = Vec::new();
         for j in 0..seeds.n {
-            out.extend(matches.of_seed(j).iter().map(|m| (j as u32, m.start.index(), m.end.index())));
+            out.extend(
+                matches
+                    .of_seed(j)
+                    .iter()
+                    .map(|m| (j as u32, m.start.index(), m.end.index())),
+            );
             // `starting_at` finds each match by its start node.
             for (id, m) in (matches.seed_start[j]..).zip(matches.of_seed(j)) {
                 assert!(matches.starting_at(j, m.start).contains(&id));
@@ -344,7 +433,12 @@ mod tests {
                     let end = (i / k + 1) * k;
                     let want = all_paths(&g, end - i).iter().any(|path| {
                         g.successors(v).any(|x| x == path[0])
-                            && path.iter().zip(&q[i..end]).filter(|&(&w, &b)| !g.is_symbol_equal(w, b)).count() <= 1
+                            && path
+                                .iter()
+                                .zip(&q[i..end])
+                                .filter(|&(&w, &b)| !g.is_symbol_equal(w, b))
+                                .count()
+                                <= 1
                     });
                     assert_eq!(rest_matches(&g, &seeds, v, i, &mut Vec::new()), want);
                 }

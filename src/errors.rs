@@ -72,7 +72,10 @@ impl Display for PoastaIOError {
             Self::FileWriteError { source } => write!(f, "Error writing file: {}", source),
             Self::OtherError { source } => write!(f, "Other IO error: {}", source),
             Self::InvalidFormat => write!(f, "Invalid file format or invalid alignment."),
-            Self::CyclicGraph => write!(f, "The graph has a cycle. POASTA only aligns to acyclic graphs."),
+            Self::CyclicGraph => write!(
+                f,
+                "The graph has a cycle. POASTA only aligns to acyclic graphs."
+            ),
             Self::InvalidUtf8 { source } => write!(f, "Could not read utf-8 string: {}", source),
         }
     }

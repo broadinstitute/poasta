@@ -113,8 +113,10 @@ where
             let slot = &mut cursor[node.index()];
             node_bubbles[*slot as usize] = NodeBubbleMap {
                 bubble_exit: exit,
-                min_dist_to_exit: (dist_to_end[node.index()].0 - dist_to_end[exit.index()].0) as u32,
-                max_dist_to_exit: (dist_to_end[node.index()].1 - dist_to_end[exit.index()].1) as u32,
+                min_dist_to_exit: (dist_to_end[node.index()].0 - dist_to_end[exit.index()].0)
+                    as u32,
+                max_dist_to_exit: (dist_to_end[node.index()].1 - dist_to_end[exit.index()].1)
+                    as u32,
             };
             *slot += 1;
         });
@@ -141,7 +143,8 @@ where
     #[inline]
     pub fn get_node_bubbles(&self, node: N) -> &[NodeBubbleMap<N>] {
         let i = node.index();
-        &self.node_bubbles[self.node_bubble_offsets[i] as usize..self.node_bubble_offsets[i + 1] as usize]
+        &self.node_bubbles
+            [self.node_bubble_offsets[i] as usize..self.node_bubble_offsets[i + 1] as usize]
     }
 
     #[inline]
@@ -152,7 +155,10 @@ where
 
     #[inline]
     pub fn num_bubbles(&self) -> usize {
-        self.bubble_entrance.iter().filter(|v| v.is_entrance()).count()
+        self.bubble_entrance
+            .iter()
+            .filter(|v| v.is_entrance())
+            .count()
     }
 
     #[inline]
@@ -236,7 +242,7 @@ where
 mod tests {
     use super::BubbleIndex;
     use crate::graph::bubbles::finder::SuperbubbleFinder;
-    use crate::graph::mock::{create_test_graph1, create_test_graph2, NIx};
+    use crate::graph::mock::{NIx, create_test_graph1, create_test_graph2};
     use crate::graph::traits::{GraphBase, GraphWithNodeOrdering};
     use petgraph::graph::NodeIndex;
 
@@ -283,7 +289,10 @@ mod tests {
             if n == graph1.end_node() {
                 continue;
             }
-            assert_eq!(reduced(&index1, n, Some(graph1.end_node())), sorted(&truth1[n.index()]));
+            assert_eq!(
+                reduced(&index1, n, Some(graph1.end_node())),
+                sorted(&truth1[n.index()])
+            );
         }
 
         let graph2 = create_test_graph2();
@@ -323,7 +332,9 @@ mod tests {
 
         for n in graph.all_nodes_iter() {
             for bubble in index.get_node_bubbles(n) {
-                let expected = (index.get_max_dist_to_end(n) - index.get_max_dist_to_end(bubble.bubble_exit)) as u32;
+                let expected = (index.get_max_dist_to_end(n)
+                    - index.get_max_dist_to_end(bubble.bubble_exit))
+                    as u32;
                 assert_eq!(bubble.max_dist_to_exit, expected);
             }
         }
@@ -337,7 +348,9 @@ mod tests {
 
         for n in graph.all_nodes_iter() {
             for bubble in index.get_node_bubbles(n) {
-                let expected = (index.get_min_dist_to_end(n) - index.get_min_dist_to_end(bubble.bubble_exit)) as u32;
+                let expected = (index.get_min_dist_to_end(n)
+                    - index.get_min_dist_to_end(bubble.bubble_exit))
+                    as u32;
                 assert_eq!(bubble.min_dist_to_exit, expected);
             }
         }
@@ -354,7 +367,11 @@ mod tests {
             let ranks = graph.node_rank(s)..=graph.node_rank(t);
             for n in graph.all_nodes_iter() {
                 let listed = index.get_node_bubbles(n).iter().any(|b| b.bubble_exit == t);
-                assert_eq!(listed, ranks.contains(&graph.node_rank(n)), "node {n:?}, bubble ({s:?}, {t:?})");
+                assert_eq!(
+                    listed,
+                    ranks.contains(&graph.node_rank(n)),
+                    "node {n:?}, bubble ({s:?}, {t:?})"
+                );
             }
         }
     }

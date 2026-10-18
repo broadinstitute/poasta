@@ -19,7 +19,9 @@ use std::ops::Bound;
 use std::sync::Arc;
 
 use super::dp_oracle::DpOracle;
-use super::heuristic::{AstarHeuristic, MinimumGapCost, SeedParams, SmoothHeuristic, SmoothHeuristicConfig};
+use super::heuristic::{
+    AstarHeuristic, MinimumGapCost, SeedParams, SmoothHeuristic, SmoothHeuristicConfig,
+};
 use super::*;
 use crate::align::PoastaAligner;
 use crate::align::cost_models::linear::Linear;
@@ -79,12 +81,17 @@ fn mutate(rng: &mut Rng, seq: &[u8], alphabet: &[u8], rate: f64) -> Vec<u8> {
 fn random_case(rng: &mut Rng) -> (G, Vec<u8>, String) {
     let alphabet: &[u8] = if rng.below(2) == 0 { b"ACGT" } else { b"AC" };
     let tlen = 8 + rng.below(50);
-    let template: Vec<u8> = (0..tlen).map(|_| alphabet[rng.below(alphabet.len())]).collect();
+    let template: Vec<u8> = (0..tlen)
+        .map(|_| alphabet[rng.below(alphabet.len())])
+        .collect();
     let n_seqs = 1 + rng.below(6);
     let rate = rng.below(26) as f64 / 100.0;
-    let seqs: Vec<Vec<u8>> = (0..n_seqs).map(|_| mutate(rng, &template, alphabet, rate)).collect();
+    let seqs: Vec<Vec<u8>> = (0..n_seqs)
+        .map(|_| mutate(rng, &template, alphabet, rate))
+        .collect();
 
-    let engine = AstarEngine::<G, Affine>::new(Affine::new(4, 6, 2)).with_heuristic(DijkstraHeuristic);
+    let engine =
+        AstarEngine::<G, Affine>::new(Affine::new(4, 6, 2)).with_heuristic(DijkstraHeuristic);
     let mut aligner = PoastaAligner::new(engine, POAGraph::new());
     for (i, s) in seqs.iter().enumerate() {
         aligner.align_one_named(&format!("s{i}"), s).unwrap();
@@ -92,7 +99,9 @@ fn random_case(rng: &mut Rng) -> (G, Vec<u8>, String) {
     let graph = aligner.into_graph();
 
     let query = if rng.chance(0.1) {
-        (0..1 + rng.below(30)).map(|_| alphabet[rng.below(alphabet.len())]).collect()
+        (0..1 + rng.below(30))
+            .map(|_| alphabet[rng.below(alphabet.len())])
+            .collect()
     } else {
         let src = &seqs[rng.below(n_seqs)];
         let a = rng.below(src.len());
@@ -102,7 +111,9 @@ fn random_case(rng: &mut Rng) -> (G, Vec<u8>, String) {
     };
     let desc = format!(
         "seqs={:?} query={:?}",
-        seqs.iter().map(|s| String::from_utf8_lossy(s).into_owned()).collect::<Vec<_>>(),
+        seqs.iter()
+            .map(|s| String::from_utf8_lossy(s).into_owned())
+            .collect::<Vec<_>>(),
         String::from_utf8_lossy(&query)
     );
     (graph, query, desc)
@@ -140,12 +151,24 @@ struct Tally {
 
 /// Align with one configuration and compare with the oracle's score.
 #[allow(clippy::too_many_arguments)]
-fn check<C, H>(t: &mut Tally, g: &G, q: &[u8], costs: C, mode: AlignmentMode, h: H, prune: bool, expected: u32, desc: &str)
-where
+fn check<C, H>(
+    t: &mut Tally,
+    g: &G,
+    q: &[u8],
+    costs: C,
+    mode: AlignmentMode,
+    h: H,
+    prune: bool,
+    expected: u32,
+    desc: &str,
+) where
     C: AstarCostModel<N, Offset> + std::fmt::Debug,
     H: HeuristicConfig,
 {
-    let mut engine = AstarEngine::<G, C>::new(costs).with_mode(mode).with_heuristic(h).with_reopen_tracking();
+    let mut engine = AstarEngine::<G, C>::new(costs)
+        .with_mode(mode)
+        .with_heuristic(h)
+        .with_reopen_tracking();
     if !prune {
         engine = engine.without_pruning();
     }
@@ -158,13 +181,19 @@ where
     }
     let label = format!("{} {costs:?} prune={prune} {mode:?}", short_name::<H>());
     if out.score != expected {
-        t.failures.push(format!("score {} want {expected}: {label} {desc}", out.score));
+        t.failures.push(format!(
+            "score {} want {expected}: {label} {desc}",
+            out.score
+        ));
     }
     // score_from_alignment knows one gap piece only.
     if costs.gap_extend2() == 0 {
         let rescored = score_from_alignment(g, q, &out.alignment, &costs);
         if rescored != out.score {
-            t.failures.push(format!("backtrace rescores to {rescored}, score {}: {label} {desc}", out.score));
+            t.failures.push(format!(
+                "backtrace rescores to {rescored}, score {}: {label} {desc}",
+                out.score
+            ));
         }
     }
 }
@@ -190,7 +219,11 @@ fn successors(
             if u == g.end_node() {
                 out.push((u, i, 0, 0));
             } else if i < q.len() {
-                let c = if g.is_symbol_equal(u, q[i]) { 0 } else { mismatch };
+                let c = if g.is_symbol_equal(u, q[i]) {
+                    0
+                } else {
+                    mismatch
+                };
                 out.push((u, i + 1, 0, c));
             }
             for &(go, ge, del, _) in pieces {
@@ -216,8 +249,13 @@ fn successors(
     out
 }
 
-const STATES: [AlignState; 5] =
-    [AlignState::Match, AlignState::Deletion, AlignState::Insertion, AlignState::Deletion2, AlignState::Insertion2];
+const STATES: [AlignState; 5] = [
+    AlignState::Match,
+    AlignState::Deletion,
+    AlignState::Insertion,
+    AlignState::Deletion2,
+    AlignState::Insertion2,
+];
 
 /// Sample 12 states for `h ≤ cost_from`, and count consistency violations
 /// of `h` over every edge of the alignment graph.
@@ -236,19 +274,32 @@ fn check_heuristic<C, Hs>(
     C: AstarCostModel<N, Offset> + std::fmt::Debug,
     Hs: AstarHeuristic<N, Offset>,
 {
-    let oracle: DpOracle<C, G> =
-        if mode == AlignmentMode::Global { DpOracle::new(costs) } else { DpOracle::new_semi_global(costs) };
+    let oracle: DpOracle<C, G> = if mode == AlignmentMode::Global {
+        DpOracle::new(costs)
+    } else {
+        DpOracle::new_semi_global(costs)
+    };
     let states = C::STATES;
-    let mut pieces = vec![(costs.gap_open() as u32, costs.gap_extend() as u32, 1usize, 2usize)];
+    let mut pieces = vec![(
+        costs.gap_open() as u32,
+        costs.gap_extend() as u32,
+        1usize,
+        2usize,
+    )];
     if costs.gap_extend2() > 0 {
         pieces.push((costs.gap_open2() as u32, costs.gap_extend2() as u32, 3, 4));
     }
     let nodes: Vec<N> = g.all_nodes_iter().collect();
-    let mut hv = |v: N, i: usize, s: usize| h.h(g, &AlignmentGraphNode::new(v, i as Offset), STATES[s]);
+    let mut hv =
+        |v: N, i: usize, s: usize| h.h(g, &AlignmentGraphNode::new(v, i as Offset), STATES[s]);
     let violations_before = t.violations;
 
     for _ in 0..12 {
-        let (v, i, s) = (nodes[rng.below(nodes.len())], rng.below(q.len() + 1), rng.below(states));
+        let (v, i, s) = (
+            nodes[rng.below(nodes.len())],
+            rng.below(q.len() + 1),
+            rng.below(states),
+        );
         let truth = oracle.cost_from(g, q, v, i, s);
         if truth >= INF {
             continue;
@@ -256,14 +307,18 @@ fn check_heuristic<C, Hs>(
         t.sampled_states += 1;
         let est = hv(v, i, s);
         if est as u32 > truth {
-            t.inadmissible.push(format!("{name} {costs:?} {mode:?} state=({v:?},{i},{s}) h={est} true={truth} {desc}"));
+            t.inadmissible.push(format!(
+                "{name} {costs:?} {mode:?} state=({v:?},{i},{s}) h={est} true={truth} {desc}"
+            ));
         }
     }
     for &v in &nodes {
         for i in 0..=q.len() {
             for s in 0..states {
                 let hx = hv(v, i, s);
-                for (u, j, s2, c) in successors(g, q, costs.mismatch() as u32, &pieces, states, v, i, s) {
+                for (u, j, s2, c) in
+                    successors(g, q, costs.mismatch() as u32, &pieces, states, v, i, s)
+                {
                     t.edges += 1;
                     let hy = hv(u, j, s2);
                     if hx > c as usize + hy {
@@ -275,7 +330,10 @@ fn check_heuristic<C, Hs>(
         }
     }
     if t.violations > violations_before {
-        t.inconsistent.push(format!("{name} {costs:?} {mode:?}: {} violations {desc}", t.violations - violations_before));
+        t.inconsistent.push(format!(
+            "{name} {costs:?} {mode:?}: {} violations {desc}",
+            t.violations - violations_before
+        ));
     }
 }
 
@@ -284,37 +342,95 @@ where
     C: AstarCostModel<N, Offset> + std::fmt::Debug,
 {
     for mode in [AlignmentMode::Global, semi_global()] {
-        let mut oracle: DpOracle<C, G> =
-            if mode == AlignmentMode::Global { DpOracle::new(costs) } else { DpOracle::new_semi_global(costs) };
+        let mut oracle: DpOracle<C, G> = if mode == AlignmentMode::Global {
+            DpOracle::new(costs)
+        } else {
+            DpOracle::new_semi_global(costs)
+        };
         let expected = oracle.align(g, q).unwrap().score;
         for prune in [false, true] {
-            check(t, g, q, costs, mode, DijkstraHeuristic, prune, expected, desc);
-            check(t, g, q, costs, mode, MinGapCostHeuristic, prune, expected, desc);
+            check(
+                t,
+                g,
+                q,
+                costs,
+                mode,
+                DijkstraHeuristic,
+                prune,
+                expected,
+                desc,
+            );
+            check(
+                t,
+                g,
+                q,
+                costs,
+                mode,
+                MinGapCostHeuristic,
+                prune,
+                expected,
+                desc,
+            );
             for k in 2..=5 {
                 for r in 0..=1 {
                     for prune_matches in [false, true] {
-                        let params = SeedParams { k, r, prune_matches };
+                        let params = SeedParams {
+                            k,
+                            r,
+                            prune_matches,
+                        };
                         let label = format!("{params:?} {desc}");
-                        check(t, g, q, costs, mode, SmoothHeuristicConfig(params), prune, expected, &label);
+                        check(
+                            t,
+                            g,
+                            q,
+                            costs,
+                            mode,
+                            SmoothHeuristicConfig(params),
+                            prune,
+                            expected,
+                            &label,
+                        );
                     }
                 }
             }
         }
         let bubbles = Arc::new(BubbleIndex::new(g));
-        let mut mingap = MinimumGapCost::<N, Offset, C>::new_with_mode(costs, bubbles.clone(), q.len(), mode);
+        let mut mingap =
+            MinimumGapCost::<N, Offset, C>::new_with_mode(costs, bubbles.clone(), q.len(), mode);
         check_heuristic(t, g, q, costs, mode, &mut mingap, "min-gap-cost", rng, desc);
-        let params = SeedParams { k: 2 + rng.below(4), r: rng.below(2), prune_matches: false };
+        let params = SeedParams {
+            k: 2 + rng.below(4),
+            r: rng.below(2),
+            prune_matches: false,
+        };
         let mut smooth = SmoothHeuristic::<N, Offset, C>::new(costs, params);
         smooth.prepare(g, q, &bubbles, mode);
-        check_heuristic(t, g, q, costs, mode, &mut smooth, &format!("smooth {params:?}"), rng, desc);
+        check_heuristic(
+            t,
+            g,
+            q,
+            costs,
+            mode,
+            &mut smooth,
+            &format!("smooth {params:?}"),
+            rng,
+            desc,
+        );
     }
 }
 
 #[test]
 fn differential_against_oracle() {
     let default_cases = if cfg!(debug_assertions) { 8 } else { 40 };
-    let cases: usize = std::env::var("POASTA_DIFF_CASES").ok().and_then(|v| v.parse().ok()).unwrap_or(default_cases);
-    let seed: u64 = std::env::var("POASTA_DIFF_SEED").ok().and_then(|v| v.parse().ok()).unwrap_or(0x9E37_79B9_7F4A_7C15);
+    let cases: usize = std::env::var("POASTA_DIFF_CASES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default_cases);
+    let seed: u64 = std::env::var("POASTA_DIFF_SEED")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0x9E37_79B9_7F4A_7C15);
     let mut rng = Rng(seed);
     let mut t = Tally::default();
     for _ in 0..cases {
@@ -322,8 +438,22 @@ fn differential_against_oracle() {
         run_case(&mut t, &g, &q, Affine::new(4, 6, 2), &mut rng, &desc);
         run_case(&mut t, &g, &q, Affine::new(1, 2, 1), &mut rng, &desc);
         run_case(&mut t, &g, &q, Linear::new(4, 2), &mut rng, &desc);
-        run_case(&mut t, &g, &q, TwoPieceAffine::new(4, 6, 2, 24, 1), &mut rng, &desc);
-        run_case(&mut t, &g, &q, TwoPieceAffine::new(1, 2, 2, 6, 1), &mut rng, &desc);
+        run_case(
+            &mut t,
+            &g,
+            &q,
+            TwoPieceAffine::new(4, 6, 2, 24, 1),
+            &mut rng,
+            &desc,
+        );
+        run_case(
+            &mut t,
+            &g,
+            &q,
+            TwoPieceAffine::new(1, 2, 2, 6, 1),
+            &mut rng,
+            &desc,
+        );
     }
     eprintln!(
         "cases={cases} alignments={} failures={} pruned={} reopened={} both={} \
@@ -339,7 +469,13 @@ fn differential_against_oracle() {
         t.violations,
         t.max_violation,
     );
-    for f in t.inadmissible.iter().chain(&t.inconsistent).chain(&t.failures).take(10) {
+    for f in t
+        .inadmissible
+        .iter()
+        .chain(&t.inconsistent)
+        .chain(&t.failures)
+        .take(10)
+    {
         eprintln!("{f}");
     }
     assert!(t.failures.is_empty() && t.inadmissible.is_empty() && t.inconsistent.is_empty());

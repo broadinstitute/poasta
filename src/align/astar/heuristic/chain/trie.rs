@@ -40,7 +40,12 @@ impl SeedTrie {
         // seeds, which is its `leaf_start`.
         self.seeds.clear();
         self.seeds.extend(0..seeds.n as u32);
-        self.seeds.sort_unstable_by(|&a, &b| seeds.seed(a as usize).cmp(seeds.seed(b as usize)).then(a.cmp(&b)));
+        self.seeds.sort_unstable_by(|&a, &b| {
+            seeds
+                .seed(a as usize)
+                .cmp(seeds.seed(b as usize))
+                .then(a.cmp(&b))
+        });
         self.new_edges.clear();
         self.leaf_start.clear();
         self.leaf_start.push(0);
@@ -54,7 +59,8 @@ impl SeedTrie {
             for (d, &byte) in s.iter().enumerate().skip(common) {
                 let child = self.leaf_start.len() as TrieNode;
                 self.leaf_start.push(pos as u32);
-                self.new_edges.push((self.path[d], TrieEdge { byte, child }));
+                self.new_edges
+                    .push((self.path[d], TrieEdge { byte, child }));
                 self.path.push(child);
             }
             prev = Some(s);
@@ -77,7 +83,8 @@ impl SeedTrie {
     }
 
     pub fn children(&self, t: TrieNode) -> &[TrieEdge] {
-        &self.edges[self.child_start[t as usize] as usize..self.child_start[t as usize + 1] as usize]
+        &self.edges
+            [self.child_start[t as usize] as usize..self.child_start[t as usize + 1] as usize]
     }
 
     pub fn is_leaf(&self, t: TrieNode) -> bool {
@@ -110,7 +117,9 @@ mod tests {
     fn identical_seeds_share_a_leaf() {
         // Seeds ACG, TAC, ACG.
         let trie = trie(b"ACGTACACG", 3, 3);
-        let leaves: Vec<u32> = (1..trie.node_count() as u32).filter(|&t| trie.is_leaf(t)).collect();
+        let leaves: Vec<u32> = (1..trie.node_count() as u32)
+            .filter(|&t| trie.is_leaf(t))
+            .collect();
         assert_eq!(leaves.len(), 2);
         let mut all: Vec<Vec<u32>> = leaves.iter().map(|&t| trie.seeds_at(t).to_vec()).collect();
         all.sort();

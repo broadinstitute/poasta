@@ -33,10 +33,21 @@ where
     fn get_score(&self, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> u32;
     fn set_score(&mut self, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState, score: u32);
 
-    fn mark_reached(&mut self, score: u32, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState);
-    fn dfa_match(&mut self, score: u32, parent: &AlignmentGraphNode<N, O>, child: &AlignmentGraphNode<N, O>);
+    fn mark_reached(
+        &mut self,
+        score: u32,
+        aln_node: &AlignmentGraphNode<N, O>,
+        aln_state: AlignState,
+    );
+    fn dfa_match(
+        &mut self,
+        score: u32,
+        parent: &AlignmentGraphNode<N, O>,
+        child: &AlignmentGraphNode<N, O>,
+    );
 
-    fn prune(&self, score: u32, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> bool;
+    fn prune(&self, score: u32, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState)
+    -> bool;
 
     /// Update the visited score for `aln_node`/`aln_state` if `score` improves
     /// on what's stored, returning whether it did (i.e. whether the caller
@@ -50,7 +61,12 @@ where
         score: u32,
     ) -> bool;
 
-    fn backtrace<G>(&self, ref_graph: &G, seq: &[u8], aln_node: &AlignmentGraphNode<N, O>) -> Vec<AlignedPair<N>>
+    fn backtrace<G>(
+        &self,
+        ref_graph: &G,
+        seq: &[u8],
+        aln_node: &AlignmentGraphNode<N, O>,
+    ) -> Vec<AlignedPair<N>>
     where
         G: AlignableGraph<Node = N>;
 
@@ -84,7 +100,10 @@ impl<const S: usize, const B: usize> BlockRow<S, B> {
     const EMPTY: [[[u32; S]; B]; B] = [[[INF; S]; B]; B];
 
     fn new() -> Self {
-        Self { base: 0, blocks: Vec::new() }
+        Self {
+            base: 0,
+            blocks: Vec::new(),
+        }
     }
 
     #[inline]
@@ -124,11 +143,13 @@ impl<const S: usize, const B: usize> BlockRow<S, B> {
             self.blocks.resize(2, Self::EMPTY);
         } else if block < base {
             let grow = (base - block).max(self.blocks.len()).min(base);
-            self.blocks.splice(0..0, std::iter::repeat_n(Self::EMPTY, grow));
+            self.blocks
+                .splice(0..0, std::iter::repeat_n(Self::EMPTY, grow));
             self.base -= grow;
         } else {
             let needed = block - base + 1;
-            self.blocks.resize(needed.max(2 * self.blocks.len()), Self::EMPTY);
+            self.blocks
+                .resize(needed.max(2 * self.blocks.len()), Self::EMPTY);
         }
     }
 }
@@ -251,8 +272,10 @@ impl ReachedBits {
 
     /// Reached offsets in `lo..=hi`, ascending.
     pub fn reached_in(&self, lo: usize, hi: usize) -> impl Iterator<Item = usize> + '_ {
-        std::iter::successors(self.first_reached_at_or_above(lo), move |&o| self.first_reached_above(o))
-            .take_while(move |&o| o <= hi)
+        std::iter::successors(self.first_reached_at_or_above(lo), move |&o| {
+            self.first_reached_above(o)
+        })
+        .take_while(move |&o| o <= hi)
     }
 
     fn reset(&mut self) {
@@ -291,8 +314,12 @@ where
         assert_index_is_rank(graph);
         let node_count = graph.node_count();
         Self {
-            block_rows: std::iter::repeat_with(BlockRow::new).take(node_count.div_ceil(B)).collect(),
-            reached: std::iter::repeat_with(ReachedBits::default).take(node_count).collect(),
+            block_rows: std::iter::repeat_with(BlockRow::new)
+                .take(node_count.div_ceil(B))
+                .collect(),
+            reached: std::iter::repeat_with(ReachedBits::default)
+                .take(node_count)
+                .collect(),
             touched_rows: Vec::new(),
             touched_reached: Vec::new(),
             _marker: PhantomData,
@@ -319,7 +346,8 @@ where
         self.touched_reached.clear();
 
         let node_count = graph.node_count();
-        self.block_rows.resize_with(node_count.div_ceil(B), BlockRow::new);
+        self.block_rows
+            .resize_with(node_count.div_ceil(B), BlockRow::new);
         self.reached.resize_with(node_count, ReachedBits::default);
         assert_index_is_rank(graph);
     }
@@ -332,7 +360,11 @@ where
     #[inline]
     pub fn get_score(&self, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> u32 {
         let rank = self.rank(aln_node);
-        self.block_rows[rank >> B.ilog2()].get(rank & (B - 1), aln_node.offset().as_usize(), aln_state as usize)
+        self.block_rows[rank >> B.ilog2()].get(
+            rank & (B - 1),
+            aln_node.offset().as_usize(),
+            aln_state as usize,
+        )
     }
 
     #[inline]
@@ -347,12 +379,22 @@ where
     }
 
     #[inline]
-    pub fn set_score(&mut self, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState, score: u32) {
+    pub fn set_score(
+        &mut self,
+        aln_node: &AlignmentGraphNode<N, O>,
+        aln_state: AlignState,
+        score: u32,
+    ) {
         self.cell_mut(aln_node)[aln_state as usize] = score;
     }
 
     #[inline]
-    pub fn update_score_if_lower_block(&mut self, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState, score: u32) -> bool {
+    pub fn update_score_if_lower_block(
+        &mut self,
+        aln_node: &AlignmentGraphNode<N, O>,
+        aln_state: AlignState,
+        score: u32,
+    ) -> bool {
         let cell = &mut self.cell_mut(aln_node)[aln_state as usize];
         if score < *cell {
             *cell = score;
@@ -383,7 +425,9 @@ where
 /// index, so the check compiles away.
 fn assert_index_is_rank<G: GraphWithNodeOrdering>(graph: &G) {
     assert!(
-        graph.all_nodes_iter().all(|v| graph.node_rank(v) == v.index()),
+        graph
+            .all_nodes_iter()
+            .all(|v| graph.node_rank(v) == v.index()),
         "the visited storage needs node indices that are ranks"
     );
 }
@@ -440,33 +484,60 @@ where
     }
 
     #[inline]
-    fn set_score(&mut self, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState, score: u32) {
+    fn set_score(
+        &mut self,
+        aln_node: &AlignmentGraphNode<N, O>,
+        aln_state: AlignState,
+        score: u32,
+    ) {
         self.visited.set_score(aln_node, aln_state, score)
     }
 
-    fn mark_reached(&mut self, _score: u32, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) {
+    fn mark_reached(
+        &mut self,
+        _score: u32,
+        aln_node: &AlignmentGraphNode<N, O>,
+        aln_state: AlignState,
+    ) {
         if aln_state == AlignState::Match {
             self.visited.mark_reached(aln_node);
         }
     }
 
-    fn dfa_match(&mut self, score: u32, _parent: &AlignmentGraphNode<N, O>, child: &AlignmentGraphNode<N, O>) {
+    fn dfa_match(
+        &mut self,
+        score: u32,
+        _parent: &AlignmentGraphNode<N, O>,
+        child: &AlignmentGraphNode<N, O>,
+    ) {
         self.mark_reached(score, child, AlignState::Match);
     }
 
     #[inline]
-    fn prune(&self, score: u32, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> bool {
+    fn prune(
+        &self,
+        score: u32,
+        aln_node: &AlignmentGraphNode<N, O>,
+        aln_state: AlignState,
+    ) -> bool {
         if !self.bubble_index.node_is_part_of_bubble(aln_node.node()) {
             return false;
         }
 
-        !self.bubble_index.get_node_bubbles(aln_node.node()).iter().all(|bubble| {
-            let reached = self.visited.reached(bubble.bubble_exit);
-            let get_match_score = |node: N, offset: O| self.visited.get_score(&AlignmentGraphNode::new(node, offset), AlignState::Match);
+        !self
+            .bubble_index
+            .get_node_bubbles(aln_node.node())
+            .iter()
+            .all(|bubble| {
+                let reached = self.visited.reached(bubble.bubble_exit);
+                let get_match_score = |node: N, offset: O| {
+                    self.visited
+                        .get_score(&AlignmentGraphNode::new(node, offset), AlignState::Match)
+                };
 
-            ReachedBubbleExitsMatch::new(get_match_score, &self.costs, reached, self.seq_len)
-                .can_improve_bubble(&self.bubble_index, bubble, aln_node, aln_state, score)
-        })
+                ReachedBubbleExitsMatch::new(get_match_score, &self.costs, reached, self.seq_len)
+                    .can_improve_bubble(&self.bubble_index, bubble, aln_node, aln_state, score)
+            })
     }
 
     #[inline]
@@ -478,10 +549,16 @@ where
         _parent_state: AlignState,
         score: u32,
     ) -> bool {
-        self.visited.update_score_if_lower_block(aln_node, aln_state, score)
+        self.visited
+            .update_score_if_lower_block(aln_node, aln_state, score)
     }
 
-    fn backtrace<G>(&self, ref_graph: &G, seq: &[u8], aln_node: &AlignmentGraphNode<N, O>) -> Vec<AlignedPair<N>>
+    fn backtrace<G>(
+        &self,
+        ref_graph: &G,
+        seq: &[u8],
+        aln_node: &AlignmentGraphNode<N, O>,
+    ) -> Vec<AlignedPair<N>>
     where
         G: AlignableGraph<Node = N>,
     {
@@ -521,7 +598,9 @@ where
     G: AlignableGraph<Node = N>,
 {
     let score = visited.get_score(curr, AlignState::Match);
-    let get = |node: N, offset: O| visited.get_score(&AlignmentGraphNode::new(node, offset), AlignState::Match);
+    let get = |node: N, offset: O| {
+        visited.get_score(&AlignmentGraphNode::new(node, offset), AlignState::Match)
+    };
     let ge = costs.gap_extend() as u32;
     let at_end = curr.node() == ref_graph.end_node();
 
@@ -542,14 +621,20 @@ where
 
     for p in ref_graph.predecessors(curr.node()) {
         if get(p, curr.offset()) == score.wrapping_sub(ge) {
-            return Some((AlignmentGraphNode::new(p, curr.offset()), AlignState::Deletion));
+            return Some((
+                AlignmentGraphNode::new(p, curr.offset()),
+                AlignState::Deletion,
+            ));
         }
     }
 
     if curr.offset() > O::zero() {
         let pred_offset = curr.offset() - O::one();
         if get(curr.node(), pred_offset) == score.wrapping_sub(ge) {
-            return Some((AlignmentGraphNode::new(curr.node(), pred_offset), AlignState::Insertion));
+            return Some((
+                AlignmentGraphNode::new(curr.node(), pred_offset),
+                AlignState::Insertion,
+            ));
         }
     }
 
@@ -577,11 +662,18 @@ where
             // The move into the end sentinel consumes nothing.
             AlignState::Match if curr.node() == ref_graph.end_node() => {}
             AlignState::Match => {
-                alignment.push(AlignedPair::new(Some(curr.node()), Some(curr.offset().as_usize() - 1)));
+                alignment.push(AlignedPair::new(
+                    Some(curr.node()),
+                    Some(curr.offset().as_usize() - 1),
+                ));
             }
             AlignState::Deletion => alignment.push(AlignedPair::new(Some(curr.node()), None)),
-            AlignState::Insertion => alignment.push(AlignedPair::new(None, Some(curr.offset().as_usize() - 1))),
-            AlignState::Deletion2 | AlignState::Insertion2 => unreachable!("linear model has one gap piece"),
+            AlignState::Insertion => {
+                alignment.push(AlignedPair::new(None, Some(curr.offset().as_usize() - 1)))
+            }
+            AlignState::Deletion2 | AlignState::Insertion2 => {
+                unreachable!("linear model has one gap piece")
+            }
         }
         curr = pred;
     }
@@ -639,14 +731,21 @@ where
     G: AlignableGraph<Node = N>,
 {
     let curr_score = visited.get_score(aln_node, aln_state);
-    let get = |node: N, offset: O, state: AlignState| visited.get_score(&AlignmentGraphNode::new(node, offset), state);
+    let get = |node: N, offset: O, state: AlignState| {
+        visited.get_score(&AlignmentGraphNode::new(node, offset), state)
+    };
 
     if aln_state == AlignState::Match {
         if aln_node.offset() > O::zero() {
             let at_end = aln_node.node() == ref_graph.end_node();
-            let is_match_or_end =
-                at_end || ref_graph.is_symbol_equal(aln_node.node(), seq[aln_node.offset().as_usize() - 1]);
-            let pred_offset = if at_end { aln_node.offset() } else { aln_node.offset() - O::one() };
+            let is_match_or_end = at_end
+                || ref_graph
+                    .is_symbol_equal(aln_node.node(), seq[aln_node.offset().as_usize() - 1]);
+            let pred_offset = if at_end {
+                aln_node.offset()
+            } else {
+                aln_node.offset() - O::one()
+            };
             let expected = if is_match_or_end {
                 curr_score
             } else {
@@ -682,8 +781,13 @@ where
 
     if aln_state == piece.del {
         for p in ref_graph.predecessors(aln_node.node()) {
-            if get(p, aln_node.offset(), AlignState::Match) == curr_score.wrapping_sub(piece.open_extend) {
-                return Some((AlignmentGraphNode::new(p, aln_node.offset()), AlignState::Match));
+            if get(p, aln_node.offset(), AlignState::Match)
+                == curr_score.wrapping_sub(piece.open_extend)
+            {
+                return Some((
+                    AlignmentGraphNode::new(p, aln_node.offset()),
+                    AlignState::Match,
+                ));
             }
         }
         for p in ref_graph.predecessors(aln_node.node()) {
@@ -693,7 +797,8 @@ where
         }
     } else if aln_node.offset() > O::zero() {
         let pred = AlignmentGraphNode::new(aln_node.node(), aln_node.offset() - O::one());
-        if visited.get_score(&pred, AlignState::Match) == curr_score.wrapping_sub(piece.open_extend) {
+        if visited.get_score(&pred, AlignState::Match) == curr_score.wrapping_sub(piece.open_extend)
+        {
             return Some((pred, AlignState::Match));
         }
         if visited.get_score(&pred, piece.ins) == curr_score.wrapping_sub(piece.extend) {
@@ -738,7 +843,10 @@ where
     // the loop handles once it reaches it.
     let is_indel_alias = curr.node() == aln_node.node() && curr.offset() == aln_node.offset();
     if aln_node.node() != ref_graph.end_node() && !is_indel_alias {
-        alignment.push(AlignedPair::new(Some(aln_node.node()), Some(aln_node.offset().as_usize() - 1)));
+        alignment.push(AlignedPair::new(
+            Some(aln_node.node()),
+            Some(aln_node.offset().as_usize() - 1),
+        ));
     }
 
     while let Some((bt_node, bt_state)) = step(&curr, curr_state) {
@@ -752,7 +860,10 @@ where
 
         match curr_state {
             AlignState::Match => {
-                alignment.push(AlignedPair::new(Some(curr.node()), Some(curr.offset().as_usize() - 1)));
+                alignment.push(AlignedPair::new(
+                    Some(curr.node()),
+                    Some(curr.offset().as_usize() - 1),
+                ));
             }
             AlignState::Insertion | AlignState::Insertion2 => {
                 alignment.push(AlignedPair::new(None, Some(curr.offset().as_usize() - 1)));
@@ -765,7 +876,10 @@ where
         // Stop at the very start. Leading insertions sit on the start
         // sentinel at offsets above 0, so reaching the start node alone is
         // not the end of the backtrace.
-        if bt_node.node() == ref_graph.start_node() && bt_node.offset() == O::zero() && bt_state == AlignState::Match {
+        if bt_node.node() == ref_graph.start_node()
+            && bt_node.offset() == O::zero()
+            && bt_state == AlignState::Match
+        {
             break;
         }
 
@@ -795,7 +909,11 @@ mod tests {
         let node = AlignmentGraphNode::new(g.rank_to_node(0), 5u32);
         let next_rank = AlignmentGraphNode::new(g.rank_to_node(1), 5u32);
 
-        assert_eq!(storage.get_score(&node, AlignState::Match), INF, "unset cell should read INF");
+        assert_eq!(
+            storage.get_score(&node, AlignState::Match),
+            INF,
+            "unset cell should read INF"
+        );
 
         storage.set_score(&node, AlignState::Match, 7);
         assert_eq!(storage.get_score(&node, AlignState::Match), 7);
@@ -859,7 +977,13 @@ mod tests {
         for node in [&a, &b] {
             assert_eq!(storage.get_score(node, AlignState::Match), INF);
             assert!(storage.reached(node.node()).is_empty());
-            assert_eq!(storage.reached(node.node()).reached_in(0, usize::MAX).count(), 0);
+            assert_eq!(
+                storage
+                    .reached(node.node())
+                    .reached_in(0, usize::MAX)
+                    .count(),
+                0
+            );
         }
         assert!(storage.touched_rows.is_empty() && storage.touched_reached.is_empty());
     }
@@ -870,7 +994,10 @@ mod tests {
         for offset in [130, 700, 5] {
             bits.mark(offset);
         }
-        assert_eq!(bits.reached_in(0, usize::MAX).collect::<Vec<_>>(), vec![5, 130, 700]);
+        assert_eq!(
+            bits.reached_in(0, usize::MAX).collect::<Vec<_>>(),
+            vec![5, 130, 700]
+        );
         assert_eq!(bits.n_reached, 3);
 
         bits.mark(130);
@@ -883,7 +1010,9 @@ mod tests {
     fn bit_scans_match_btreeset() {
         let mut x = 42u64;
         let mut next = || {
-            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            x = x
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (x >> 33) as usize % 2000
         };
 
@@ -897,8 +1026,16 @@ mod tests {
         assert_eq!(bits.n_reached, set.len());
 
         for x in 0..2000usize {
-            assert_eq!(bits.last_reached_below(x), set.range(..x).next_back().copied(), "below {x}");
-            assert_eq!(bits.first_reached_above(x), set.range(x + 1..).next().copied(), "above {x}");
+            assert_eq!(
+                bits.last_reached_below(x),
+                set.range(..x).next_back().copied(),
+                "below {x}"
+            );
+            assert_eq!(
+                bits.first_reached_above(x),
+                set.range(x + 1..).next().copied(),
+                "above {x}"
+            );
             assert_eq!(
                 bits.reached_in(x, x + 37).collect::<Vec<_>>(),
                 set.range(x..=x + 37).copied().collect::<Vec<_>>(),

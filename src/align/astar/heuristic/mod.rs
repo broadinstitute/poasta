@@ -17,12 +17,12 @@ pub use min_gap::{MinGapCostHeuristic, MinimumGapCost, MinimumGapCostAffine};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::align::AlignmentMode;
 use crate::align::AlignState;
+use crate::align::AlignmentMode;
 use crate::align::astar::aln_graph::AlignmentGraphNode;
-use crate::align::traits::AlignableGraph;
 use crate::align::cost_models::AlignmentCostModel;
 use crate::align::offsets::OffsetType;
+use crate::align::traits::AlignableGraph;
 use crate::graph::bubbles::index::BubbleIndex;
 use crate::graph::traits::GraphNodeId;
 
@@ -34,13 +34,23 @@ where
     /// Get ready for one alignment. Called once per `align`, before the
     /// first `h`. A heuristic keeps its buffers between calls and resets only
     /// what the previous alignment used.
-    fn prepare<G>(&mut self, graph: &G, query: &[u8], bubbles: &Arc<BubbleIndex<N>>, mode: AlignmentMode)
-    where
+    fn prepare<G>(
+        &mut self,
+        graph: &G,
+        query: &[u8],
+        bubbles: &Arc<BubbleIndex<N>>,
+        mode: AlignmentMode,
+    ) where
         G: AlignableGraph<Node = N>;
 
     /// Takes `&mut self`: a heuristic may update its own state on a query.
     /// `graph` is the one `prepare` saw.
-    fn h<G>(&mut self, graph: &G, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> usize
+    fn h<G>(
+        &mut self,
+        graph: &G,
+        aln_node: &AlignmentGraphNode<N, O>,
+        aln_state: AlignState,
+    ) -> usize
     where
         G: AlignableGraph<Node = N>;
 
@@ -49,7 +59,12 @@ where
     /// popped state's h. A heuristic that deletes seed matches acts only if
     /// `h` here is at most `h_limit`, so that the state is at its optimal
     /// score. Returns whether it changed anything.
-    fn on_expand<G>(&mut self, _graph: &G, _aln_node: &AlignmentGraphNode<N, O>, _h_limit: usize) -> bool
+    fn on_expand<G>(
+        &mut self,
+        _graph: &G,
+        _aln_node: &AlignmentGraphNode<N, O>,
+        _h_limit: usize,
+    ) -> bool
     where
         G: AlignableGraph<Node = N>,
     {
@@ -80,13 +95,23 @@ where
     N: GraphNodeId,
     O: OffsetType,
 {
-    fn prepare<G>(&mut self, _graph: &G, _query: &[u8], _bubbles: &Arc<BubbleIndex<N>>, _mode: AlignmentMode)
-    where
+    fn prepare<G>(
+        &mut self,
+        _graph: &G,
+        _query: &[u8],
+        _bubbles: &Arc<BubbleIndex<N>>,
+        _mode: AlignmentMode,
+    ) where
         G: AlignableGraph<Node = N>,
     {
     }
 
-    fn h<G>(&mut self, _graph: &G, _aln_node: &AlignmentGraphNode<N, O>, _aln_state: AlignState) -> usize
+    fn h<G>(
+        &mut self,
+        _graph: &G,
+        _aln_node: &AlignmentGraphNode<N, O>,
+        _aln_state: AlignState,
+    ) -> usize
     where
         G: AlignableGraph<Node = N>,
     {
@@ -125,4 +150,3 @@ impl HeuristicConfig for DijkstraHeuristic {
         Dijkstra::default()
     }
 }
-

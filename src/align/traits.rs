@@ -62,7 +62,11 @@ pub trait AlignmentEngine<ToAlign> {
 
     /// Align `to_align` to `graph`. Takes `&mut self` so an engine can keep
     /// scratch storage between calls. Give every thread its own engine.
-    fn align(&mut self, graph: &Self::Graph, to_align: ToAlign) -> Result<Self::Success, Self::Error>;
+    fn align(
+        &mut self,
+        graph: &Self::Graph,
+        to_align: ToAlign,
+    ) -> Result<Self::Success, Self::Error>;
 }
 /// An aligned pair of residues. The first element represent
 /// the position with a node of the graph, and the second element

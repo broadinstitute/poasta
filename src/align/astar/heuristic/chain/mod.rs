@@ -74,7 +74,8 @@ pub struct SeedParams {
 pub struct SmoothHeuristicConfig(pub SeedParams);
 
 impl HeuristicConfig for SmoothHeuristicConfig {
-    type Heuristic<N: GraphNodeId, O: OffsetType, C: AlignmentCostModel + Copy> = SmoothHeuristic<N, O, C>;
+    type Heuristic<N: GraphNodeId, O: OffsetType, C: AlignmentCostModel + Copy> =
+        SmoothHeuristic<N, O, C>;
 
     fn instantiate<N, O, C>(&self, costs: C) -> SmoothHeuristic<N, O, C>
     where
@@ -120,18 +121,35 @@ impl<N: GraphNodeId> SeedIndex<N> {
         let c = &self.costs;
         let seeds_ahead = self.seeds.ahead(i);
         match state {
-            AlignState::Insertion | AlignState::Insertion2 => {
-                Potential { seeds_ahead, partial: 0, ins_discount: c.ins_discount[state as usize][i % self.seeds.k] }
-            }
+            AlignState::Insertion | AlignState::Insertion2 => Potential {
+                seeds_ahead,
+                partial: 0,
+                ins_discount: c.ins_discount[state as usize][i % self.seeds.k],
+            },
             _ => {
-                let partial = if self.seeds.inside(i) { c.partial[state as usize] } else { 0 };
-                Potential { seeds_ahead, partial, ins_discount: 0 }
+                let partial = if self.seeds.inside(i) {
+                    c.partial[state as usize]
+                } else {
+                    0
+                };
+                Potential {
+                    seeds_ahead,
+                    partial,
+                    ins_discount: 0,
+                }
             }
         }
     }
 
     /// The potential of node v at offset i, from `p`, its `potential_bound`.
-    fn potential<G>(&self, graph: &G, v: N, i: usize, mut p: Potential, walk: &mut Vec<Walk<N>>) -> Potential
+    fn potential<G>(
+        &self,
+        graph: &G,
+        v: N,
+        i: usize,
+        mut p: Potential,
+        walk: &mut Vec<Walk<N>>,
+    ) -> Potential
     where
         G: AlignableGraph<Node = N>,
     {
@@ -143,9 +161,15 @@ impl<N: GraphNodeId> SeedIndex<N> {
 
     /// T of node v at offset i with potential p.
     fn point(&self, v: N, i: usize, p: i64) -> Point {
-        let (lo, hi) = (self.bubbles.get_min_dist_to_end(v) as i64, self.bubbles.get_max_dist_to_end(v) as i64);
+        let (lo, hi) = (
+            self.bubbles.get_min_dist_to_end(v) as i64,
+            self.bubbles.get_max_dist_to_end(v) as i64,
+        );
         let e = self.costs.e_min;
-        Point { t1: e * (lo + i as i64) - p, t2: -e * (hi + i as i64) - p }
+        Point {
+            t1: e * (lo + i as i64) - p,
+            t2: -e * (hi + i as i64) - p,
+        }
     }
 }
 
@@ -188,7 +212,12 @@ where
             costs,
             min_gap: MinimumGapCost::unprepared(costs),
             index: None,
-            scratch: Scratch { trie: SeedTrie::default(), finder: SeedFinder::default(), walk: Vec::new(), spare: Default::default() },
+            scratch: Scratch {
+                trie: SeedTrie::default(),
+                finder: SeedFinder::default(),
+                walk: Vec::new(),
+                spare: Default::default(),
+            },
             _marker: PhantomData,
         }
     }
@@ -214,8 +243,13 @@ where
     O: OffsetType,
     C: AlignmentCostModel + Copy,
 {
-    fn prepare<G>(&mut self, graph: &G, query: &[u8], bubbles: &Arc<BubbleIndex<N>>, mode: AlignmentMode)
-    where
+    fn prepare<G>(
+        &mut self,
+        graph: &G,
+        query: &[u8],
+        bubbles: &Arc<BubbleIndex<N>>,
+        mode: AlignmentMode,
+    ) where
         G: AlignableGraph<Node = N>,
     {
         // wasm32-unknown-unknown has no clock: `Instant::now` panics there.
@@ -225,7 +259,9 @@ where
         let SeedParams { k, r, .. } = self.params;
         let free_end = match mode {
             AlignmentMode::Global => 0,
-            AlignmentMode::EndsFree { qry_free_end, .. } => resolve_bound(qry_free_end, query.len()),
+            AlignmentMode::EndsFree { qry_free_end, .. } => {
+                resolve_bound(qry_free_end, query.len())
+            }
         };
         let n = query.len().saturating_sub(free_end) / k;
         let costs = SeedCosts::new(&self.costs, self.states(), k, r, n);
@@ -242,8 +278,16 @@ where
 
         seeds.reset(query, k, r, n);
         self.scratch.trie.rebuild(&seeds);
-        self.scratch.finder.find(graph, &seeds, &self.scratch.trie, &mut matches);
-        let mut ix = SeedIndex { seeds, costs, bubbles: bubbles.clone(), matches, contours: Contours::default() };
+        self.scratch
+            .finder
+            .find(graph, &seeds, &self.scratch.trie, &mut matches);
+        let mut ix = SeedIndex {
+            seeds,
+            costs,
+            bubbles: bubbles.clone(),
+            matches,
+            contours: Contours::default(),
+        };
 
         // A match of seed j sits at the state just after its first base,
         // with the potential of the seeds after it.
@@ -251,7 +295,12 @@ where
         let mut points = Vec::with_capacity(ix.matches.len());
         for j in 0..n {
             let (i, p) = (ix.seeds.match_offset(j), c * (n - j - 1) as i64);
-            points.extend(ix.matches.of_seed(j).iter().map(|m| ix.point(m.start, i, p)));
+            points.extend(
+                ix.matches
+                    .of_seed(j)
+                    .iter()
+                    .map(|m| ix.point(m.start, i, p)),
+            );
         }
         // Fresh contours per alignment. Reuse their allocations if
         // profiles of many short alignments show them.
@@ -272,7 +321,12 @@ where
         self.index = Some(ix);
     }
 
-    fn h<G>(&mut self, graph: &G, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> usize
+    fn h<G>(
+        &mut self,
+        graph: &G,
+        aln_node: &AlignmentGraphNode<N, O>,
+        aln_state: AlignState,
+    ) -> usize
     where
         G: AlignableGraph<Node = N>,
     {
@@ -288,7 +342,9 @@ where
         if bound.value(charge) <= h_min_gap as i64 {
             return h_min_gap;
         }
-        let p = ix.potential(graph, v, i, bound, &mut self.scratch.walk).value(charge);
+        let p = ix
+            .potential(graph, v, i, bound, &mut self.scratch.walk)
+            .value(charge);
         if p <= h_min_gap as i64 {
             return h_min_gap;
         }
@@ -296,7 +352,12 @@ where
         (p - credit).max(h_min_gap as i64) as usize
     }
 
-    fn on_expand<G>(&mut self, graph: &G, aln_node: &AlignmentGraphNode<N, O>, h_limit: usize) -> bool
+    fn on_expand<G>(
+        &mut self,
+        graph: &G,
+        aln_node: &AlignmentGraphNode<N, O>,
+        h_limit: usize,
+    ) -> bool
     where
         G: AlignableGraph<Node = N>,
     {
@@ -362,13 +423,27 @@ mod tests {
             graph_free_end: Bound::Unbounded,
         };
         let costs = Affine::new(4, 6, 2);
-        let params = SeedParams { k: 8, r: 0, prune_matches: true };
-        let mut aligner = crate::align::PoastaAligner::new(AstarEngine::<POAGraph<u32>, Affine>::new(costs), POAGraph::new());
+        let params = SeedParams {
+            k: 8,
+            r: 0,
+            prune_matches: true,
+        };
+        let mut aligner = crate::align::PoastaAligner::new(
+            AstarEngine::<POAGraph<u32>, Affine>::new(costs),
+            POAGraph::new(),
+        );
         aligner.align_one_named("s0", &seqs[0]).unwrap();
         for (i, s) in seqs.iter().enumerate().skip(1) {
             let g = aligner.graph();
-            for (mode, q) in [(AlignmentMode::Global, &s[..]), (semi, &s[s.len() / 4..3 * s.len() / 4])] {
-                let want = AstarEngine::<POAGraph<u32>, Affine>::new(costs).with_mode(mode).align(g, q).unwrap().score;
+            for (mode, q) in [
+                (AlignmentMode::Global, &s[..]),
+                (semi, &s[s.len() / 4..3 * s.len() / 4]),
+            ] {
+                let want = AstarEngine::<POAGraph<u32>, Affine>::new(costs)
+                    .with_mode(mode)
+                    .align(g, q)
+                    .unwrap()
+                    .score;
                 let got = AstarEngine::<POAGraph<u32>, Affine>::new(costs)
                     .with_mode(mode)
                     .with_heuristic(SmoothHeuristicConfig(params))
@@ -394,7 +469,8 @@ mod tests {
             b"CAAACAAAACACACCCCCCAAACCCC",
             b"CAACACAACCACACCCCCCAACCCCC",
         ];
-        let engine = AstarEngine::<POAGraph<u32>, Affine>::new(Affine::new(4, 6, 2)).with_heuristic(crate::align::astar::DijkstraHeuristic);
+        let engine = AstarEngine::<POAGraph<u32>, Affine>::new(Affine::new(4, 6, 2))
+            .with_heuristic(crate::align::astar::DijkstraHeuristic);
         let mut aligner = crate::align::PoastaAligner::new(engine, POAGraph::new());
         for (i, s) in seqs.iter().enumerate() {
             aligner.align_one_named(&format!("s{i}"), s).unwrap();
@@ -403,7 +479,11 @@ mod tests {
         let costs = Affine::new(1, 2, 1);
         let q = b"AAAACCCCCACACC";
         let got = AstarEngine::<POAGraph<u32>, Affine>::new(costs)
-            .with_heuristic(SmoothHeuristicConfig(SeedParams { k: 3, r: 0, prune_matches: true }))
+            .with_heuristic(SmoothHeuristicConfig(SeedParams {
+                k: 3,
+                r: 0,
+                prune_matches: true,
+            }))
             .without_pruning()
             .align(&g, q)
             .unwrap()
@@ -415,15 +495,28 @@ mod tests {
     fn short_query_turns_the_heuristic_off() {
         let mut g = POAGraph::<u32>::new();
         g.add_alignment("s", b"ACGTACGT", None, &[1; 8]).unwrap();
-        let mut h = SmoothHeuristic::<_, Offset, _>::new(Affine::new(4, 6, 2), SeedParams { k: 8, r: 0, prune_matches: true });
+        let mut h = SmoothHeuristic::<_, Offset, _>::new(
+            Affine::new(4, 6, 2),
+            SeedParams {
+                k: 8,
+                r: 0,
+                prune_matches: true,
+            },
+        );
         let bubbles = Arc::new(BubbleIndex::new(&g));
         h.prepare(&g, b"ACG", &bubbles, AlignmentMode::Global);
         assert!(h.index.is_none());
         let with = AstarEngine::<POAGraph<u32>, Affine>::new(Affine::new(4, 6, 2))
-            .with_heuristic(SmoothHeuristicConfig(SeedParams { k: 8, r: 0, prune_matches: true }))
+            .with_heuristic(SmoothHeuristicConfig(SeedParams {
+                k: 8,
+                r: 0,
+                prune_matches: true,
+            }))
             .align(&g, b"ACG")
             .unwrap();
-        let without = AstarEngine::<POAGraph<u32>, Affine>::new(Affine::new(4, 6, 2)).align(&g, b"ACG").unwrap();
+        let without = AstarEngine::<POAGraph<u32>, Affine>::new(Affine::new(4, 6, 2))
+            .align(&g, b"ACG")
+            .unwrap();
         assert_eq!(with.score, without.score);
     }
 }

@@ -13,8 +13,8 @@ use std::convert::Infallible;
 use std::marker::PhantomData;
 
 use crate::align::cost_models::AlignmentCostModel;
-use crate::align::traits::{AlignOutput, AlignmentStats};
 use crate::align::score::{INF, sat};
+use crate::align::traits::{AlignOutput, AlignmentStats};
 use crate::align::traits::{AlignableGraph, AlignmentEngine};
 
 /// Slot layout of one DP cell: `[M, D1, I1, D2, I2]`, the same order as
@@ -34,11 +34,19 @@ pub(crate) struct DpOracle<C, G> {
 
 impl<C, G> DpOracle<C, G> {
     pub(crate) fn new(costs: C) -> Self {
-        Self { costs, ends_free: false, _graph: PhantomData }
+        Self {
+            costs,
+            ends_free: false,
+            _graph: PhantomData,
+        }
     }
 
     pub(crate) fn new_semi_global(costs: C) -> Self {
-        Self { costs, ends_free: true, _graph: PhantomData }
+        Self {
+            costs,
+            ends_free: true,
+            _graph: PhantomData,
+        }
     }
 }
 
@@ -49,7 +57,14 @@ where
 {
     /// Optimal cost from alignment state `(node, offset, state)` to any valid
     /// end, or `INF` if no end is reachable.
-    pub(crate) fn cost_from(&self, graph: &G, query: &[u8], node: G::Node, offset: usize, state: usize) -> u32 {
+    pub(crate) fn cost_from(
+        &self,
+        graph: &G,
+        query: &[u8],
+        node: G::Node,
+        offset: usize,
+        state: usize,
+    ) -> u32 {
         self.fill(graph, query, Some((node, offset, state)))
     }
 }
@@ -120,11 +135,8 @@ where
                     for &(go, ge, _, ins) in &pieces {
                         dp[cell(rank, q)][ins] = go + q as u32 * ge;
                     }
-                    dp[cell(rank, q)][M] = pieces
-                        .iter()
-                        .map(|p| dp[cell(rank, q)][p.3])
-                        .min()
-                        .unwrap();
+                    dp[cell(rank, q)][M] =
+                        pieces.iter().map(|p| dp[cell(rank, q)][p.3]).min().unwrap();
                 }
                 continue;
             }
@@ -291,5 +303,4 @@ mod tests {
             assert_eq!(oracle.cost_from(g, q, g.start_node(), 0, M), score(c, g, q));
         }
     }
-
 }

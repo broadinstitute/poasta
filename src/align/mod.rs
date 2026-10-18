@@ -14,8 +14,8 @@ use crate::graph::alignment::AddAlignment;
 use self::traits::AlignmentStats;
 use self::traits::{AlignResult, AlignableGraph, AlignmentEngine};
 
-pub mod cost_models;
 pub mod astar;
+pub mod cost_models;
 pub mod offsets;
 pub mod score;
 pub mod traits;
@@ -25,9 +25,9 @@ pub mod traits;
 #[cfg(test)]
 pub(crate) mod test_support {
     use super::cost_models::AlignmentCostModel;
-    use super::traits::AlignedPair;
     use super::score::sat;
     use super::traits::AlignableGraph;
+    use super::traits::AlignedPair;
 
     /// Recompute an alignment's score by replaying its `AlignedPair`s through
     /// the cost model, independent of however the engine computed its DP
@@ -340,8 +340,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::align::cost_models::affine::Affine;
     use crate::align::astar::AstarEngine;
+    use crate::align::cost_models::affine::Affine;
     use crate::graph::poa::POAGraph;
     use crate::graph::traits::GraphBase;
 

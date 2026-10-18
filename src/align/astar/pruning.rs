@@ -20,9 +20,9 @@
 use std::cmp::{max, min};
 
 use crate::align::AlignState;
-use crate::align::cost_models::AlignmentCostModel;
 use crate::align::astar::aln_graph::AlignmentGraphNode;
 use crate::align::astar::visited::ReachedBits;
+use crate::align::cost_models::AlignmentCostModel;
 use crate::align::offsets::OffsetType;
 use crate::graph::bubbles::index::{BubbleIndex, NodeBubbleMap};
 use crate::graph::traits::GraphNodeId;
@@ -80,7 +80,10 @@ where
         // offset at or below is checked, which is conservative.
         let (open, extend) = match aln_state {
             AlignState::Deletion => (self.costs.gap_open() as u32, self.costs.gap_extend() as u32),
-            AlignState::Deletion2 => (self.costs.gap_open2() as u32, self.costs.gap_extend2() as u32),
+            AlignState::Deletion2 => (
+                self.costs.gap_open2() as u32,
+                self.costs.gap_extend2() as u32,
+            ),
             _ => (0, 0),
         };
         if extend > 0 {
@@ -248,8 +251,12 @@ where
         let piece = |open: u8, extend: u8| open as u32 + length as u32 * extend as u32;
         match aln_state {
             AlignState::Match => self.costs.gap_cost(AlignState::Match, length) as u32,
-            AlignState::Insertion | AlignState::Deletion => piece(self.costs.gap_open(), self.costs.gap_extend()),
-            AlignState::Insertion2 | AlignState::Deletion2 => piece(self.costs.gap_open2(), self.costs.gap_extend2()),
+            AlignState::Insertion | AlignState::Deletion => {
+                piece(self.costs.gap_open(), self.costs.gap_extend())
+            }
+            AlignState::Insertion2 | AlignState::Deletion2 => {
+                piece(self.costs.gap_open2(), self.costs.gap_extend2())
+            }
         }
     }
 
@@ -273,8 +280,10 @@ where
                 let gap_from_left = offset_to_check - offset_left;
                 let gap_from_right = offset_right - offset_to_check;
 
-                let implicit_score_from_left = left_score + self.implicit_gap_cost(aln_state, gap_from_left.as_usize());
-                let implicit_score_from_right = right_score + self.implicit_gap_cost(aln_state, gap_from_right.as_usize());
+                let implicit_score_from_left =
+                    left_score + self.implicit_gap_cost(aln_state, gap_from_left.as_usize());
+                let implicit_score_from_right =
+                    right_score + self.implicit_gap_cost(aln_state, gap_from_right.as_usize());
 
                 // Only take deletion score into consideration if the deletion length is smaller
                 // than the path length to the graph end node
@@ -287,7 +296,8 @@ where
             (None, Some(offset_right)) => {
                 let right_score = (self.get_match_score)(bubble_node, offset_right);
                 let gap_from_right = offset_right - offset_to_check;
-                let implicit_score_from_right = right_score + self.implicit_gap_cost(aln_state, gap_from_right.as_usize());
+                let implicit_score_from_right =
+                    right_score + self.implicit_gap_cost(aln_state, gap_from_right.as_usize());
 
                 if gap_from_right.as_usize() > min_dist_to_end {
                     None
@@ -298,7 +308,8 @@ where
             (Some(offset_left), None) => {
                 let left_score = (self.get_match_score)(bubble_node, offset_left);
                 let gap_from_left = offset_to_check - offset_left;
-                let implicit_score_from_left = left_score + self.implicit_gap_cost(aln_state, gap_from_left.as_usize());
+                let implicit_score_from_left =
+                    left_score + self.implicit_gap_cost(aln_state, gap_from_left.as_usize());
 
                 Some(implicit_score_from_left)
             }

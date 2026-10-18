@@ -7,8 +7,8 @@
 
 use std::fmt::{self, Display, Write};
 
-use itertools::Itertools;
 use crate::graph::traits::IndexType;
+use itertools::Itertools;
 use rustc_hash::FxHashMap;
 
 use crate::align::traits::AlignedPair;
@@ -190,9 +190,9 @@ where
         .map(|&segment_ix| graph_segments.segment_lengths[segment_ix])
         .sum();
 
-    let path_aln_end =
-        path_length - graph_segments.segment_lengths[path_segments[last_match_segment_ix]]
-            + last_match_segment_pos;
+    let path_aln_end = path_length
+        - graph_segments.segment_lengths[path_segments[last_match_segment_ix]]
+        + last_match_segment_pos;
 
     let query_end = alignment
         .iter()
@@ -393,7 +393,10 @@ mod tests {
         )
         .expect("non-empty record");
 
-        assert_eq!(rec.query_start, 1, "leading insertion should advance query_start");
+        assert_eq!(
+            rec.query_start, 1,
+            "leading insertion should advance query_start"
+        );
         assert_eq!(
             rec.aln_block_len, 1,
             "trailing deletion should be trimmed from aln_block_len"
@@ -429,13 +432,36 @@ mod tests {
                 .with_mode(span.mode())
                 .align(&loaded.graph, read)
                 .unwrap();
-            let rec = alignment_to_gaf(&loaded.graph, &loaded.graph_segments, "r", read, &out.alignment, &node_to_segment, out.score)
-                .expect("a record");
+            let rec = alignment_to_gaf(
+                &loaded.graph,
+                &loaded.graph_segments,
+                "r",
+                read,
+                &out.alignment,
+                &node_to_segment,
+                out.score,
+            )
+            .expect("a record");
             assert_eq!(rec.path_aln_start, 3, "{span:?}");
-            assert!(rec.graph_path.starts_with(">1"), "{span:?}: {}", rec.graph_path);
-            assert_eq!((rec.query_start, rec.query_end), (0, read.len() - 1), "{span:?}");
-            let as_tag = rec.additional_fields.iter().find(|f| f.tag == "AS").expect("AS field");
-            assert!(matches!(as_tag.value, FieldValue::Integer(v) if v == out.score as i64), "{span:?}");
+            assert!(
+                rec.graph_path.starts_with(">1"),
+                "{span:?}: {}",
+                rec.graph_path
+            );
+            assert_eq!(
+                (rec.query_start, rec.query_end),
+                (0, read.len() - 1),
+                "{span:?}"
+            );
+            let as_tag = rec
+                .additional_fields
+                .iter()
+                .find(|f| f.tag == "AS")
+                .expect("AS field");
+            assert!(
+                matches!(as_tag.value, FieldValue::Integer(v) if v == out.score as i64),
+                "{span:?}"
+            );
             if span == AlignmentSpan::SemiGlobal {
                 assert_eq!(out.score, 0);
             }

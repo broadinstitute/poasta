@@ -129,7 +129,11 @@ pub struct SearchArgs {
 
 impl SearchArgs {
     pub fn seed_params(&self) -> SeedParams {
-        SeedParams { k: self.seed_length as usize, r: self.seed_mismatches as usize, prune_matches: !self.no_match_pruning }
+        SeedParams {
+            k: self.seed_length as usize,
+            r: self.seed_mismatches as usize,
+            prune_matches: !self.no_match_pruning,
+        }
     }
 }
 
@@ -150,7 +154,11 @@ macro_rules! instantiate_engine {
         let new_plain_engine = $new_plain_engine;
         let new_pruned_engine = || {
             let engine = new_plain_engine();
-            if search.no_pruning { engine.without_pruning() } else { engine }
+            if search.no_pruning {
+                engine.without_pruning()
+            } else {
+                engine
+            }
         };
         match search.heuristic {
             $crate::cli::HeuristicKind::MinGapCost => {
@@ -158,7 +166,8 @@ macro_rules! instantiate_engine {
                 $body
             }
             $crate::cli::HeuristicKind::Dijkstra => {
-                let $new_engine = || new_pruned_engine().with_heuristic($crate::align::astar::DijkstraHeuristic);
+                let $new_engine =
+                    || new_pruned_engine().with_heuristic($crate::align::astar::DijkstraHeuristic);
                 $body
             }
             $crate::cli::HeuristicKind::Chain => {
@@ -191,10 +200,27 @@ mod tests {
     fn search_defaults_and_ranges() {
         let s = align(&[]).unwrap();
         assert_eq!(s.heuristic, HeuristicKind::MinGapCost);
-        assert_eq!((s.seed_length, s.seed_mismatches, s.no_pruning, s.no_match_pruning), (8, 0, false, false));
+        assert_eq!(
+            (
+                s.seed_length,
+                s.seed_mismatches,
+                s.no_pruning,
+                s.no_match_pruning
+            ),
+            (8, 0, false, false)
+        );
         assert!(s.seed_params().prune_matches);
 
-        let s = align(&["--heuristic", "chain", "--seed-length", "12", "--seed-mismatches", "1", "--no-match-pruning"]).unwrap();
+        let s = align(&[
+            "--heuristic",
+            "chain",
+            "--seed-length",
+            "12",
+            "--seed-mismatches",
+            "1",
+            "--no-match-pruning",
+        ])
+        .unwrap();
         assert_eq!(s.heuristic, HeuristicKind::Chain);
         let p = s.seed_params();
         assert_eq!((p.k, p.r, p.prune_matches), (12, 1, false));
@@ -205,13 +231,25 @@ mod tests {
 
     #[test]
     fn lasagna_accepts_semi_global() {
-        let cli = LasagnaCli::try_parse_from(["lasagna", "g.gfa", "r.fa", "-m", "semi-global"]).unwrap();
-        assert!(matches!(cli.alignment_span.mode(), crate::align::AlignmentMode::EndsFree { .. }));
+        let cli =
+            LasagnaCli::try_parse_from(["lasagna", "g.gfa", "r.fa", "-m", "semi-global"]).unwrap();
+        assert!(matches!(
+            cli.alignment_span.mode(),
+            crate::align::AlignmentMode::EndsFree { .. }
+        ));
     }
 
     #[test]
     fn lasagna_takes_the_same_search_options() {
-        let cli = LasagnaCli::try_parse_from(["lasagna", "g.gfa", "r.fa", "--heuristic", "chain", "--no-pruning"]).unwrap();
+        let cli = LasagnaCli::try_parse_from([
+            "lasagna",
+            "g.gfa",
+            "r.fa",
+            "--heuristic",
+            "chain",
+            "--no-pruning",
+        ])
+        .unwrap();
         assert_eq!(cli.search.heuristic, HeuristicKind::Chain);
         assert!(cli.search.no_pruning);
     }

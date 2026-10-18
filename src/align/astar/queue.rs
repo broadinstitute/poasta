@@ -153,7 +153,13 @@ where
     fn pop_aln_state(&mut self) -> Option<AstarQueuedItem<N, O>>;
     /// Priority of the item the next pop returns.
     fn min_priority(&self) -> usize;
-    fn queue_aln_state(&mut self, node: AlignmentGraphNode<N, O>, aln_state: AlignState, score: u32, h: usize);
+    fn queue_aln_state(
+        &mut self,
+        node: AlignmentGraphNode<N, O>,
+        aln_state: AlignState,
+        score: u32,
+        h: usize,
+    );
     fn clear(&mut self);
 }
 
@@ -171,7 +177,13 @@ where
         self.layer_min
     }
 
-    fn queue_aln_state(&mut self, node: AlignmentGraphNode<N, O>, aln_state: AlignState, score: u32, h: usize) {
+    fn queue_aln_state(
+        &mut self,
+        node: AlignmentGraphNode<N, O>,
+        aln_state: AlignState,
+        score: u32,
+        h: usize,
+    ) {
         let priority = score as usize + h;
         tracing::trace!(
             target: "poasta::astar::queue_item",
@@ -381,7 +393,8 @@ mod tests {
             layer.queue(AstarQueuedItem(0, node, state));
         }
 
-        let order: Vec<AlignState> = std::iter::from_fn(|| layer.pop().map(|i| i.aln_state())).collect();
+        let order: Vec<AlignState> =
+            std::iter::from_fn(|| layer.pop().map(|i| i.aln_state())).collect();
         assert_eq!(order, POP_ORDER.to_vec());
         assert!(layer.is_empty());
     }

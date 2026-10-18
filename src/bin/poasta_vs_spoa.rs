@@ -8,11 +8,11 @@ use flate2::read::MultiGzDecoder;
 use noodles::fasta::record::Sequence;
 use noodles::fasta::{self, Record};
 
+use poasta::align::astar::AstarEngine;
 use poasta::align::cost_models::affine::Affine;
 use poasta::align::cost_models::linear::Linear;
 use poasta::align::cost_models::two_piece::TwoPieceAffine;
 use poasta::align::traits::AlignOutput;
-use poasta::align::astar::AstarEngine;
 use poasta::align::traits::AlignmentEngine;
 use poasta::cli::CostModelKind;
 use poasta::cli::poasta_vs_spoa::PoastaVsSpoaArgs;

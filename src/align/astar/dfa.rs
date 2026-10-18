@@ -121,14 +121,26 @@ where
     O: OffsetType,
 {
     pub fn new(ref_graph: &'a G, seq: &'a [u8], prune: bool) -> Self {
-        Self { ref_graph, seq, score: 0, num_visited: 0, stack: Vec::new(), prune, num_pruned: 0, matched_log: None }
+        Self {
+            ref_graph,
+            seq,
+            score: 0,
+            num_visited: 0,
+            stack: Vec::new(),
+            prune,
+            num_pruned: 0,
+            matched_log: None,
+        }
     }
 
     /// Restart extension from `start_node` at `score`. Clears the stack but
     /// keeps its capacity, which is the point of reusing the struct.
     pub fn start(&mut self, score: u32, start_node: &AlignmentGraphNode<G::Node, O>) {
         self.stack.clear();
-        self.stack.push(StackNode::new(*start_node, self.ref_graph.successors(start_node.node())));
+        self.stack.push(StackNode::new(
+            *start_node,
+            self.ref_graph.successors(start_node.node()),
+        ));
         self.score = score;
         self.num_visited = 0;
     }
@@ -143,7 +155,11 @@ where
     /// `ExtendResult::EndReached`). For `Global` mode this is essentially free:
     /// it's only ever true at the true end sentinel, which the DFA never
     /// reaches via a `Match` step in the first place.
-    pub fn extend<V, F>(&mut self, astar_visited: &mut V, is_end: F) -> Option<ExtendResult<G::Node, O>>
+    pub fn extend<V, F>(
+        &mut self,
+        astar_visited: &mut V,
+        is_end: F,
+    ) -> Option<ExtendResult<G::Node, O>>
     where
         V: AstarVisited<G::Node, O>,
         F: Fn(&AlignmentGraphNode<G::Node, O>) -> bool,
@@ -153,7 +169,10 @@ where
 
             match self.next_valid_successor(parent, astar_visited) {
                 Successor::RefGraphEnd(aln_node) => {
-                    return Some(ExtendResult::RefGraphEnd(*parent.aln_graph_node(), aln_node));
+                    return Some(ExtendResult::RefGraphEnd(
+                        *parent.aln_graph_node(),
+                        aln_node,
+                    ));
                 }
                 Successor::QueryEnd(ref_node) => {
                     return Some(ExtendResult::QueryEnd(*parent.aln_graph_node(), ref_node));
@@ -227,7 +246,10 @@ where
             let child_offset = parent.offset().increase_one();
             let child_node = AlignmentGraphNode::new(child, child_offset);
 
-            if self.ref_graph.is_symbol_equal(child, self.seq[child_offset.as_usize() - 1]) {
+            if self
+                .ref_graph
+                .is_symbol_equal(child, self.seq[child_offset.as_usize() - 1])
+            {
                 if astar_visited.update_score_if_lower(
                     &child_node,
                     AlignState::Match,

@@ -5,8 +5,8 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 
-use flate2::read::MultiGzDecoder;
 use crate::graph::traits::IndexType;
+use flate2::read::MultiGzDecoder;
 use rustc_hash::FxHashMap;
 
 use crate::errors::PoastaIOError;

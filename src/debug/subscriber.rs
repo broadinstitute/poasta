@@ -100,10 +100,10 @@ where
 
         // Events fire inside the engine's own spans; the files hang on the
         // enclosing `seq_id` span, so walk outwards to find them.
-        let Some(span) = ctx
-            .event_span(event)
-            .and_then(|s| s.scope().find(|s| s.extensions().get::<SpanOutputFiles>().is_some()))
-        else {
+        let Some(span) = ctx.event_span(event).and_then(|s| {
+            s.scope()
+                .find(|s| s.extensions().get::<SpanOutputFiles>().is_some())
+        }) else {
             return;
         };
         let mut extensions = span.extensions_mut();

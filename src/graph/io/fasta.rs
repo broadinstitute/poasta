@@ -2,9 +2,9 @@
 
 use std::io::{BufRead, Write};
 
+use crate::graph::traits::IndexType;
 use noodles::fasta::record::{Definition, Sequence as NoodlesSequence};
 use noodles::fasta::{self, Record};
-use crate::graph::traits::IndexType;
 
 const NO_COL: u32 = u32::MAX;
 
@@ -13,7 +13,6 @@ use crate::graph::consensus::heaviest_bundle_consensus;
 use crate::graph::io::CONSENSUS_NAME;
 use crate::graph::poa::{NodeId, POAGraph, Sequence};
 use crate::graph::traits::{GraphBase, GraphWithNodeOrdering};
-
 
 /// Options controlling FASTA output generation.
 #[derive(Default, Copy, Clone, Debug)]

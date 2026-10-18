@@ -56,17 +56,36 @@ where
     }
 
     /// The parts of `h` at a state. `h_chain.max(h_min_gap)` equals `h`.
-    pub fn explain<G>(&mut self, graph: &G, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> ChainExplain
+    pub fn explain<G>(
+        &mut self,
+        graph: &G,
+        aln_node: &AlignmentGraphNode<N, O>,
+        aln_state: AlignState,
+    ) -> ChainExplain
     where
         G: AlignableGraph<Node = N>,
     {
         let h_min_gap = self.min_gap.bound(aln_node, aln_state);
         let Some(ix) = &mut self.index else {
-            return ChainExplain { h_min_gap, ..Default::default() };
+            return ChainExplain {
+                h_min_gap,
+                ..Default::default()
+            };
         };
         let (v, i) = (aln_node.node(), aln_node.offset().as_usize());
-        let potential = ix.potential(graph, v, i, ix.potential_bound(i, aln_state), &mut self.scratch.walk);
-        let mut e = ChainExplain { charge: ix.costs.charge, potential, h_min_gap, ..Default::default() };
+        let potential = ix.potential(
+            graph,
+            v,
+            i,
+            ix.potential_bound(i, aln_state),
+            &mut self.scratch.walk,
+        );
+        let mut e = ChainExplain {
+            charge: ix.costs.charge,
+            potential,
+            h_min_gap,
+            ..Default::default()
+        };
         let p = potential.value(e.charge);
         if p > 0 {
             e.t = ix.point(v, i, p);
@@ -79,13 +98,26 @@ where
     }
 
     /// T(x) of a state, or None once it has no potential left.
-    pub fn t<G>(&mut self, graph: &G, aln_node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> Option<Point>
+    pub fn t<G>(
+        &mut self,
+        graph: &G,
+        aln_node: &AlignmentGraphNode<N, O>,
+        aln_state: AlignState,
+    ) -> Option<Point>
     where
         G: AlignableGraph<Node = N>,
     {
         let ix = self.index.as_ref()?;
         let (v, i) = (aln_node.node(), aln_node.offset().as_usize());
-        let p = ix.potential(graph, v, i, ix.potential_bound(i, aln_state), &mut self.scratch.walk).value(ix.costs.charge);
+        let p = ix
+            .potential(
+                graph,
+                v,
+                i,
+                ix.potential_bound(i, aln_state),
+                &mut self.scratch.walk,
+            )
+            .value(ix.costs.charge);
         (p > 0).then(|| ix.point(v, i, p))
     }
 
@@ -99,7 +131,13 @@ where
         for seed in 0..ix.seeds.n {
             for m in ix.matches.of_seed(seed) {
                 let id = out.len() as MatchId;
-                out.push(MatchInfo { seed, start: m.start, end: m.end, t: ix.contours.t(id), sigma: ix.contours.sigma(id) });
+                out.push(MatchInfo {
+                    seed,
+                    start: m.start,
+                    end: m.end,
+                    t: ix.contours.t(id),
+                    sigma: ix.contours.sigma(id),
+                });
             }
         }
         out
@@ -146,20 +184,39 @@ mod tests {
             .take(4)
             .map(|r| r.unwrap().1[..300].to_vec())
             .collect();
-        let mut aligner = crate::align::PoastaAligner::new(AstarEngine::<POAGraph<u32>, Affine>::new(Affine::new(4, 6, 2)), POAGraph::new());
+        let mut aligner = crate::align::PoastaAligner::new(
+            AstarEngine::<POAGraph<u32>, Affine>::new(Affine::new(4, 6, 2)),
+            POAGraph::new(),
+        );
         for (i, s) in seqs[..3].iter().enumerate() {
             aligner.align_one_named(&format!("s{i}"), s).unwrap();
         }
         let g = aligner.into_graph();
         let q = &seqs[3];
-        let mut h = SmoothHeuristic::<_, Offset, _>::new(Affine::new(4, 6, 2), SeedParams { k: 6, r: 0, prune_matches: true });
-        h.prepare(&g, q, &Arc::new(BubbleIndex::new(&g)), AlignmentMode::Global);
+        let mut h = SmoothHeuristic::<_, Offset, _>::new(
+            Affine::new(4, 6, 2),
+            SeedParams {
+                k: 6,
+                r: 0,
+                prune_matches: true,
+            },
+        );
+        h.prepare(
+            &g,
+            q,
+            &Arc::new(BubbleIndex::new(&g)),
+            AlignmentMode::Global,
+        );
         let n_matches = h.matches().len();
         assert!(n_matches > 10);
         for round in 0..2 {
             for v in g.all_nodes_iter() {
                 for i in (0..=q.len()).step_by(7) {
-                    for st in [AlignState::Match, AlignState::Deletion, AlignState::Insertion] {
+                    for st in [
+                        AlignState::Match,
+                        AlignState::Deletion,
+                        AlignState::Insertion,
+                    ] {
                         let x = AlignmentGraphNode::new(v, i as Offset);
                         let e = h.explain(&g, &x, st);
                         assert_eq!(e.h_chain.max(e.h_min_gap), h.h(&g, &x, st), "round {round}");

@@ -28,7 +28,10 @@ impl Point {
     /// This point moved by d along the diagonal.
     #[inline]
     pub fn shifted(self, d: i64) -> Point {
-        Point { t1: self.t1 + d, t2: self.t2 + d }
+        Point {
+            t1: self.t1 + d,
+            t2: self.t2 + d,
+        }
     }
 }
 
@@ -50,7 +53,11 @@ struct Level {
 
 impl Level {
     fn fix_best(&mut self, from: usize) {
-        let mut acc = if from == 0 { (i64::MIN, 0) } else { self.best[from - 1] };
+        let mut acc = if from == 0 {
+            (i64::MIN, 0)
+        } else {
+            self.best[from - 1]
+        };
         for ix in from..self.pts.len() {
             if self.pts[ix].p.t2 > acc.0 {
                 acc = (self.pts[ix].p.t2, ix as u32);
@@ -68,7 +75,11 @@ impl Level {
 
     fn remove(&mut self, t1: i64, m: MatchId) {
         let from = self.pts.partition_point(|q| q.p.t1 > t1);
-        let at = from + self.pts[from..].iter().position(|q| q.m == m).expect("sub-point present");
+        let at = from
+            + self.pts[from..]
+                .iter()
+                .position(|q| q.m == m)
+                .expect("sub-point present");
         self.pts.remove(at);
         self.best.remove(at);
         self.fix_best(at);
@@ -132,7 +143,15 @@ impl Contours {
         let mut s = Self {
             charge,
             grid,
-            matches: points.into_iter().map(|t| MatchState { t, sigma: 0, parent: NONE, dirty: false }).collect(),
+            matches: points
+                .into_iter()
+                .map(|t| MatchState {
+                    t,
+                    sigma: 0,
+                    parent: NONE,
+                    dirty: false,
+                })
+                .collect(),
             levels: vec![Level::default()],
             children: vec![Vec::new(); n],
             ..Default::default()
@@ -186,11 +205,17 @@ impl Contours {
     /// The highest level with a sub-point that dominates q, searching from
     /// `hint`. Exact only if no dirty sub-point can dominate q.
     fn search(&self, q: Point, hint: usize) -> usize {
-        last_true(hint, self.levels.len() - 1, |v| v == 0 || self.levels[v].dominator(q).is_some())
+        last_true(hint, self.levels.len() - 1, |v| {
+            v == 0 || self.levels[v].dominator(q).is_some()
+        })
     }
 
     fn owner(&self, level: usize, q: Point) -> Option<MatchId> {
-        if level == 0 { None } else { self.levels[level].dominator(q) }
+        if level == 0 {
+            None
+        } else {
+            self.levels[level].dominator(q)
+        }
     }
 
     /// Recompute the dirty matches that can dominate a point with T₁ ≥ t1. A
@@ -227,7 +252,10 @@ impl Contours {
     #[cfg(any(test, feature = "viz"))]
     pub fn best(&mut self, q: Point) -> Credit {
         let credit = self.credit(q);
-        Credit { credit, owner: self.owner(self.hint, q) }
+        Credit {
+            credit,
+            owner: self.owner(self.hint, q),
+        }
     }
 
     /// Recompute every dirty match.
@@ -265,7 +293,10 @@ impl Contours {
             .iter()
             .enumerate()
             .skip(1)
-            .map(|(v, l)| Staircase { credit: v as i64 * self.grid, points: l.pts.clone() })
+            .map(|(v, l)| Staircase {
+                credit: v as i64 * self.grid,
+                points: l.pts.clone(),
+            })
             .collect()
     }
 
@@ -408,14 +439,23 @@ mod tests {
                 let want = brute_sigma(&t, &alive, c);
                 for _ in 0..10 {
                     let q = ((rnd(26) - 1) * g, (rnd(26) - 1) * g);
-                    let expect = (0..n).filter(|&m| alive[m]).map(|m| savings(t[m], want[m], c, q)).max().unwrap_or(0).max(0);
+                    let expect = (0..n)
+                        .filter(|&m| alive[m])
+                        .map(|m| savings(t[m], want[m], c, q))
+                        .max()
+                        .unwrap_or(0)
+                        .max(0);
                     cs.hint = rnd(8) as usize;
                     let got = cs.best(Point { t1: q.0, t2: q.1 });
                     assert_eq!(got.credit, expect, "case {case}");
                     assert_eq!(got.owner.is_some(), expect > 0, "case {case}");
                 }
                 cs.repair();
-                assert_eq!((0..n as MatchId).map(|m| cs.sigma(m)).collect::<Vec<_>>(), want, "case {case}");
+                assert_eq!(
+                    (0..n as MatchId).map(|m| cs.sigma(m)).collect::<Vec<_>>(),
+                    want,
+                    "case {case}"
+                );
                 let m = rnd(n as u64) as usize;
                 alive[m] = false;
                 cs.prune(m as u32);
@@ -428,7 +468,11 @@ mod tests {
         for top in 0..20 {
             for answer in 0..=top {
                 for hint in 0..=top + 3 {
-                    assert_eq!(last_true(hint, top, |v| v <= answer), answer, "top {top} answer {answer} hint {hint}");
+                    assert_eq!(
+                        last_true(hint, top, |v| v <= answer),
+                        answer,
+                        "top {top} answer {answer} hint {hint}"
+                    );
                 }
             }
         }

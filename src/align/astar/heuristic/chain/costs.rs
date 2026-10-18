@@ -29,7 +29,13 @@ pub(crate) struct SeedCosts {
 impl SeedCosts {
     /// `states` is the alignment graph's state count: 1 (linear), 3
     /// (affine) or 5 (two-piece).
-    pub fn new<C: AlignmentCostModel>(costs: &C, states: usize, k: usize, r: usize, n_seeds: usize) -> Self {
+    pub fn new<C: AlignmentCostModel>(
+        costs: &C,
+        states: usize,
+        k: usize,
+        r: usize,
+        n_seeds: usize,
+    ) -> Self {
         let miss = miss(costs, k, r, n_seeds);
         let e_min = gap_pieces(costs).iter().map(|&(_, e)| e).min().unwrap_or(0) as i64;
 
@@ -39,7 +45,11 @@ impl SeedCosts {
         // `miss` and one mismatch, and for each insertion piece at most k·e,
         // so the discount exists, and at most e + ⌊o/2⌋, so opening an
         // insertion costs at least the drop in `h`: o + e ≥ c + D(0).
-        let mut charge = if e_min == 0 { 0 } else { (miss as i64).min(costs.mismatch() as i64) };
+        let mut charge = if e_min == 0 {
+            0
+        } else {
+            (miss as i64).min(costs.mismatch() as i64)
+        };
         for &(_, open, extend) in &ins_pieces {
             charge = charge.min(k as i64 * extend).min(extend + open / 2);
         }
@@ -68,7 +78,14 @@ impl SeedCosts {
             }
         }
 
-        Self { miss, charge, e_min, partial, ins_discount, lattice: lattice.max(1) }
+        Self {
+            miss,
+            charge,
+            e_min,
+            partial,
+            ins_discount,
+            lattice: lattice.max(1),
+        }
     }
 }
 
@@ -76,10 +93,18 @@ impl SeedCosts {
 fn insertion_pieces<C: AlignmentCostModel>(costs: &C, states: usize) -> Vec<(usize, i64, i64)> {
     let mut pieces = Vec::new();
     if states >= 3 {
-        pieces.push((AlignState::Insertion as usize, costs.gap_open() as i64, costs.gap_extend() as i64));
+        pieces.push((
+            AlignState::Insertion as usize,
+            costs.gap_open() as i64,
+            costs.gap_extend() as i64,
+        ));
     }
     if states == 5 {
-        pieces.push((AlignState::Insertion2 as usize, costs.gap_open2() as i64, costs.gap_extend2() as i64));
+        pieces.push((
+            AlignState::Insertion2 as usize,
+            costs.gap_open2() as i64,
+            costs.gap_extend2() as i64,
+        ));
     }
     pieces
 }
@@ -101,7 +126,13 @@ pub(crate) fn gap_pieces<C: AlignmentCostModel>(costs: &C) -> Vec<(usize, usize)
 /// bases, and its cost is shared by the s seeds it touches.
 pub(crate) fn miss<C: AlignmentCostModel>(costs: &C, k: usize, r: usize, n_seeds: usize) -> usize {
     let pieces = gap_pieces(costs);
-    let g = |len: usize| pieces.iter().map(|&(o, e)| o + e * len).min().unwrap_or(usize::MAX);
+    let g = |len: usize| {
+        pieces
+            .iter()
+            .map(|&(o, e)| o + e * len)
+            .min()
+            .unwrap_or(usize::MAX)
+    };
     let mut miss = ((r + 1) * costs.mismatch() as usize).min(g(1));
     for s in 2..=n_seeds {
         miss = miss.min(g((s - 2) * k + 2) / s);
@@ -123,7 +154,9 @@ pub(crate) fn miss<C: AlignmentCostModel>(costs: &C, k: usize, r: usize, n_seeds
 /// c ≤ k·e, so they are the table: c − e·(d + 1), clamped at 0, with d the
 /// distance from t to the next seed start.
 pub(crate) fn insertion_discount(c: i64, e: i64, k: usize) -> Vec<i64> {
-    (0..k).map(|t| (c - e * ((k - t) % k + 1) as i64).max(0)).collect()
+    (0..k)
+        .map(|t| (c - e * ((k - t) % k + 1) as i64).max(0))
+        .collect()
 }
 
 fn gcd(a: i64, b: i64) -> i64 {
@@ -151,7 +184,10 @@ mod tests {
     fn charges_and_discounts() {
         let c = SeedCosts::new(&Affine::new(4, 6, 2), 3, 8, 0, 100);
         assert_eq!((c.charge, c.e_min, c.lattice), (4, 2, 2));
-        assert_eq!(c.ins_discount[AlignState::Insertion as usize], vec![2, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            c.ins_discount[AlignState::Insertion as usize],
+            vec![2, 0, 0, 0, 0, 0, 0, 0]
+        );
         assert_eq!(c.partial[AlignState::Deletion as usize], 2);
 
         // The full charge also for two-piece: no cap.
@@ -161,21 +197,41 @@ mod tests {
         // Mismatch 1 below the piece-one extend 2: D(0) is clamped at 0.
         let c = SeedCosts::new(&TwoPieceAffine::new(1, 2, 2, 6, 1), 5, 4, 0, 100);
         assert_eq!(c.charge, 1);
-        assert!(c.ins_discount[AlignState::Insertion as usize].iter().all(|&d| d == 0));
+        assert!(
+            c.ins_discount[AlignState::Insertion as usize]
+                .iter()
+                .all(|&d| d == 0)
+        );
 
-        assert_eq!(SeedCosts::new(&Affine::new(0, 6, 2), 3, 8, 0, 100).charge, 0);
+        assert_eq!(
+            SeedCosts::new(&Affine::new(0, 6, 2), 3, 8, 0, 100).charge,
+            0
+        );
     }
 
     /// The charge and discounts by their definition: lower the charge until
     /// every insertion piece has a discount table, found by relaxing the
     /// constraints, with c + max D ≤ o + e.
-    fn by_definition<C: AlignmentCostModel>(costs: &C, states: usize, k: usize, r: usize, n: usize) -> (i64, [Vec<i64>; 5]) {
+    fn by_definition<C: AlignmentCostModel>(
+        costs: &C,
+        states: usize,
+        k: usize,
+        r: usize,
+        n: usize,
+    ) -> (i64, [Vec<i64>; 5]) {
         let relax = |c: i64, e: i64| -> Option<Vec<i64>> {
             if c > e * k as i64 {
                 return None;
             }
-            let mut d: Vec<i64> =
-                (0..k).map(|t| if t == 0 { (c - e).max(0) } else { (c - e * (k - t + 1) as i64).max(0) }).collect();
+            let mut d: Vec<i64> = (0..k)
+                .map(|t| {
+                    if t == 0 {
+                        (c - e).max(0)
+                    } else {
+                        (c - e * (k - t + 1) as i64).max(0)
+                    }
+                })
+                .collect();
             loop {
                 let mut changed = false;
                 if k > 1 && d[0] < d[1] + c - e {
@@ -197,13 +253,16 @@ mod tests {
         let mut c = (miss(costs, k, r, n) as i64).min(costs.mismatch() as i64);
         while c > 0 {
             let mut tables: [Vec<i64>; 5] = Default::default();
-            let fits = insertion_pieces(costs, states).into_iter().all(|(state, o, e)| match relax(c, e) {
-                Some(d) if c + d.iter().copied().max().unwrap_or(0) <= o + e => {
-                    tables[state] = d;
-                    true
-                }
-                _ => false,
-            });
+            let fits =
+                insertion_pieces(costs, states)
+                    .into_iter()
+                    .all(|(state, o, e)| match relax(c, e) {
+                        Some(d) if c + d.iter().copied().max().unwrap_or(0) <= o + e => {
+                            tables[state] = d;
+                            true
+                        }
+                        _ => false,
+                    });
             if fits && e_min > 0 {
                 return (c, tables);
             }
@@ -223,13 +282,43 @@ mod tests {
                         };
                         let linear = Linear::new(mismatch, extend);
                         let affine = Affine::new(mismatch, open, extend);
-                        let two_piece = TwoPieceAffine::new(mismatch, open, extend, open * 3, extend.saturating_sub(1).max(1));
+                        let two_piece = TwoPieceAffine::new(
+                            mismatch,
+                            open,
+                            extend,
+                            open * 3,
+                            extend.saturating_sub(1).max(1),
+                        );
                         for n in [1, 2, 50] {
                             let new = |c: SeedCosts| (c.charge, c.ins_discount);
-                            check("linear", (new(SeedCosts::new(&linear, 1, k, 0, n)), by_definition(&linear, 1, k, 0, n)));
-                            check("affine", (new(SeedCosts::new(&affine, 3, k, 0, n)), by_definition(&affine, 3, k, 0, n)));
-                            check("affine r=1", (new(SeedCosts::new(&affine, 3, k, 1, n)), by_definition(&affine, 3, k, 1, n)));
-                            check("two-piece", (new(SeedCosts::new(&two_piece, 5, k, 0, n)), by_definition(&two_piece, 5, k, 0, n)));
+                            check(
+                                "linear",
+                                (
+                                    new(SeedCosts::new(&linear, 1, k, 0, n)),
+                                    by_definition(&linear, 1, k, 0, n),
+                                ),
+                            );
+                            check(
+                                "affine",
+                                (
+                                    new(SeedCosts::new(&affine, 3, k, 0, n)),
+                                    by_definition(&affine, 3, k, 0, n),
+                                ),
+                            );
+                            check(
+                                "affine r=1",
+                                (
+                                    new(SeedCosts::new(&affine, 3, k, 1, n)),
+                                    by_definition(&affine, 3, k, 1, n),
+                                ),
+                            );
+                            check(
+                                "two-piece",
+                                (
+                                    new(SeedCosts::new(&two_piece, 5, k, 0, n)),
+                                    by_definition(&two_piece, 5, k, 0, n),
+                                ),
+                            );
                         }
                     }
                 }
@@ -242,7 +331,11 @@ mod tests {
     /// the runs a completion opens itself.
     #[test]
     fn insertion_runs_cost_at_least_miss_per_seed() {
-        for (k, costs) in [(4, Affine::new(4, 6, 2)), (8, Affine::new(4, 6, 2)), (3, Affine::new(1, 2, 1))] {
+        for (k, costs) in [
+            (4, Affine::new(4, 6, 2)),
+            (8, Affine::new(4, 6, 2)),
+            (3, Affine::new(1, 2, 1)),
+        ] {
             let n = 6;
             let m = miss(&costs, k, 0, n);
             for start in 0..n * k {

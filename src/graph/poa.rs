@@ -71,7 +71,10 @@ pub struct POAEdgeData {
 }
 
 /// What the edges between a sentinel and a real node carry.
-static SENTINEL_EDGE: POAEdgeData = POAEdgeData { weight: 0, sequence_ids: Vec::new() };
+static SENTINEL_EDGE: POAEdgeData = POAEdgeData {
+    weight: 0,
+    sequence_ids: Vec::new(),
+};
 
 #[derive(Debug)]
 struct POAEdge<Ix> {
@@ -273,38 +276,65 @@ where
 
     /// Shortest and longest path length (in edges) from the start sentinel.
     pub(crate) fn depth(&self, node: POANodeIndex<Ix>) -> (usize, usize) {
-        (self.depth_min[node.index()].index(), self.depth_max[node.index()].index())
+        (
+            self.depth_min[node.index()].index(),
+            self.depth_max[node.index()].index(),
+        )
     }
 
     fn edge_data(&self, e: Ix) -> &POAEdgeData {
-        if e == <Ix as IndexType>::max() { &SENTINEL_EDGE } else { &self.edges[e.index()].data }
+        if e == <Ix as IndexType>::max() {
+            &SENTINEL_EDGE
+        } else {
+            &self.edges[e.index()].data
+        }
     }
 
     /// Outgoing edges of `node` in successor order, as (target, data).
-    pub(crate) fn out_edges(&self, node: POANodeIndex<Ix>) -> impl Iterator<Item = (POANodeIndex<Ix>, &POAEdgeData)> + '_ {
+    pub(crate) fn out_edges(
+        &self,
+        node: POANodeIndex<Ix>,
+    ) -> impl Iterator<Item = (POANodeIndex<Ix>, &POAEdgeData)> + '_ {
         let r = self.succ.range(node.index());
-        self.succ.items[r.clone()].iter().zip(&self.succ.edges[r]).map(|(&w, &e)| (w, self.edge_data(e)))
+        self.succ.items[r.clone()]
+            .iter()
+            .zip(&self.succ.edges[r])
+            .map(|(&w, &e)| (w, self.edge_data(e)))
     }
 
     /// Incoming edges of `node` in predecessor order, as (source, data).
-    pub(crate) fn in_edges(&self, node: POANodeIndex<Ix>) -> impl Iterator<Item = (POANodeIndex<Ix>, &POAEdgeData)> + '_ {
+    pub(crate) fn in_edges(
+        &self,
+        node: POANodeIndex<Ix>,
+    ) -> impl Iterator<Item = (POANodeIndex<Ix>, &POAEdgeData)> + '_ {
         let r = self.pred.range(node.index());
-        self.pred.items[r.clone()].iter().zip(&self.pred.edges[r]).map(|(&u, &e)| (u, self.edge_data(e)))
+        self.pred.items[r.clone()]
+            .iter()
+            .zip(&self.pred.edges[r])
+            .map(|(&u, &e)| (u, self.edge_data(e)))
     }
 
     /// Every edge between real nodes, as (source, target, data), in the order
     /// they were first added.
-    pub(crate) fn real_edges(&self) -> impl Iterator<Item = (NodeId<Ix>, NodeId<Ix>, &POAEdgeData)> + '_ {
+    pub(crate) fn real_edges(
+        &self,
+    ) -> impl Iterator<Item = (NodeId<Ix>, NodeId<Ix>, &POAEdgeData)> + '_ {
         self.edges.iter().map(|e| (e.source, e.target, &e.data))
     }
 
     /// Every edge, sentinel ones included, by rank of the source.
-    pub(crate) fn all_edges(&self) -> impl Iterator<Item = (POANodeIndex<Ix>, POANodeIndex<Ix>, &POAEdgeData)> + '_ {
-        self.all_nodes_iter().flat_map(move |v| self.out_edges(v).map(move |(w, d)| (v, w, d)))
+    pub(crate) fn all_edges(
+        &self,
+    ) -> impl Iterator<Item = (POANodeIndex<Ix>, POANodeIndex<Ix>, &POAEdgeData)> + '_ {
+        self.all_nodes_iter()
+            .flat_map(move |v| self.out_edges(v).map(move |(w, d)| (v, w, d)))
     }
 
     pub(crate) fn add_node(&mut self, symbol: u8) -> NodeId<Ix> {
-        assert!(self.symbols.len() < <Ix as IndexType>::max().index(), "POAGraph::add_node: node index overflow");
+        assert!(
+            self.symbols.len() < <Ix as IndexType>::max().index(),
+            "POAGraph::add_node: node index overflow"
+        );
         self.symbols.push(symbol);
         self.aligned_nodes.push(Vec::new());
         NodeId::new(self.symbols.len() - 1)
@@ -330,12 +360,18 @@ where
             edge_data.weight += weight as usize;
         } else {
             // `Ix::max()` marks sentinel edges, so no real edge may have it.
-            assert!(self.edges.len() < <Ix as IndexType>::max().index(), "POAGraph::add_edge: edge index overflow");
+            assert!(
+                self.edges.len() < <Ix as IndexType>::max().index(),
+                "POAGraph::add_edge: edge index overflow"
+            );
             self.edge_ix.insert((s, t), self.edges.len());
             self.edges.push(POAEdge {
                 source: s,
                 target: t,
-                data: POAEdgeData { weight: weight as usize, sequence_ids: vec![sequence_id] },
+                data: POAEdgeData {
+                    weight: weight as usize,
+                    sequence_ids: vec![sequence_id],
+                },
             });
         }
     }
@@ -398,9 +434,11 @@ where
         }
         let is_real = |v: usize| v != start && v != end;
         s.sources.clear();
-        s.sources.extend((0..n).rev().filter(|&v| is_real(v) && s.in_deg[v] == 0));
+        s.sources
+            .extend((0..n).rev().filter(|&v| is_real(v) && s.in_deg[v] == 0));
         s.sinks.clear();
-        s.sinks.extend((0..n).rev().filter(|&v| is_real(v) && s.out_deg[v] == 0));
+        s.sinks
+            .extend((0..n).rev().filter(|&v| is_real(v) && s.out_deg[v] == 0));
         if s.sources.is_empty() {
             s.sources.push(end);
         }
@@ -414,7 +452,12 @@ where
         }
         self.id_succ.reset(&s.out_deg, &mut s.out_cur);
         self.id_pred.reset(&s.in_deg, &mut s.in_cur);
-        let (id_succ, id_pred, out_cur, in_cur) = (&mut self.id_succ, &mut self.id_pred, &mut s.out_cur, &mut s.in_cur);
+        let (id_succ, id_pred, out_cur, in_cur) = (
+            &mut self.id_succ,
+            &mut self.id_pred,
+            &mut s.out_cur,
+            &mut s.in_cur,
+        );
         let mut put = |u: usize, w: usize, e: Ix| {
             id_succ.items[out_cur[u]] = NodeId::new(w);
             id_succ.edges[out_cur[u]] = e;
@@ -447,16 +490,22 @@ where
         }
         self.end_node = self.rank_of[end];
         self.rank_symbols.clear();
-        self.rank_symbols.extend(self.node_of_rank.iter().map(|id| self.symbols[id.index()]));
+        self.rank_symbols
+            .extend(self.node_of_rank.iter().map(|id| self.symbols[id.index()]));
         let s = &mut self.scratch;
         s.degrees.clear();
-        s.degrees.extend(self.node_of_rank.iter().map(|id| s.out_deg[id.index()]));
+        s.degrees
+            .extend(self.node_of_rank.iter().map(|id| s.out_deg[id.index()]));
         self.succ.reset(&s.degrees, &mut s.out_cur);
         s.degrees.clear();
-        s.degrees.extend(self.node_of_rank.iter().map(|id| s.in_deg[id.index()]));
+        s.degrees
+            .extend(self.node_of_rank.iter().map(|id| s.in_deg[id.index()]));
         self.pred.reset(&s.degrees, &mut s.in_cur);
         for (rank, &id) in self.node_of_rank.iter().enumerate() {
-            for (from, to) in [(&self.id_succ, &mut self.succ), (&self.id_pred, &mut self.pred)] {
+            for (from, to) in [
+                (&self.id_succ, &mut self.succ),
+                (&self.id_pred, &mut self.pred),
+            ] {
                 let r = from.range(id.index());
                 let at = to.start[rank];
                 for (k, ix) in r.enumerate() {
@@ -476,8 +525,16 @@ where
         self.depth_max.resize(n, zero);
         for v in 1..n {
             let preds = &self.pred.items[self.pred.range(v)];
-            let dmin = preds.iter().map(|u| self.depth_min[u.index()].index() + 1).min().unwrap_or(0);
-            let dmax = preds.iter().map(|u| self.depth_max[u.index()].index() + 1).max().unwrap_or(0);
+            let dmin = preds
+                .iter()
+                .map(|u| self.depth_min[u.index()].index() + 1)
+                .min()
+                .unwrap_or(0);
+            let dmax = preds
+                .iter()
+                .map(|u| self.depth_max[u.index()].index() + 1)
+                .max()
+                .unwrap_or(0);
             self.depth_min[v] = Ix::new(dmin);
             self.depth_max[v] = Ix::new(dmax);
         }
@@ -486,7 +543,11 @@ where
     /// Whether the store has no cycle. The rank order is topological exactly
     /// then, so every edge must go to a higher rank.
     pub(crate) fn is_acyclic(&self) -> bool {
-        (0..self.node_of_rank.len()).all(|v| self.succ.items[self.succ.range(v)].iter().all(|w| w.index() > v))
+        (0..self.node_of_rank.len()).all(|v| {
+            self.succ.items[self.succ.range(v)]
+                .iter()
+                .all(|w| w.index() > v)
+        })
     }
 
     /// Fill `node_of_rank` by iterative DFS from the start sentinel (reverse
@@ -518,7 +579,9 @@ where
         }
 
         self.node_of_rank.reverse();
-        let unreached = (0..n).filter(|&v| !self.visited_scratch[v]).map(NodeId::new);
+        let unreached = (0..n)
+            .filter(|&v| !self.visited_scratch[v])
+            .map(NodeId::new);
         self.node_of_rank.extend(unreached);
     }
 }
@@ -549,12 +612,16 @@ where
 
     #[inline]
     fn successors(&self, node: Self::NodeType) -> Self::Successors<'_> {
-        self.succ.items[self.succ.range(node.index())].iter().copied()
+        self.succ.items[self.succ.range(node.index())]
+            .iter()
+            .copied()
     }
 
     #[inline]
     fn predecessors(&self, node: Self::NodeType) -> Self::Predecessors<'_> {
-        self.pred.items[self.pred.range(node.index())].iter().copied()
+        self.pred.items[self.pred.range(node.index())]
+            .iter()
+            .copied()
     }
 
     #[inline]

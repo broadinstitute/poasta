@@ -37,10 +37,18 @@ where
         let mut out_child = vec![i64::MAX; n];
         for rank in 0..n {
             let node = graph.rank_to_node(rank);
-            if let Some(min_pred) = graph.predecessors(node).map(|p| graph.node_rank(p) as i64).min() {
+            if let Some(min_pred) = graph
+                .predecessors(node)
+                .map(|p| graph.node_rank(p) as i64)
+                .min()
+            {
                 out_parent[rank] = min_pred;
             }
-            if let Some(max_succ) = graph.successors(node).map(|s| graph.node_rank(s) as i64).max() {
+            if let Some(max_succ) = graph
+                .successors(node)
+                .map(|s| graph.node_rank(s) as i64)
+                .max()
+            {
                 out_child[rank] = max_succ;
             }
         }
@@ -145,7 +153,10 @@ where
             self.out_parent_map[curr] = finder.out_parent[curr];
 
             if let Some(c) = self.candidate_exit {
-                let new_out_parent = min(self.out_parent_map[curr], self.out_parent_map[graph.node_rank(c)]);
+                let new_out_parent = min(
+                    self.out_parent_map[curr],
+                    self.out_parent_map[graph.node_rank(c)],
+                );
                 self.out_parent_map[graph.node_rank(c)] = new_out_parent;
             }
 
@@ -182,10 +193,7 @@ mod tests {
 
         let g2 = create_test_graph2();
         let finder = SuperbubbleFinder::new(&g2);
-        let bubbles2: FxHashSet<_> = finder
-            .iter()
-            .map(|(n1, n2)| (g2[n1].0, g2[n2].0))
-            .collect();
+        let bubbles2: FxHashSet<_> = finder.iter().map(|(n1, n2)| (g2[n1].0, g2[n2].0)).collect();
 
         assert_eq!(
             bubbles2,

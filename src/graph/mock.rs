@@ -10,7 +10,6 @@ use rustc_hash::FxHashMap;
 
 use crate::graph::traits::{GraphBase, GraphWithNodeOrdering};
 
-
 pub(crate) type NIx = u32;
 
 #[derive(Copy, Clone, Default, PartialEq, Eq)]

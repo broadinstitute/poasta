@@ -17,11 +17,11 @@ use crossbeam_channel::{Receiver, Sender, bounded};
 use rustc_hash::FxHashMap;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
+use poasta::align::astar::{AstarCostModel, AstarEngine, Offset};
 use poasta::align::cost_models::affine::Affine;
 use poasta::align::cost_models::linear::Linear;
 use poasta::align::cost_models::two_piece::TwoPieceAffine;
 use poasta::align::traits::AlignOutput;
-use poasta::align::astar::{AstarCostModel, AstarEngine, Offset};
 use poasta::align::traits::AlignmentEngine;
 use poasta::cli::CostModelKind;
 use poasta::cli::lasagna::LasagnaCli;
@@ -68,7 +68,9 @@ fn init_tracing(default_level: &str, debug_dir: Option<&Path>) {
     let debug_layer = debug_dir.map(AlignStateLayer::new);
 
     if cfg!(feature = "disable_tracing") && debug_dir.is_some() {
-        eprintln!("warning: built with `disable_tracing`; --debug-output-dir produces no state files");
+        eprintln!(
+            "warning: built with `disable_tracing`; --debug-output-dir produces no state files"
+        );
     }
 
     tracing_subscriber::registry()
@@ -107,7 +109,6 @@ impl From<io::Error> for CliError {
 type SequenceRecord = (String, Vec<u8>);
 
 fn run(args: LasagnaCli) -> Result<(), CliError> {
-
     tracing::info!(
         graph = %args.graph.display(),
         sequences = %args.sequences.display(),
@@ -130,13 +131,22 @@ fn run(args: LasagnaCli) -> Result<(), CliError> {
     // The graph never changes, so index its bubbles once for all threads.
     let bubbles = Arc::new(BubbleIndex::new(&graph));
 
-    let ctx = Context { args: &args, graph: &graph, graph_segments: &graph_segments, node_to_segment: &node_to_segment };
+    let ctx = Context {
+        args: &args,
+        graph: &graph,
+        graph_segments: &graph_segments,
+        node_to_segment: &node_to_segment,
+    };
     match args.cost_model {
         CostModelKind::Affine => {
             let costs = Affine::new(args.cost_mismatch, args.cost_gap_open, args.cost_gap_extend);
             run_heuristic(costs, bubbles, &ctx)
         }
-        CostModelKind::Linear => run_heuristic(Linear::new(args.cost_mismatch, args.cost_gap_extend), bubbles, &ctx),
+        CostModelKind::Linear => run_heuristic(
+            Linear::new(args.cost_mismatch, args.cost_gap_extend),
+            bubbles,
+            &ctx,
+        ),
         CostModelKind::TwoPiece => {
             let costs = TwoPieceAffine::new(
                 args.cost_mismatch,
@@ -160,7 +170,11 @@ struct Context<'a> {
 
 /// Pick the heuristic and run the threads. Each thread builds its own
 /// engine, and so its own heuristic state.
-fn run_heuristic<C>(costs: C, bubbles: Arc<BubbleIndex<POANodeIndex<u32>>>, ctx: &Context) -> Result<(), CliError>
+fn run_heuristic<C>(
+    costs: C,
+    bubbles: Arc<BubbleIndex<POANodeIndex<u32>>>,
+    ctx: &Context,
+) -> Result<(), CliError>
 where
     C: AstarCostModel<POANodeIndex<u32>, Offset> + Sync,
 {
@@ -170,7 +184,13 @@ where
             .with_existing_bubbles(bubbles.clone())
     };
     instantiate_engine!(&ctx.args.search, new_plain_engine, |new_engine| {
-        run_threaded(new_engine, ctx.args, ctx.graph, ctx.graph_segments, ctx.node_to_segment)
+        run_threaded(
+            new_engine,
+            ctx.args,
+            ctx.graph,
+            ctx.graph_segments,
+            ctx.node_to_segment,
+        )
     })
 }
 

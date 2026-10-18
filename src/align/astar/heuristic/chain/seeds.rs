@@ -74,13 +74,27 @@ mod tests {
         // Seeds ACG, TAC, and a tail of 2 that is not a seed.
         s.reset(b"ACGTACGT", 3, 0, 2);
         assert_eq!(s.seed(1), b"TAC");
-        assert_eq!((0..=8).map(|i| s.ahead(i)).collect::<Vec<_>>(), [2, 1, 1, 1, 0, 0, 0, 0, 0]);
-        assert_eq!((0..=8).filter(|&i| s.inside(i)).collect::<Vec<_>>(), [1, 2, 4, 5]);
+        assert_eq!(
+            (0..=8).map(|i| s.ahead(i)).collect::<Vec<_>>(),
+            [2, 1, 1, 1, 0, 0, 0, 0, 0]
+        );
+        assert_eq!(
+            (0..=8).filter(|&i| s.inside(i)).collect::<Vec<_>>(),
+            [1, 2, 4, 5]
+        );
         assert_eq!(s.rest(4), b"AC");
-        assert_eq!((0..=8).filter_map(|i| s.seed_matched_at(i)).collect::<Vec<_>>(), [0, 1]);
+        assert_eq!(
+            (0..=8)
+                .filter_map(|i| s.seed_matched_at(i))
+                .collect::<Vec<_>>(),
+            [0, 1]
+        );
         assert_eq!(s.seed_matched_at(4), Some(1));
 
         s.reset(b"ACGT", 1, 0, 4);
-        assert_eq!((0..=5).map(|i| s.seed_matched_at(i)).collect::<Vec<_>>(), [None, Some(0), Some(1), Some(2), Some(3), None]);
+        assert_eq!(
+            (0..=5).map(|i| s.seed_matched_at(i)).collect::<Vec<_>>(),
+            [None, Some(0), Some(1), Some(2), Some(3), None]
+        );
     }
 }

@@ -65,7 +65,9 @@ pub trait AlignmentGraph {
         O: OffsetType,
     {
         match self.mode() {
-            AlignmentMode::Global => vec![AlignmentGraphNode::new(ref_graph.start_node(), O::zero())],
+            AlignmentMode::Global => {
+                vec![AlignmentGraphNode::new(ref_graph.start_node(), O::zero())]
+            }
             AlignmentMode::EndsFree { .. } => region.initial_states(),
         }
     }
@@ -186,8 +188,19 @@ impl<N: GraphNodeId> EndsFreeRegion<N> {
     where
         G: AlignableGraph<Node = N>,
     {
-        let AlignmentMode::EndsFree { qry_free_begin, qry_free_end, graph_free_begin, graph_free_end } = mode else {
-            return Self { start_nodes: Vec::new(), max_qry_free: 0, end_offset_min: 0, end_node: Vec::new() };
+        let AlignmentMode::EndsFree {
+            qry_free_begin,
+            qry_free_end,
+            graph_free_begin,
+            graph_free_end,
+        } = mode
+        else {
+            return Self {
+                start_nodes: Vec::new(),
+                max_qry_free: 0,
+                end_offset_min: 0,
+                end_node: Vec::new(),
+            };
         };
         let n = ref_graph.node_count();
         let (start, end) = (ref_graph.start_node(), ref_graph.end_node());
@@ -231,7 +244,9 @@ impl<N: GraphNodeId> EndsFreeRegion<N> {
         Self {
             start_nodes,
             max_qry_free: resolve_bound(qry_free_begin, seq.len()),
-            end_offset_min: seq.len().saturating_sub(resolve_bound(qry_free_end, seq.len())),
+            end_offset_min: seq
+                .len()
+                .saturating_sub(resolve_bound(qry_free_end, seq.len())),
             end_node,
         }
     }
@@ -250,7 +265,11 @@ impl<N: GraphNodeId> EndsFreeRegion<N> {
     /// A `Match` state is an end once its query offset is within the free
     /// trailing query bound and its node reaches the graph end within the
     /// free trailing graph bound.
-    fn is_end<O: OffsetType>(&self, node: &AlignmentGraphNode<N, O>, aln_state: AlignState) -> bool {
+    fn is_end<O: OffsetType>(
+        &self,
+        node: &AlignmentGraphNode<N, O>,
+        aln_state: AlignState,
+    ) -> bool {
         aln_state == AlignState::Match
             && node.offset().as_usize() >= self.end_offset_min
             && self.end_node[node.node().index()]
@@ -310,7 +329,13 @@ impl AlignmentGraph for LinearAlignmentGraph {
     {
         let ge = self.costs.gap_extend();
         let ins = AlignmentGraphNode::new(parent.node(), parent.offset().increase_one());
-        if visited_data.update_score_if_lower(&ins, AlignState::Match, parent, AlignState::Match, score + ge as u32) {
+        if visited_data.update_score_if_lower(
+            &ins,
+            AlignState::Match,
+            parent,
+            AlignState::Match,
+            score + ge as u32,
+        ) {
             f(ge, ins, AlignState::Match);
         }
     }
@@ -330,7 +355,13 @@ impl AlignmentGraph for LinearAlignmentGraph {
     {
         let ge = self.costs.gap_extend();
         let del = AlignmentGraphNode::new(child, parent.offset());
-        if visited_data.update_score_if_lower(&del, AlignState::Match, parent, AlignState::Match, score + ge as u32) {
+        if visited_data.update_score_if_lower(
+            &del,
+            AlignState::Match,
+            parent,
+            AlignState::Match,
+            score + ge as u32,
+        ) {
             f(ge, del, AlignState::Match);
         }
     }
@@ -349,18 +380,36 @@ impl AlignmentGraph for LinearAlignmentGraph {
         F: FnMut(u8, AlignmentGraphNode<N, O>, AlignState),
     {
         let mm = self.costs.mismatch();
-        if visited_data.update_score_if_lower(child, AlignState::Match, parent, AlignState::Match, score + mm as u32) {
+        if visited_data.update_score_if_lower(
+            child,
+            AlignState::Match,
+            parent,
+            AlignState::Match,
+            score + mm as u32,
+        ) {
             f(mm, *child, AlignState::Match);
         }
 
         let ge = self.costs.gap_extend();
         let ins = AlignmentGraphNode::new(parent.node(), parent.offset().increase_one());
-        if visited_data.update_score_if_lower(&ins, AlignState::Match, parent, AlignState::Match, score + ge as u32) {
+        if visited_data.update_score_if_lower(
+            &ins,
+            AlignState::Match,
+            parent,
+            AlignState::Match,
+            score + ge as u32,
+        ) {
             f(ge, ins, AlignState::Match);
         }
 
         let del = AlignmentGraphNode::new(child.node(), parent.offset());
-        if visited_data.update_score_if_lower(&del, AlignState::Match, parent, AlignState::Match, score + ge as u32) {
+        if visited_data.update_score_if_lower(
+            &del,
+            AlignState::Match,
+            parent,
+            AlignState::Match,
+            score + ge as u32,
+        ) {
             f(ge, del, AlignState::Match);
         }
     }
@@ -402,7 +451,10 @@ where
     C: AlignmentCostModel,
 {
     pub fn new(costs: C, mode: AlignmentMode, n_pieces: usize) -> Self {
-        assert!(n_pieces == 1 || n_pieces == 2, "gap-affine graphs have one or two pieces");
+        assert!(
+            n_pieces == 1 || n_pieces == 2,
+            "gap-affine graphs have one or two pieces"
+        );
         let pieces = [
             GapPiece {
                 open_extend: costs.gap_open() + costs.gap_extend(),
@@ -417,7 +469,12 @@ where
                 ins: AlignState::Insertion2,
             },
         ];
-        Self { costs, mode, pieces, n_pieces }
+        Self {
+            costs,
+            mode,
+            pieces,
+            n_pieces,
+        }
     }
 
     #[inline(always)]
@@ -491,7 +548,13 @@ where
         let ins = AlignmentGraphNode::new(parent.node(), parent.offset().increase_one());
         for piece in self.pieces() {
             let opened = score + piece.open_extend as u32;
-            if visited_data.update_score_if_lower(&ins, piece.ins, parent, AlignState::Match, opened) {
+            if visited_data.update_score_if_lower(
+                &ins,
+                piece.ins,
+                parent,
+                AlignState::Match,
+                opened,
+            ) {
                 f(piece.open_extend, ins, piece.ins);
             }
         }
@@ -513,7 +576,13 @@ where
         let del = AlignmentGraphNode::new(child, parent.offset());
         for piece in self.pieces() {
             let opened = score + piece.open_extend as u32;
-            if visited_data.update_score_if_lower(&del, piece.del, parent, AlignState::Match, opened) {
+            if visited_data.update_score_if_lower(
+                &del,
+                piece.del,
+                parent,
+                AlignState::Match,
+                opened,
+            ) {
                 f(piece.open_extend, del, piece.del);
             }
         }
@@ -533,14 +602,26 @@ where
         F: FnMut(u8, AlignmentGraphNode<N, O>, AlignState),
     {
         let mm = self.costs.mismatch();
-        if visited_data.update_score_if_lower(child, AlignState::Match, parent, AlignState::Match, score + mm as u32) {
+        if visited_data.update_score_if_lower(
+            child,
+            AlignState::Match,
+            parent,
+            AlignState::Match,
+            score + mm as u32,
+        ) {
             f(mm, *child, AlignState::Match);
         }
 
         let ins = AlignmentGraphNode::new(parent.node(), parent.offset().increase_one());
         for piece in self.pieces() {
             let opened = score + piece.open_extend as u32;
-            if visited_data.update_score_if_lower(&ins, piece.ins, parent, AlignState::Match, opened) {
+            if visited_data.update_score_if_lower(
+                &ins,
+                piece.ins,
+                parent,
+                AlignState::Match,
+                opened,
+            ) {
                 f(piece.open_extend, ins, piece.ins);
             }
         }
@@ -548,7 +629,13 @@ where
         let del = AlignmentGraphNode::new(child.node(), parent.offset());
         for piece in self.pieces() {
             let opened = score + piece.open_extend as u32;
-            if visited_data.update_score_if_lower(&del, piece.del, parent, AlignState::Match, opened) {
+            if visited_data.update_score_if_lower(
+                &del,
+                piece.del,
+                parent,
+                AlignState::Match,
+                opened,
+            ) {
                 f(piece.open_extend, del, piece.del);
             }
         }
@@ -564,7 +651,8 @@ mod tests {
 
     fn chain(seq: &[u8]) -> POAGraph<u32> {
         let mut g = POAGraph::new();
-        g.add_alignment("s", seq, None, &vec![1; seq.len()]).unwrap();
+        g.add_alignment("s", seq, None, &vec![1; seq.len()])
+            .unwrap();
         g
     }
 
@@ -591,7 +679,11 @@ mod tests {
     #[test]
     fn hop_bounds_limit_both_ends() {
         let g = chain(b"ACGTACGT");
-        let region = EndsFreeRegion::new(&g, b"ACG", ends_free(Bound::Included(2), Bound::Included(1)));
+        let region = EndsFreeRegion::new(
+            &g,
+            b"ACG",
+            ends_free(Bound::Included(2), Bound::Included(1)),
+        );
         // The start sentinel and the first two nodes.
         assert_eq!(region.start_nodes.len(), 3);
         // The end sentinel and the last node.
