@@ -666,14 +666,10 @@ mod tests {
 
     fn multi_branch_graph() -> POAGraph<u32> {
         let mut g = POAGraph::new();
-        g.add_alignment("s0", b"ACGTACGT", None, &vec![1; 8])
-            .unwrap();
-        g.add_alignment("s1", b"ACGAACGT", None, &vec![1; 8])
-            .unwrap();
-        g.add_alignment("s2", b"ACGTCCGT", None, &vec![1; 8])
-            .unwrap();
-        g.add_alignment("s3", b"AGGTACAT", None, &vec![1; 8])
-            .unwrap();
+        g.add_alignment("s0", b"ACGTACGT", None, &[1; 8]).unwrap();
+        g.add_alignment("s1", b"ACGAACGT", None, &[1; 8]).unwrap();
+        g.add_alignment("s2", b"ACGTCCGT", None, &[1; 8]).unwrap();
+        g.add_alignment("s3", b"AGGTACAT", None, &[1; 8]).unwrap();
         g
     }
 

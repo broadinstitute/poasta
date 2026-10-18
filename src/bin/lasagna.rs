@@ -39,11 +39,11 @@ use poasta::instantiate_engine;
 fn main() -> ExitCode {
     let args = LasagnaCli::parse();
 
-    if let Some(dir) = &args.debug_output_dir {
-        if let Err(e) = fs::create_dir_all(dir) {
-            eprintln!("error: could not create debug output directory: {e}");
-            return ExitCode::FAILURE;
-        }
+    if let Some(dir) = &args.debug_output_dir
+        && let Err(e) = fs::create_dir_all(dir)
+    {
+        eprintln!("error: could not create debug output directory: {e}");
+        return ExitCode::FAILURE;
     }
     init_tracing(
         args.log_level.as_tracing_str(),
@@ -310,11 +310,11 @@ where
                     let span = tracing::info_span!("align_seq", seq_id = name.as_str());
                     let _enter = span.enter();
 
-                    if let Some(dir) = debug_dir {
-                        if let Err(e) = write_graph_dot(dir, &name, graph, &seq) {
-                            stash_error(&thread_first_error, e.into());
-                            break;
-                        }
+                    if let Some(dir) = debug_dir
+                        && let Err(e) = write_graph_dot(dir, &name, graph, &seq)
+                    {
+                        stash_error(&thread_first_error, e.into());
+                        break;
                     }
 
                     let out = match engine.align(graph, seq.as_slice()) {

@@ -35,11 +35,11 @@ fn main() -> ExitCode {
         Some(CliSubcommand::Align(a)) => a.debug_output_dir.clone(),
         _ => None,
     };
-    if let Some(dir) = &debug_dir {
-        if let Err(e) = fs::create_dir_all(dir) {
-            eprintln!("error: could not create debug output directory: {e}");
-            return ExitCode::FAILURE;
-        }
+    if let Some(dir) = &debug_dir
+        && let Err(e) = fs::create_dir_all(dir)
+    {
+        eprintln!("error: could not create debug output directory: {e}");
+        return ExitCode::FAILURE;
     }
     init_tracing(args.log_level.as_tracing_str(), debug_dir.as_deref());
 

@@ -105,7 +105,7 @@ where
         let finder = self.finder;
         let graph = finder.graph;
 
-        while let Some(curr) = self.curr.next() {
+        for curr in self.curr.by_ref() {
             let mut to_return = None;
 
             let n = graph.rank_to_node(curr);
@@ -135,18 +135,18 @@ where
                 }
             }
 
-            if let Some(candidate) = self.candidate_exit {
-                if self.out_parent_map[graph.node_rank(candidate)] as usize == curr {
-                    to_return = Some((n, candidate));
+            if let Some(candidate) = self.candidate_exit
+                && self.out_parent_map[graph.node_rank(candidate)] as usize == curr
+            {
+                to_return = Some((n, candidate));
 
-                    self.candidate_exit = self.stack.pop();
-                    if let Some(c) = self.candidate_exit {
-                        let new_out_parent = min(
-                            self.out_parent_map[graph.node_rank(candidate)],
-                            self.out_parent_map[graph.node_rank(c)],
-                        );
-                        self.out_parent_map[graph.node_rank(c)] = new_out_parent;
-                    }
+                self.candidate_exit = self.stack.pop();
+                if let Some(c) = self.candidate_exit {
+                    let new_out_parent = min(
+                        self.out_parent_map[graph.node_rank(candidate)],
+                        self.out_parent_map[graph.node_rank(c)],
+                    );
+                    self.out_parent_map[graph.node_rank(c)] = new_out_parent;
                 }
             }
 

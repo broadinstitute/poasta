@@ -271,13 +271,16 @@ mod tests {
         (0, Default::default())
     }
 
+    /// A charge and its five insertion-discount tables.
+    type Tables = (i64, [Vec<i64>; 5]);
+
     #[test]
     fn closed_forms_match_the_definition() {
         for k in 1..=9 {
             for mismatch in 0..=6 {
                 for open in 0..=9 {
                     for extend in 0..=4 {
-                        let check = |name: &str, (got, want): ((i64, [Vec<i64>; 5]), (i64, [Vec<i64>; 5]))| {
+                        let check = |name: &str, (got, want): (Tables, Tables)| {
                             assert_eq!(got, want, "{name} k={k} x={mismatch} o={open} e={extend}");
                         };
                         let linear = Linear::new(mismatch, extend);

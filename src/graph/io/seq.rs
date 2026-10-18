@@ -56,18 +56,17 @@ pub fn open_reader(path: &Path) -> Result<Box<dyn BufRead>, PoastaIOError> {
     }
 }
 
+/// Iterator over `(name, sequence, weights)` records, as returned by
+/// [`open_sequences`].
+pub type SeqRecords = Box<dyn Iterator<Item = Result<(String, Vec<u8>, Vec<u32>), PoastaIOError>>>;
+
 /// Iterate sequences from a FASTA or FASTQ file (plain or gzipped).
 ///
 /// Yields `(name, sequence, weights)` triples. Format is auto-detected from the
 /// filename. FASTA records get a weight of 1 per base. FASTQ records get the
 /// Phred quality of each base, floored at 1 so a Q0 base still contributes to
 /// the graph. This matches spoa, which also uses raw Phred as the weight.
-pub fn open_sequences(
-    path: &Path,
-) -> Result<
-    Box<dyn Iterator<Item = Result<(String, Vec<u8>, Vec<u32>), PoastaIOError>>>,
-    PoastaIOError,
-> {
+pub fn open_sequences(path: &Path) -> Result<SeqRecords, PoastaIOError> {
     let format = SeqFormat::from_path(path)?;
     let reader = open_reader(path)?;
 

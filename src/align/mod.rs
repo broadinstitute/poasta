@@ -197,6 +197,15 @@ pub struct PoastaAligner<E, G> {
     run_stats: RunStats,
 }
 
+/// Result of the `PoastaAligner` align methods for engine `E` on graph `G`.
+type AlignerResult<'s, E, G> = Result<
+    (),
+    PoastaAlignerError<
+        <E as AlignmentEngine<&'s [u8]>>::Error,
+        <G as AddAlignment<<E as AlignmentEngine<&'s [u8]>>::Success>>::Error,
+    >,
+>;
+
 impl<E, G> PoastaAligner<E, G>
 where
     G: AlignableGraph,
@@ -225,10 +234,7 @@ where
     ///
     /// Sequence names are synthesised as `seq_0`, `seq_1`, ... and every base
     /// gets a weight of 1.
-    pub fn align_all<'s, I>(
-        &mut self,
-        sequences: I,
-    ) -> Result<(), PoastaAlignerError<<E as AlignmentEngine<&'s [u8]>>::Error, G::Error>>
+    pub fn align_all<'s, I>(&mut self, sequences: I) -> AlignerResult<'s, E, G>
     where
         I: IntoIterator<Item = &'s [u8]>,
         E: AlignmentEngine<&'s [u8], Graph = G>,
@@ -244,10 +250,7 @@ where
     }
 
     /// Align each `(name, sequence)` pair, using weights of 1 for every base.
-    pub fn align_all_named<'s, I>(
-        &mut self,
-        sequences: I,
-    ) -> Result<(), PoastaAlignerError<<E as AlignmentEngine<&'s [u8]>>::Error, G::Error>>
+    pub fn align_all_named<'s, I>(&mut self, sequences: I) -> AlignerResult<'s, E, G>
     where
         I: IntoIterator<Item = (&'s str, &'s [u8])>,
         E: AlignmentEngine<&'s [u8], Graph = G>,
@@ -263,10 +266,7 @@ where
 
     /// Align each `(name, sequence, weights)` triple. `weights.len()` must equal
     /// `sequence.len()`.
-    pub fn align_all_with_weights<'s, I>(
-        &mut self,
-        sequences: I,
-    ) -> Result<(), PoastaAlignerError<<E as AlignmentEngine<&'s [u8]>>::Error, G::Error>>
+    pub fn align_all_with_weights<'s, I>(&mut self, sequences: I) -> AlignerResult<'s, E, G>
     where
         I: IntoIterator<Item = (&'s str, &'s [u8], &'s [u32])>,
         E: AlignmentEngine<&'s [u8], Graph = G>,
@@ -280,11 +280,7 @@ where
     }
 
     /// Align one named sequence using a weight of 1 for every base.
-    pub fn align_one_named<'s>(
-        &mut self,
-        name: &str,
-        seq: &'s [u8],
-    ) -> Result<(), PoastaAlignerError<<E as AlignmentEngine<&'s [u8]>>::Error, G::Error>>
+    pub fn align_one_named<'s>(&mut self, name: &str, seq: &'s [u8]) -> AlignerResult<'s, E, G>
     where
         E: AlignmentEngine<&'s [u8], Graph = G>,
         G: AddAlignment<<E as AlignmentEngine<&'s [u8]>>::Success>,
@@ -301,7 +297,7 @@ where
         name: &str,
         seq: &'s [u8],
         weights: &[u32],
-    ) -> Result<(), PoastaAlignerError<<E as AlignmentEngine<&'s [u8]>>::Error, G::Error>>
+    ) -> AlignerResult<'s, E, G>
     where
         E: AlignmentEngine<&'s [u8], Graph = G>,
         G: AddAlignment<<E as AlignmentEngine<&'s [u8]>>::Success>,
