@@ -1,568 +1,326 @@
-use std::fs;
-use std::fs::File;
-use std::io::{stdout, BufReader, IsTerminal, Write};
-use std::path::{Path, PathBuf};
-use std::ops::Bound;
+//! POASTA command-line driver.
 
-use anyhow::{Context, Result};
-use clap::{Args, Parser, Subcommand, ValueEnum};
-use noodles::fasta;
+use std::fs::{self, File};
+use std::io::{self, BufReader, BufWriter, Write};
+use std::path::Path;
+use std::process::ExitCode;
 
-use flate2::read::MultiGzDecoder;
-use petgraph::graph::IndexType;
-use serde::de::DeserializeOwned;
+use clap::Parser;
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-use poasta::aligner::config::{AffineMinGapCost, Affine2PieceMinGapCost, AlignmentConfig};
-use poasta::debug::messages::DebugOutputMessage;
-use poasta::debug::DebugOutputWriter;
+use poasta::align::AlignmentMode;
+use poasta::align::PoastaAligner;
+use poasta::align::cost_models::affine::Affine;
+use poasta::align::cost_models::linear::Linear;
+use poasta::align::cost_models::two_piece::TwoPieceAffine;
+use poasta::align::traits::AlignOutput;
+use poasta::align::astar::{AstarCostModel, AstarEngine, Offset};
+use poasta::align::traits::AlignmentEngine;
+use poasta::cli::CostModelKind;
+use poasta::cli::poasta::{AlignArgs, CliArgs, CliSubcommand, OutputType};
+use poasta::debug::subscriber::AlignStateLayer;
+use poasta::debug::write_graph_dot;
+use poasta::errors::PoastaIOError;
+use poasta::graph::io::fasta::{FastaOutputOptions, load_graph_from_fasta_msa, poa_graph_to_fasta};
+use poasta::graph::io::gfa::{GfaOutputOptions, poa_graph_to_gfa};
+use poasta::graph::io::seq::open_sequences;
+use poasta::graph::poa::{POAGraph, POANodeIndex};
+use poasta::graph::traits::GraphBase;
+use poasta::instantiate_engine;
 
-use poasta::aligner::scoring::{AlignmentType, GapAffine, GapAffine2Piece};
-use poasta::aligner::PoastaAligner;
-use poasta::errors::PoastaError;
-use poasta::graphs::poa::{POAGraph, POAGraphWithIx};
-use poasta::graphs::AlignableRefGraph;
-use poasta::io::fasta::poa_graph_to_fasta;
-use poasta::io::graph::{graph_to_dot, graph_to_gfa, load_graph_from_fasta_msa};
-use poasta::io::load_graph;
+fn main() -> ExitCode {
+    let args = CliArgs::parse();
 
-trait Output: Write + IsTerminal {}
-impl<T> Output for T where T: Write + IsTerminal {}
+    let debug_dir = match &args.command {
+        Some(CliSubcommand::Align(a)) => a.debug_output_dir.clone(),
+        _ => None,
+    };
+    if let Some(dir) = &debug_dir {
+        if let Err(e) = fs::create_dir_all(dir) {
+            eprintln!("error: could not create debug output directory: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
+    init_tracing(args.log_level.as_tracing_str(), debug_dir.as_deref());
 
-/// The various output formats supported by Poasta
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
-enum OutputType {
-    /// Default Poasta graph file format
-    Poasta,
-
-    /// Output a tabular MSA in FASTA file format
-    Fasta,
-
-    /// Output the graph as GFA
-    Gfa,
-
-    /// Output the graph in DOT format for visualization
-    Dot,
+    match args.command {
+        Some(CliSubcommand::Align(align_args)) => match run_align(align_args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Some(CliSubcommand::View(_)) => {
+            eprintln!("error: `view` subcommand is not yet implemented on this branch");
+            ExitCode::FAILURE
+        }
+        Some(CliSubcommand::Stats(_)) => {
+            eprintln!("error: `stats` subcommand is not yet implemented on this branch");
+            ExitCode::FAILURE
+        }
+        None => {
+            eprintln!("error: no subcommand given (try `poasta align --help`)");
+            ExitCode::FAILURE
+        }
+    }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
-/// An enum indicating what kind of alignment to perform
-enum AlignmentSpan {
-    /// Perform global alignment
-    Global,
+/// Install the log formatter on stderr, filtered by `RUST_LOG` or
+/// `default_level`, and, when `debug_dir` is given, the A* state dumper.
+/// The level filter is attached to the formatter only, so trace-level A*
+/// events reach the dumper without being printed.
+fn init_tracing(default_level: &str, debug_dir: Option<&Path>) {
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
+    let fmt_layer = fmt::layer().with_writer(io::stderr).with_filter(env_filter);
+    let debug_layer = debug_dir.map(AlignStateLayer::new);
 
-    /// Perform semi-global alignment, i.e., globally align query but allow free gaps in the graph
-    /// at the beginning and end
-    SemiGlobal,
+    if cfg!(feature = "disable_tracing") && debug_dir.is_some() {
+        eprintln!("warning: built with `disable_tracing`; --debug-output-dir produces no state files");
+    }
 
-    /// Perform ends-free alignment, i.e., indels at the beginning or end on either the query or
-    /// graph are free
-    EndsFree,
+    tracing_subscriber::registry()
+        .with(fmt_layer)
+        .with(debug_layer)
+        .init();
 }
 
-#[derive(Parser, Debug)]
-#[command(author, version, about)]
-struct CliArgs {
-    /// Set verbosity level. Use multiple times to increase the verbosity level.
-    #[arg(short, long, action = clap::ArgAction::Count)]
-    verbose: u8,
-
-    #[command(subcommand)]
-    command: Option<PoastaSubcommand>,
+#[derive(Debug)]
+enum CliError {
+    Io(PoastaIOError),
+    Config(String),
+    Align(String),
 }
 
-#[derive(Subcommand, Debug)]
-enum PoastaSubcommand {
-    /// Perform multiple sequence alignment and create or update POA graphs
-    Align(AlignArgs),
-
-    /// Convert POASTA POA graphs to various output formats
-    View(ViewArgs),
-
-    /// Print graph statistics
-    Stats(StatsArgs),
+impl std::fmt::Display for CliError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "{e}"),
+            Self::Config(m) => write!(f, "{m}"),
+            Self::Align(m) => write!(f, "alignment failed: {m}"),
+        }
+    }
 }
 
-#[derive(Args, Debug)]
-struct AlignArgs {
-    /// Sequences to align in FASTA format.
-    #[clap(help_heading = "Inputs")]
-    sequences: PathBuf,
-
-    /// Input partial order graph to align sequences to. If not specified,
-    /// will create a new graph from input sequences.
-    #[arg(short = 'I', long)]
-    #[clap(help_heading = "Inputs")]
-    graph: Option<PathBuf>,
-
-    /// Output filename. If not given, defaults to stdout
-    #[arg(short, long)]
-    #[clap(help_heading = "Outputs")]
-    output: Option<PathBuf>,
-
-    /// Output file type.
-    #[arg(value_enum, short = 'O', long)]
-    #[clap(help_heading = "Outputs")]
-    output_type: Option<OutputType>,
-
-    /// Output debug information (intermediate graphs, aligner state)
-    /// and write files to the given directory
-    #[arg(short, long)]
-    #[clap(help_heading = "Outputs")]
-    debug_output: Option<PathBuf>,
-
-    /// Alignment span, either global alignment, semi-global alignment or ends-free alignment.
-    #[arg(short = 'm', long, default_value = "global")]
-    #[clap(help_heading = "Alignment configuration")]
-    alignment_span: AlignmentSpan,
-
-    /// Penalty for mismatching bases
-    #[arg(short = 'n', default_value = "4")]
-    #[clap(help_heading = "Alignment configuration")]
-    cost_mismatch: Option<u8>,
-
-    /// Penalty for opening a new gap. Use comma-separated values for two-piece affine (e.g., "6,24")
-    #[arg(short = 'g', default_value = "6")]
-    #[clap(help_heading = "Alignment configuration")]
-    cost_gap_open: String,
-
-    /// Penalty for extending a gap. Use comma-separated values for two-piece affine (e.g., "2,1")
-    #[arg(short = 'e', default_value = "2")]
-    #[clap(help_heading = "Alignment configuration")]
-    cost_gap_extend: String,
+impl From<PoastaIOError> for CliError {
+    fn from(e: PoastaIOError) -> Self {
+        Self::Io(e)
+    }
 }
 
-#[derive(Args, Debug)]
-struct StatsArgs {
-    /// The POASTA graph or an existing MSA in FASTA format to analyze
-    graph: PathBuf,
+impl From<io::Error> for CliError {
+    fn from(e: io::Error) -> Self {
+        Self::Io(PoastaIOError::OtherError { source: e })
+    }
 }
 
-#[derive(Args, Debug)]
-struct ViewArgs {
-    /// Input POA graph
-    graph: PathBuf,
+fn run_align(args: AlignArgs) -> Result<(), CliError> {
+    tracing::info!(
+        cost_model = ?args.cost_model,
+        heuristic = ?args.search.heuristic,
+        input = %args.sequences.display(),
+        seed_graph = ?args.graph.as_ref().map(|p| p.display().to_string()),
+        "configuring aligner"
+    );
 
-    /// Output filename. If not given, defaults to stdout
-    #[arg(short, long)]
-    output: Option<PathBuf>,
+    let graph = match &args.graph {
+        Some(path) => {
+            let reader = BufReader::new(open_seed_graph(path)?);
+            let g = load_graph_from_fasta_msa::<u32, _>(reader)?;
+            tracing::info!(
+                nodes = g.node_count(),
+                sequences = g.sequences.len(),
+                "loaded seed graph"
+            );
+            g
+        }
+        None => POAGraph::<u32>::new(),
+    };
 
-    /// Output file type
-    #[arg(value_enum, short = 'O', long)]
-    output_type: OutputType,
+    let graph = dispatch(&args, graph, open_sequences(&args.sequences)?)?;
+
+    write_output(&args, &graph)?;
+
+    tracing::info!(
+        nodes = graph.node_count(),
+        sequences = graph.sequences.len(),
+        "done"
+    );
+    Ok(())
 }
 
-fn perform_alignment<N, C>(
-    graph: &mut POAGraph<N>,
-    aligner: &mut PoastaAligner<C>,
-    debug_writer: Option<&DebugOutputWriter>,
-    sequences_fname: &Path,
-) -> Result<()>
-where
-    N: IndexType + DeserializeOwned,
-    C: AlignmentConfig,
-{
-    // Let's read the sequences from the given FASTA
-    let is_gzipped = sequences_fname
+fn open_seed_graph(path: &Path) -> Result<Box<dyn io::Read>, PoastaIOError> {
+    let file = File::open(path).map_err(|source| PoastaIOError::FileReadError { source })?;
+    let gzipped = path
         .file_name()
         .map(|v| v.to_string_lossy().ends_with(".gz"))
         .unwrap_or(false);
-
-    // Check if we have a gzipped file
-    let reader_inner: Box<dyn std::io::BufRead> = if is_gzipped {
-        Box::new(
-            File::open(sequences_fname)
-                .map(MultiGzDecoder::new)
-                .map(BufReader::new)?,
-        )
+    if gzipped {
+        Ok(Box::new(flate2::read::MultiGzDecoder::new(file)))
     } else {
-        Box::new(File::open(sequences_fname).map(BufReader::new)?)
-    };
-    let mut reader = fasta::io::Reader::new(reader_inner);
-
-    for result in reader.records() {
-        let record = result?;
-        let weights: Vec<usize> = vec![1; record.sequence().len()];
-        
-        let seq_name = std::str::from_utf8(record.name())?;
-
-        if let Some(debug) = debug_writer {
-            debug.log(DebugOutputMessage::NewSequence {
-                seq_name: seq_name.to_string(),
-                sequence: String::from_utf8_lossy(record.sequence().as_ref()).to_string(),
-                max_rank: graph.node_count_with_start_and_end(),
-            });
-
-            if !graph.is_empty() {
-                debug.log(DebugOutputMessage::new_from_graph(graph));
-            }
-        }
-
-        if graph.is_empty() {
-            // eprintln!("Creating initial graph from {}...", record.name());
-            graph.add_alignment_with_weights(seq_name, record.sequence().as_ref(), None, &weights)?;
-        } else {
-            // eprint!("Aligning #{i} {}... ", seq_name);
-            let result = aligner.align::<u32, _>(graph, record.sequence().as_ref());
-            // eprintln!("Done. Alignment Score: {:?}", result.score);
-            // eprintln!();
-            // eprintln!(
-            //     "{}",
-            //     print_alignment(graph, record.sequence().as_ref(), &result.alignment)
-            // );
-            // eprintln!();
-            // eprintln!();
-
-            graph.add_alignment_with_weights(
-                seq_name,
-                record.sequence().as_ref(),
-                Some(&result.alignment),
-                &weights,
-            )?;
-        }
+        Ok(Box::new(file))
     }
-
-    Ok(())
 }
 
-fn parse_gap_penalties(gap_str: &str) -> Result<Vec<u8>> {
-    gap_str
-        .split(',')
-        .map(|s| s.trim().parse::<u8>().context("Invalid gap penalty value"))
-        .collect()
-}
+/// Streaming source of input records. Sequences are aligned one at a time so a
+/// large input never sits in memory all at once.
+type SeqIter = Box<dyn Iterator<Item = Result<(String, Vec<u8>, Vec<u32>), PoastaIOError>>>;
 
-fn align_subcommand(align_args: &AlignArgs) -> Result<()> {
-    let debug_writer = align_args
-        .debug_output
-        .as_ref()
-        .map(DebugOutputWriter::init);
-        
-    // Convert alignment span to AlignmentType
-    let alignment_type = match align_args.alignment_span {
-        AlignmentSpan::Global => AlignmentType::Global,
-        AlignmentSpan::SemiGlobal => AlignmentType::EndsFree {
-            qry_free_begin: Bound::Unbounded,
-            qry_free_end: Bound::Unbounded,
-            graph_free_begin: Bound::Unbounded,
-            graph_free_end: Bound::Unbounded,
-        },
-        AlignmentSpan::EndsFree => AlignmentType::EndsFree {
-            qry_free_begin: Bound::Unbounded,
-            qry_free_end: Bound::Unbounded,
-            graph_free_begin: Bound::Unbounded,
-            graph_free_end: Bound::Unbounded,
-        },
-    };
+fn dispatch(
+    args: &AlignArgs,
+    graph: POAGraph<u32>,
+    sequences: SeqIter,
+) -> Result<POAGraph<u32>, CliError> {
+    let mode = args.alignment_span.mode();
 
-    let mut graph = if let Some(path) = &align_args.graph {
-        let fasta_extensions = vec![".fa", ".fa.gz", ".fna", ".fna.gz", ".fasta", ".fasta.gz"];
-        let path_as_str = path.to_string_lossy();
-        if fasta_extensions
-            .into_iter()
-            .any(|ext| path_as_str.ends_with(ext))
-        {
-            load_graph_from_fasta_msa(path)?
-        } else {
-            let file_in = File::open(path)?;
-            load_graph(&file_in)?
+    match args.cost_model {
+        CostModelKind::Affine => {
+            let costs = Affine::new(args.cost_mismatch, args.cost_gap_open, args.cost_gap_extend);
+            run_astar(costs, mode, args, graph, sequences)
         }
-    } else {
-        POAGraphWithIx::U32(POAGraph::new())
-    };
-
-    // Parse gap penalties
-    let gap_open_values = parse_gap_penalties(&align_args.cost_gap_open)?;
-    let gap_extend_values = parse_gap_penalties(&align_args.cost_gap_extend)?;
-    
-    // Check if we're using two-piece affine mode
-    let use_two_piece = gap_open_values.len() == 2 && gap_extend_values.len() == 2;
-    
-    if use_two_piece {
-        if gap_open_values.len() != 2 || gap_extend_values.len() != 2 {
-            return Err(anyhow::anyhow!("Two-piece affine mode requires exactly 2 values for both gap-open and gap-extend (e.g., -g 8,24 -e 2,1)"));
+        CostModelKind::Linear => {
+            let costs = Linear::new(args.cost_mismatch, args.cost_gap_extend);
+            run_astar(costs, mode, args, graph, sequences)
         }
-        
-        let gap_open1 = gap_open_values[0];
-        let gap_extend1 = gap_extend_values[0];
-        let gap_open2 = gap_open_values[1];
-        let gap_extend2 = gap_extend_values[1];
-        
-        if gap_extend1 <= gap_extend2 {
-            eprintln!("Warning: gap_extend1 ({}) should be greater than gap_extend2 ({}) for two-piece model", gap_extend1, gap_extend2);
-            eprintln!("Using standard affine gap model instead.");
-            let scoring = GapAffine::new(
-                align_args.cost_mismatch.unwrap_or(4),
-                gap_extend1,
-                gap_open1,
+        CostModelKind::TwoPiece => {
+            let costs = TwoPieceAffine::new(
+                args.cost_mismatch,
+                args.cost_gap_open,
+                args.cost_gap_extend,
+                args.cost_gap_open2,
+                args.cost_gap_extend2,
             );
-            let mut aligner = if let Some(ref debug) = debug_writer {
-                PoastaAligner::new_with_debug(AffineMinGapCost(scoring), alignment_type, debug)
-            } else {
-                PoastaAligner::new(AffineMinGapCost(scoring), alignment_type)
-            };
-            
-            match graph {
-                POAGraphWithIx::U8(ref mut g) => perform_alignment(
-                    g,
-                    &mut aligner,
-                    debug_writer.as_ref(),
-                    align_args.sequences.as_ref(),
-                )?,
-                POAGraphWithIx::U16(ref mut g) => perform_alignment(
-                    g,
-                    &mut aligner,
-                    debug_writer.as_ref(),
-                    align_args.sequences.as_ref(),
-                )?,
-                POAGraphWithIx::U32(ref mut g) => perform_alignment(
-                    g,
-                    &mut aligner,
-                    debug_writer.as_ref(),
-                    align_args.sequences.as_ref(),
-                )?,
-                POAGraphWithIx::USIZE(ref mut g) => perform_alignment(
-                    g,
-                    &mut aligner,
-                    debug_writer.as_ref(),
-                    align_args.sequences.as_ref(),
-                )?,
-            }
-        } else {
-            let scoring = GapAffine2Piece::new(
-                align_args.cost_mismatch.unwrap_or(4),
-                gap_extend1,
-                gap_open1,
-                gap_extend2,
-                gap_open2,
-            );
-            let mut aligner = if let Some(ref debug) = debug_writer {
-                PoastaAligner::new_with_debug(Affine2PieceMinGapCost(scoring), alignment_type, debug)
-            } else {
-                PoastaAligner::new(Affine2PieceMinGapCost(scoring), alignment_type)
-            };
-            
-            match graph {
-                POAGraphWithIx::U8(ref mut g) => perform_alignment(
-                    g,
-                    &mut aligner,
-                    debug_writer.as_ref(),
-                    align_args.sequences.as_ref(),
-                )?,
-                POAGraphWithIx::U16(ref mut g) => perform_alignment(
-                    g,
-                    &mut aligner,
-                    debug_writer.as_ref(),
-                    align_args.sequences.as_ref(),
-                )?,
-                POAGraphWithIx::U32(ref mut g) => perform_alignment(
-                    g,
-                    &mut aligner,
-                    debug_writer.as_ref(),
-                    align_args.sequences.as_ref(),
-                )?,
-                POAGraphWithIx::USIZE(ref mut g) => perform_alignment(
-                    g,
-                    &mut aligner,
-                    debug_writer.as_ref(),
-                    align_args.sequences.as_ref(),
-                )?,
-            }
-        }
-    } else {
-        // Use standard affine gap model
-        if gap_open_values.len() != 1 || gap_extend_values.len() != 1 {
-            return Err(anyhow::anyhow!("Standard affine mode requires exactly 1 value for both gap-open and gap-extend (e.g., -g 6 -e 2)"));
-        }
-        
-        let scoring = GapAffine::new(
-            align_args.cost_mismatch.unwrap_or(4),
-            gap_extend_values[0],
-            gap_open_values[0],
-        );
-        let mut aligner = if let Some(ref debug) = debug_writer {
-            PoastaAligner::new_with_debug(AffineMinGapCost(scoring), alignment_type, debug)
-        } else {
-            PoastaAligner::new(AffineMinGapCost(scoring), alignment_type)
-        };
-
-        match graph {
-            POAGraphWithIx::U8(ref mut g) => perform_alignment(
-                g,
-                &mut aligner,
-                debug_writer.as_ref(),
-                align_args.sequences.as_ref(),
-            )?,
-            POAGraphWithIx::U16(ref mut g) => perform_alignment(
-                g,
-                &mut aligner,
-                debug_writer.as_ref(),
-                align_args.sequences.as_ref(),
-            )?,
-            POAGraphWithIx::U32(ref mut g) => perform_alignment(
-                g,
-                &mut aligner,
-                debug_writer.as_ref(),
-                align_args.sequences.as_ref(),
-            )?,
-            POAGraphWithIx::USIZE(ref mut g) => perform_alignment(
-                g,
-                &mut aligner,
-                debug_writer.as_ref(),
-                align_args.sequences.as_ref(),
-            )?,
+            run_astar(costs, mode, args, graph, sequences)
         }
     }
-
-    // Determine where to write the graph to
-    let mut writer: Box<dyn Output> = if let Some(path) = &align_args.output {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?
-        }
-
-        let file = File::create(path)?;
-        Box::new(file) as Box<dyn Output>
-    } else {
-        Box::new(stdout()) as Box<dyn Output>
-    };
-
-    let output_type = align_args.output_type.unwrap_or(OutputType::Poasta);
-    match output_type {
-        OutputType::Poasta => {
-            if !writer.is_terminal() {
-                poasta::io::save_graph(&graph, writer)?
-            } else {
-                eprintln!("WARNING: not writing binary graph data to terminal standard output!");
-            }
-        }
-        OutputType::Dot => write!(writer, "{}", &graph)?,
-        OutputType::Fasta => match graph {
-            POAGraphWithIx::U8(ref g) => poa_graph_to_fasta(g, &mut writer),
-            POAGraphWithIx::U16(ref g) => poa_graph_to_fasta(g, &mut writer),
-            POAGraphWithIx::U32(ref g) => poa_graph_to_fasta(g, &mut writer),
-            POAGraphWithIx::USIZE(ref g) => poa_graph_to_fasta(g, &mut writer),
-        }?,
-        OutputType::Gfa => match graph {
-            POAGraphWithIx::U8(ref g) => graph_to_gfa(&mut writer, g),
-            POAGraphWithIx::U16(ref g) => graph_to_gfa(&mut writer, g),
-            POAGraphWithIx::U32(ref g) => graph_to_gfa(&mut writer, g),
-            POAGraphWithIx::USIZE(ref g) => graph_to_gfa(&mut writer, g),
-        }?,
-    }
-
-    if let Some(debug) = debug_writer {
-        eprintln!("Waiting for debug writer thread to finish...");
-        debug.log(DebugOutputMessage::Terminate);
-        debug.join()?;
-    }
-
-    Ok(())
 }
 
-fn view_subcommand(view_args: &ViewArgs) -> Result<()> {
-    let fasta_extensions = vec![".fa", ".fa.gz", ".fna", ".fna.gz", ".fasta", ".fasta.gz"];
-    let path_as_str = view_args.graph.to_string_lossy();
-    let graph = if fasta_extensions
-        .into_iter()
-        .any(|ext| path_as_str.ends_with(ext))
-    {
-        load_graph_from_fasta_msa(&view_args.graph)?
-    } else {
-        let file_in = File::open(&view_args.graph)?;
-        load_graph(&file_in)?
-    };
-
-    // Determine where to write the graph to
-    let mut writer: Box<dyn Output> = if let Some(path) = &view_args.output {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?
-        }
-
-        let file = File::create(path)?;
-        Box::new(file) as Box<dyn Output>
-    } else {
-        Box::new(stdout()) as Box<dyn Output>
-    };
-
-    match view_args.output_type {
-        OutputType::Poasta => {
-            if !writer.is_terminal() {
-                poasta::io::save_graph(&graph, writer)?
-            } else {
-                eprintln!("WARNING: not writing binary graph data to terminal standard output!");
-            }
-        }
-        OutputType::Dot => match graph {
-            POAGraphWithIx::U8(ref g) => graph_to_dot(&mut writer, g),
-            POAGraphWithIx::U16(ref g) => graph_to_dot(&mut writer, g),
-            POAGraphWithIx::U32(ref g) => graph_to_dot(&mut writer, g),
-            POAGraphWithIx::USIZE(ref g) => graph_to_dot(&mut writer, g),
-        }?,
-        OutputType::Fasta => match graph {
-            POAGraphWithIx::U8(ref g) => poa_graph_to_fasta(g, &mut writer),
-            POAGraphWithIx::U16(ref g) => poa_graph_to_fasta(g, &mut writer),
-            POAGraphWithIx::U32(ref g) => poa_graph_to_fasta(g, &mut writer),
-            POAGraphWithIx::USIZE(ref g) => poa_graph_to_fasta(g, &mut writer),
-        }?,
-        OutputType::Gfa => match graph {
-            POAGraphWithIx::U8(ref g) => graph_to_gfa(&mut writer, g),
-            POAGraphWithIx::U16(ref g) => graph_to_gfa(&mut writer, g),
-            POAGraphWithIx::U32(ref g) => graph_to_gfa(&mut writer, g),
-            POAGraphWithIx::USIZE(ref g) => graph_to_gfa(&mut writer, g),
-        }?,
-    }
-
-    Ok(())
+fn run_astar<C>(
+    costs: C,
+    mode: AlignmentMode,
+    args: &AlignArgs,
+    graph: POAGraph<u32>,
+    sequences: SeqIter,
+) -> Result<POAGraph<u32>, CliError>
+where
+    C: AstarCostModel<POANodeIndex<u32>, Offset>,
+{
+    let new_plain_engine = || AstarEngine::<POAGraph<u32>, C>::new(costs).with_mode(mode);
+    instantiate_engine!(&args.search, new_plain_engine, |new_engine| run_with(new_engine(), args, graph, sequences))
 }
 
-fn stats_subcommand(stats_args: &StatsArgs) -> Result<()> {
-    let fasta_extensions = vec![".fa", ".fa.gz", ".fna", ".fna.gz", ".fasta", ".fasta.gz"];
-    let path_as_str = stats_args.graph.to_string_lossy();
-    let graph = if fasta_extensions
-        .into_iter()
-        .any(|ext| path_as_str.ends_with(ext))
-    {
-        load_graph_from_fasta_msa(&stats_args.graph)?
-    } else {
-        let file_in = File::open(&stats_args.graph)?;
-        load_graph(&file_in)?
-    };
+fn run_with<E>(
+    engine: E,
+    args: &AlignArgs,
+    graph: POAGraph<u32>,
+    sequences: SeqIter,
+) -> Result<POAGraph<u32>, CliError>
+where
+    E: for<'s> AlignmentEngine<
+            &'s [u8],
+            Graph = POAGraph<u32>,
+            Success = AlignOutput<POAGraph<u32>>,
+        >,
+    for<'s> <E as AlignmentEngine<&'s [u8]>>::Error: std::fmt::Display,
+{
+    let mut aligner = PoastaAligner::new(engine, graph);
 
-    match graph {
-        POAGraphWithIx::U8(ref g) => print_graph_stats(g),
-        POAGraphWithIx::U16(ref g) => print_graph_stats(g),
-        POAGraphWithIx::U32(ref g) => print_graph_stats(g),
-        POAGraphWithIx::USIZE(ref g) => print_graph_stats(g),
+    for record in sequences {
+        let (name, seq, weights) = record?;
+
+        if let Some(dir) = &args.debug_output_dir {
+            write_graph_dot(dir, &name, aligner.graph(), &seq)?;
+        }
+
+        aligner
+            .align_one(&name, &seq, &weights)
+            .map_err(|e| CliError::Align(format!("{e}")))?;
     }
 
-    Ok(())
-}
-
-fn print_graph_stats<G: AlignableRefGraph>(graph: &G) {
-    eprintln!("node_count: {}", graph.node_count());
-    eprintln!(
-        "node_count_with_start: {}",
-        graph.node_count_with_start_and_end()
+    let run_stats = aligner.run_stats();
+    tracing::info!(
+        n_alignments = run_stats.n_alignments,
+        avg_cells_computed = run_stats.avg_cells_computed(),
+        avg_states_expanded = run_stats.avg_states_expanded(),
+        avg_states_pruned = run_stats.avg_states_pruned(),
+        avg_fraction_of_full_matrix = run_stats.avg_fraction(),
+        "run alignment stats (averaged across sequences)",
     );
-    eprintln!("edge_count: {}", graph.edge_count());
-
-    let in_degrees: Vec<_> = graph.all_nodes().map(|n| graph.in_degree(n)).collect();
-    let avg_in_degree = in_degrees.iter().sum::<usize>() as f64 / in_degrees.len() as f64;
-    let out_degrees: Vec<_> = graph.all_nodes().map(|n| graph.out_degree(n)).collect();
-    let avg_out_degree = out_degrees.iter().sum::<usize>() as f64 / out_degrees.len() as f64;
-
-    eprintln!("avg_in_degree: {:.2}", avg_in_degree);
-    eprintln!("avg_out_degree: {:.2}", avg_out_degree);
+    Ok(aligner.into_graph())
 }
 
-fn main() -> Result<()> {
-    let args = CliArgs::parse();
+fn write_output(args: &AlignArgs, graph: &POAGraph<u32>) -> Result<(), CliError> {
+    let output_type = resolve_output_type(args);
 
-    match &args.command {
-        Some(PoastaSubcommand::Align(v)) => align_subcommand(v)?,
-        Some(PoastaSubcommand::View(v)) => view_subcommand(v)?,
-        Some(PoastaSubcommand::Stats(v)) => stats_subcommand(v)?,
-        None => return Err(PoastaError::Other).with_context(|| "No subcommand given.".to_string()),
+    if args.consensus_only && matches!(output_type, OutputType::Gfa) {
+        return Err(CliError::Config(
+            "--consensus-only is incompatible with GFA output; \
+             rerun without -O gfa or without --consensus-only"
+                .into(),
+        ));
+    }
+
+    let mut writer: Box<dyn Write> = match &args.output {
+        Some(path) => Box::new(BufWriter::new(
+            File::create(path).map_err(|source| PoastaIOError::FileWriteError { source })?,
+        )),
+        None => Box::new(BufWriter::new(io::stdout().lock())),
     };
 
+    tracing::info!(
+        ?output_type,
+        output = ?args.output.as_ref().map(|p| p.display().to_string()),
+        include_consensus = args.include_consensus,
+        consensus_only = args.consensus_only,
+        "writing output"
+    );
+
+    match output_type {
+        OutputType::Fasta => {
+            let opts = FastaOutputOptions {
+                include_consensus: args.include_consensus,
+                consensus_only: args.consensus_only,
+            };
+            poa_graph_to_fasta(graph, &mut writer, opts)?;
+        }
+        OutputType::Gfa => {
+            let opts = GfaOutputOptions {
+                include_consensus: args.include_consensus,
+            };
+            poa_graph_to_gfa(graph, &mut writer, opts)?;
+        }
+    }
+
+    writer
+        .flush()
+        .map_err(|source| PoastaIOError::FileWriteError { source })?;
     Ok(())
+}
+
+fn resolve_output_type(args: &AlignArgs) -> OutputType {
+    if let Some(t) = args.output_type {
+        return t;
+    }
+
+    if let Some(path) = &args.output {
+        let name = path
+            .file_name()
+            .map(|v| v.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        let stripped = name.strip_suffix(".gz").unwrap_or(&name);
+
+        if stripped.ends_with(".gfa") {
+            return OutputType::Gfa;
+        }
+
+        if stripped.ends_with(".fa")
+            || stripped.ends_with(".fasta")
+            || stripped.ends_with(".fna")
+            || stripped.ends_with(".msa")
+        {
+            return OutputType::Fasta;
+        }
+    }
+    OutputType::Fasta
 }

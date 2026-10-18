@@ -1,0 +1,7 @@
+H	VN:Z:1.0
+S	a	ACGT
+S	b	GG
+S	c	T
+L	a	+	b	+	0M
+L	b	+	c	+	0M
+L	c	+	b	+	0M

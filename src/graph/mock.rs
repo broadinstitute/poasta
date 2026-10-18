@@ -1,0 +1,271 @@
+//! A module containing a mock graph struct useful for creating
+//! test graphs in unit tests
+
+use std::ops::{Deref, DerefMut};
+
+use petgraph::graph::{DiGraph, Neighbors, NodeIndex, NodeIndices};
+use petgraph::visit::NodeIndexable;
+use petgraph::{Incoming, Outgoing};
+use rustc_hash::FxHashMap;
+
+use crate::graph::traits::{GraphBase, GraphWithNodeOrdering};
+
+
+pub(crate) type NIx = u32;
+
+#[derive(Copy, Clone, Default, PartialEq, Eq)]
+pub(crate) struct NodeData(pub i64, pub usize);
+
+impl NodeData {
+    fn new(label: i64) -> Self {
+        NodeData(label, 0)
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct MockGraph(DiGraph<NodeData, (), NIx>, Vec<NodeIndex<NIx>>);
+
+impl MockGraph {
+    fn post_process_graph(&mut self) {
+        self.compute_rev_postorder();
+
+        let MockGraph(graph, topo) = self;
+        for (rank, node) in topo.iter().enumerate() {
+            graph[*node].1 = rank;
+        }
+    }
+
+    /// Iterative reverse-postorder DFS from the (assumed unique) source node.
+    /// Writes the order to `self.1`. Mirrors `POAGraph::compute_rev_postorder`
+    /// but allocates a fresh bitmap each call. This is test-only code and not
+    /// in any hot path.
+    fn compute_rev_postorder(&mut self) {
+        let start = self.start_node();
+        let n = self.0.node_bound();
+        let mut visited: Vec<bool> = vec![false; n];
+
+        self.1.clear();
+
+        let graph = &self.0;
+        let topo = &mut self.1;
+
+        visited[start.index()] = true;
+        let mut stack: Vec<(NodeIndex<NIx>, Neighbors<'_, (), NIx>)> =
+            vec![(start, graph.neighbors(start))];
+
+        loop {
+            let next_child = match stack.last_mut() {
+                None => break,
+                Some((_, iter)) => iter.next(),
+            };
+            match next_child {
+                Some(child) => {
+                    if !visited[child.index()] {
+                        visited[child.index()] = true;
+                        stack.push((child, graph.neighbors(child)));
+                    }
+                }
+                None => {
+                    let (node, _) = stack.pop().unwrap();
+                    topo.push(node);
+                }
+            }
+        }
+
+        topo.reverse();
+    }
+}
+
+impl Deref for MockGraph {
+    type Target = DiGraph<NodeData, (), NIx>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for MockGraph {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl GraphBase for MockGraph {
+    type NodeType = NodeIndex<NIx>;
+
+    type NodeIter<'a>
+        = NodeIndices<NIx>
+    where
+        Self: 'a;
+
+    type Successors<'a>
+        = Neighbors<'a, (), NIx>
+    where
+        Self: 'a;
+    type Predecessors<'a>
+        = Neighbors<'a, (), NIx>
+    where
+        Self: 'a;
+
+    fn all_nodes_iter(&self) -> Self::NodeIter<'_> {
+        self.node_indices()
+    }
+
+    fn node_count(&self) -> usize {
+        self.0.node_count()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.node_count() == 0
+    }
+
+    fn predecessors(&self, node: Self::NodeType) -> Self::Predecessors<'_> {
+        self.neighbors_directed(node, Incoming)
+    }
+
+    fn successors(&self, node: Self::NodeType) -> Self::Successors<'_> {
+        self.neighbors(node)
+    }
+
+    fn in_degree(&self, node: Self::NodeType) -> usize {
+        self.neighbors_directed(node, Incoming).count()
+    }
+
+    fn out_degree(&self, node: Self::NodeType) -> usize {
+        self.neighbors(node).count()
+    }
+}
+
+impl GraphWithNodeOrdering for MockGraph {
+    fn start_node(&self) -> Self::NodeType {
+        self.node_indices()
+            .find(|n| self.neighbors_directed(*n, Incoming).count() == 0)
+            .unwrap()
+    }
+
+    fn end_node(&self) -> Self::NodeType {
+        self.node_indices()
+            .find(|n| self.neighbors_directed(*n, Outgoing).count() == 0)
+            .unwrap()
+    }
+
+    fn node_rank(&self, node: Self::NodeType) -> usize {
+        self.0[node].1
+    }
+
+    fn rank_to_node(&self, node_rank: usize) -> Self::NodeType {
+        self.1[node_rank]
+    }
+}
+
+pub(crate) fn create_test_graph1() -> MockGraph {
+    let mut nmap = FxHashMap::default();
+    let mut g = MockGraph::default();
+
+    for i in 1..=9 {
+        let nix = g.add_node(NodeData::new(i));
+        nmap.insert(i, nix);
+    }
+
+    let edges = [
+        (1, 2),
+        (2, 3),
+        (3, 4),
+        (4, 5),
+        (5, 6),
+        (3, 7),
+        (7, 8),
+        (8, 9),
+    ];
+
+    for (s, t) in edges.iter() {
+        g.add_edge(nmap[s], nmap[t], ());
+    }
+
+    // Create a mock "end node"
+    let end_node = g.add_node(NodeData::new(10));
+    for n in g.node_indices() {
+        if n != end_node && g.successors(n).count() == 0 {
+            g.add_edge(n, end_node, ());
+        }
+    }
+
+    g.post_process_graph();
+
+    g
+}
+
+/// A straight chain of `length` nodes (labelled `1..=length`), no branching.
+/// The first node is the (implicit) start (in-degree 0), the last is the
+/// (implicit) end (out-degree 0), useful for bubble-index tests that need a
+/// node with a known, unambiguous (min == max) distance to the graph end.
+pub(crate) fn create_linear_graph(length: usize) -> MockGraph {
+    let mut g = MockGraph::default();
+    let mut prev = None;
+    for i in 1..=length {
+        let nix = g.add_node(NodeData::new(i as i64));
+        if let Some(p) = prev {
+            g.add_edge(p, nix, ());
+        }
+        prev = Some(nix);
+    }
+
+    g.post_process_graph();
+    g
+}
+
+pub(crate) fn create_test_graph2() -> MockGraph {
+    let mut nmap = FxHashMap::default();
+    let mut g = MockGraph::default();
+
+    for i in 1..=15 {
+        let nix = g.add_node(NodeData::new(i));
+        nmap.insert(i, nix);
+    }
+
+    let edges = [
+        (1, 2),
+        (1, 3),
+        (2, 3),
+        (3, 4),
+        (3, 5),
+        (3, 11),
+        (4, 8),
+        (5, 6),
+        (5, 9),
+        (6, 7),
+        (6, 10),
+        (7, 8),
+        (8, 13),
+        (8, 15),
+        (9, 10),
+        (10, 7),
+        (11, 12),
+        (12, 8),
+        (13, 14),
+        (13, 15),
+        (14, 15),
+    ];
+
+    for (s, t) in edges.iter() {
+        g.add_edge(nmap[s], nmap[t], ());
+    }
+
+    g.post_process_graph();
+
+    g
+}
+
+impl crate::graph::traits::IndexType for NodeIndex<NIx> {
+    fn new(x: usize) -> Self {
+        NodeIndex::new(x)
+    }
+
+    fn index(&self) -> usize {
+        NodeIndex::index(*self)
+    }
+
+    fn max() -> Self {
+        NodeIndex::end()
+    }
+}

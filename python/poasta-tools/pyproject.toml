@@ -1,0 +1,28 @@
+[project]
+name = "poasta-tools"
+version = "0.1.0"
+description = "Visualisation tools for POASTA debug output"
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.0",
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+    "networkx[default]>=3.0",
+    "polars>=0.20",
+    "numpy>=1.26",
+    "pygraphviz>=1.11",
+]
+
+[project.scripts]
+poasta-plot = "poasta_tools.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/poasta_tools"]
+
+# pygraphviz needs the graphviz C headers (brew install graphviz).
+# On macOS with LLVM from brew, use the system clang:
+#   CC=/usr/bin/clang CFLAGS="-I/opt/homebrew/include" LDFLAGS="-L/opt/homebrew/lib" uv sync

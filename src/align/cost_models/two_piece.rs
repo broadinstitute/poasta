@@ -1,0 +1,114 @@
+use super::AlignmentCostModel;
+use crate::align::AlignState;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TwoPieceAffine {
+    mismatch: u8,
+    gap_open: u8,
+    gap_extend: u8,
+    gap_open2: u8,
+    gap_extend2: u8,
+}
+
+impl TwoPieceAffine {
+    pub fn new(mismatch: u8, gap_open: u8, gap_extend: u8, gap_open2: u8, gap_extend2: u8) -> Self {
+        Self {
+            mismatch,
+            gap_open,
+            gap_extend,
+            gap_open2,
+            gap_extend2,
+        }
+    }
+}
+
+impl AlignmentCostModel for TwoPieceAffine {
+    #[inline(always)]
+    fn mismatch(&self) -> u8 {
+        self.mismatch
+    }
+    #[inline(always)]
+    fn gap_open(&self) -> u8 {
+        self.gap_open
+    }
+    #[inline(always)]
+    fn gap_extend(&self) -> u8 {
+        self.gap_extend
+    }
+    #[inline(always)]
+    fn gap_open2(&self) -> u8 {
+        self.gap_open2
+    }
+    #[inline(always)]
+    fn gap_extend2(&self) -> u8 {
+        self.gap_extend2
+    }
+    /// Opening from `Match` takes the cheaper of the two pieces. Already inside
+    /// a gap of one piece, only that piece extends, with no new open cost.
+    /// Both pieces open independently from `Match`; there is no transition
+    /// from piece one to piece two mid-gap (see `GapAlignmentGraph`).
+    fn gap_cost(&self, current_state: AlignState, length: usize) -> usize {
+        if length == 0 {
+            return 0;
+        }
+
+        let cost1 = self.gap_open as usize + (length * self.gap_extend as usize);
+        let cost2 = self.gap_open2 as usize + (length * self.gap_extend2 as usize);
+        let from_match = cost1.min(cost2);
+
+        // Inside a gap the rest can extend the current piece, or close for
+        // free and open the other piece, which is cheaper for long gaps.
+        match current_state {
+            AlignState::Insertion | AlignState::Deletion => (length * self.gap_extend as usize).min(from_match),
+            AlignState::Insertion2 | AlignState::Deletion2 => (length * self.gap_extend2 as usize).min(from_match),
+            AlignState::Match => from_match,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn costs() -> TwoPieceAffine {
+        TwoPieceAffine::new(4, 10, 2, 8, 1)
+    }
+
+    /// A long gap from inside piece one closes for free and opens piece
+    /// two: 24 + 30 = 54, not 30 × 2 = 60.
+    #[test]
+    fn gap_cost_inside_a_gap_may_switch_pieces() {
+        let c = TwoPieceAffine::new(4, 6, 2, 24, 1);
+        assert_eq!(c.gap_cost(AlignState::Deletion, 30), 54);
+        assert_eq!(c.gap_cost(AlignState::Insertion, 30), 54);
+        assert_eq!(c.gap_cost(AlignState::Deletion, 3), 6);
+        assert_eq!(c.gap_cost(AlignState::Deletion2, 3), 3);
+    }
+
+    #[test]
+    fn gap_cost_zero_length_is_zero() {
+        assert_eq!(costs().gap_cost(AlignState::Match, 0), 0);
+    }
+
+    #[test]
+    fn gap_cost_from_match_takes_cheaper_piece() {
+        let c = costs();
+        assert_eq!(c.gap_cost(AlignState::Match, 1), 9); // min(10+2*1, 8+1*1) = min(12, 9) = 9
+        assert_eq!(c.gap_cost(AlignState::Match, 2), 10); // min(14, 10) = 10
+        assert_eq!(c.gap_cost(AlignState::Match, 3), 11); // min(16, 11) = 11
+    }
+
+    #[test]
+    fn gap_cost_within_first_piece_has_no_reopen_cost() {
+        let c = costs();
+        assert_eq!(c.gap_cost(AlignState::Insertion, 1), 2); // extend only: 1*2
+        assert_eq!(c.gap_cost(AlignState::Deletion, 2), 4); // 2*2
+    }
+
+    #[test]
+    fn gap_cost_within_second_piece_has_no_reopen_cost() {
+        let c = costs();
+        assert_eq!(c.gap_cost(AlignState::Insertion2, 1), 1); // 1*1
+        assert_eq!(c.gap_cost(AlignState::Deletion2, 2), 2); // 2*1
+    }
+}

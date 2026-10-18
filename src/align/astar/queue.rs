@@ -1,0 +1,388 @@
+//! Priority (bucket) queue for the A* engine.
+//!
+//! Priorities are small integers (`score + heuristic`), so the queue is a
+//! deque of buckets rather than a heap: pushing and popping are O(1) and the
+//! bucket for the current minimum is always at the front.
+
+use std::collections::VecDeque;
+use std::fmt::Debug;
+
+use crate::align::AlignState;
+use crate::align::astar::aln_graph::AlignmentGraphNode;
+use crate::align::offsets::OffsetType;
+use crate::graph::traits::GraphNodeId;
+
+pub trait QueueLayer: Default + Clone {
+    type QueueItem: Debug;
+
+    fn queue(&mut self, item: Self::QueueItem);
+    fn pop(&mut self) -> Option<Self::QueueItem>;
+    fn is_empty(&self) -> bool;
+    fn clear(&mut self);
+}
+
+/// Layered (bucket) queue of items, keyed by priority `f = g + h`.
+///
+/// LIFO within a bucket (stack-like via each layer's `pop`) preserves the
+/// depth-first flavour that pairs with the greedy match-extension DFA.
+pub struct LayeredQueue<L> {
+    layers: VecDeque<L>,
+    layer_min: usize,
+    /// Layers popped from the front go here instead of being dropped, and new
+    /// layers come from here. The priority range shifts through the whole
+    /// alignment, so without this each priority allocates and frees `S`
+    /// vectors.
+    spare: Vec<L>,
+}
+
+impl<L> LayeredQueue<L>
+where
+    L: QueueLayer,
+{
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn fresh_layer(&mut self) -> L {
+        self.spare.pop().unwrap_or_default()
+    }
+
+    pub fn queue(&mut self, item: L::QueueItem, priority: usize) {
+        if self.layers.is_empty() {
+            let layer = self.fresh_layer();
+            self.layers.push_back(layer);
+            self.layer_min = priority;
+        } else {
+            let layer_max = self.layer_min + self.layers.len();
+
+            if priority < self.layer_min {
+                let diff = self.layer_min - priority;
+                self.layers.reserve(diff);
+
+                for _ in 0..diff {
+                    let layer = self.fresh_layer();
+                    self.layers.push_front(layer);
+                }
+
+                self.layer_min = priority;
+            } else if priority >= layer_max {
+                for _ in layer_max..=priority {
+                    let layer = self.fresh_layer();
+                    self.layers.push_back(layer);
+                }
+            }
+        }
+
+        let ix = priority - self.layer_min;
+        self.layers[ix].queue(item);
+    }
+
+    pub fn pop(&mut self) -> Option<L::QueueItem> {
+        let popped_item = self.layers.front_mut()?.pop();
+
+        while let Some(front) = self.layers.front() {
+            if !front.is_empty() {
+                break;
+            }
+            let mut layer = self.layers.pop_front().unwrap();
+            layer.clear();
+            self.spare.push(layer);
+            self.layer_min += 1;
+        }
+
+        popped_item
+    }
+
+    /// Empty the queue, keeping every layer's allocation in `spare`.
+    pub fn clear(&mut self) {
+        for mut layer in self.layers.drain(..) {
+            layer.clear();
+            self.spare.push(layer);
+        }
+        self.layer_min = 0;
+    }
+}
+
+impl<L> Default for LayeredQueue<L>
+where
+    L: QueueLayer,
+{
+    fn default() -> Self {
+        Self {
+            layers: VecDeque::with_capacity(64),
+            layer_min: 0,
+            spare: Vec::new(),
+        }
+    }
+}
+
+/// An item popped off the A* queue: its (stale-checked) score at queue time,
+/// the alignment-graph node, and the state it was queued in.
+#[derive(Clone, Copy, Debug)]
+pub struct AstarQueuedItem<N, O>(pub u32, pub AlignmentGraphNode<N, O>, pub AlignState)
+where
+    N: GraphNodeId,
+    O: OffsetType;
+
+impl<N, O> AstarQueuedItem<N, O>
+where
+    N: GraphNodeId,
+    O: OffsetType,
+{
+    #[inline]
+    pub fn score(&self) -> u32 {
+        self.0
+    }
+
+    #[inline]
+    pub fn aln_node(&self) -> AlignmentGraphNode<N, O> {
+        self.1
+    }
+
+    #[inline]
+    pub fn aln_state(&self) -> AlignState {
+        self.2
+    }
+}
+
+pub trait AstarQueue<N, O>: Default
+where
+    N: GraphNodeId,
+    O: OffsetType,
+{
+    fn pop_aln_state(&mut self) -> Option<AstarQueuedItem<N, O>>;
+    /// Priority of the item the next pop returns.
+    fn min_priority(&self) -> usize;
+    fn queue_aln_state(&mut self, node: AlignmentGraphNode<N, O>, aln_state: AlignState, score: u32, h: usize);
+    fn clear(&mut self);
+}
+
+impl<N, O, L> AstarQueue<N, O> for LayeredQueue<L>
+where
+    N: GraphNodeId,
+    O: OffsetType,
+    L: QueueLayer<QueueItem = AstarQueuedItem<N, O>>,
+{
+    fn pop_aln_state(&mut self) -> Option<AstarQueuedItem<N, O>> {
+        self.pop()
+    }
+
+    fn min_priority(&self) -> usize {
+        self.layer_min
+    }
+
+    fn queue_aln_state(&mut self, node: AlignmentGraphNode<N, O>, aln_state: AlignState, score: u32, h: usize) {
+        let priority = score as usize + h;
+        tracing::trace!(
+            target: "poasta::astar::queue_item",
+            score,
+            node = node.node().index(),
+            offset = node.offset().as_usize(),
+            state = ?aln_state,
+            priority,
+        );
+        self.queue(AstarQueuedItem(score, node, aln_state), priority)
+    }
+
+    fn clear(&mut self) {
+        LayeredQueue::clear(self)
+    }
+}
+
+/// Pop order within one bucket: matches first, then deletions, then
+/// insertions, piece one before piece two. States whose index is `>= S` are
+/// skipped, so the same order serves every state count.
+const POP_ORDER: [AlignState; 5] = [
+    AlignState::Match,
+    AlignState::Deletion,
+    AlignState::Deletion2,
+    AlignState::Insertion,
+    AlignState::Insertion2,
+];
+
+/// One bucket of the layered queue. States in different alignment states go
+/// in separate vectors, which keeps the main loop's state dispatch
+/// predictable. `S` is the cost model's state count: 1 for linear, 3 for
+/// affine, 5 for two-piece affine.
+#[derive(Clone)]
+pub struct StateQueueLayer<N, O, const S: usize>
+where
+    N: GraphNodeId,
+    O: OffsetType,
+{
+    states: [Vec<(u32, AlignmentGraphNode<N, O>)>; S],
+}
+
+impl<N, O, const S: usize> Default for StateQueueLayer<N, O, S>
+where
+    N: GraphNodeId,
+    O: OffsetType,
+{
+    fn default() -> Self {
+        Self {
+            states: std::array::from_fn(|i| Vec::with_capacity(if i == 0 { 16 } else { 4 })),
+        }
+    }
+}
+
+impl<N, O, const S: usize> QueueLayer for StateQueueLayer<N, O, S>
+where
+    N: GraphNodeId,
+    O: OffsetType,
+{
+    type QueueItem = AstarQueuedItem<N, O>;
+
+    fn queue(&mut self, item: Self::QueueItem) {
+        self.states[item.aln_state() as usize].push((item.score(), item.aln_node()));
+    }
+
+    fn pop(&mut self) -> Option<Self::QueueItem> {
+        for state in POP_ORDER {
+            let ix = state as usize;
+            if ix >= S {
+                continue;
+            }
+            if let Some((score, node)) = self.states[ix].pop() {
+                return Some(AstarQueuedItem(score, node, state));
+            }
+        }
+        None
+    }
+
+    fn is_empty(&self) -> bool {
+        self.states.iter().all(Vec::is_empty)
+    }
+
+    // A recycled layer is capped at 64 entries per state. Without
+    // the cap every spare layer kept the largest capacity any layer had
+    // reached, and rpoB set3 peaked at 654 MB instead of 470 MB. A layer that
+    // outgrows the cap pays one reallocation when it is recycled.
+    fn clear(&mut self) {
+        for state in &mut self.states {
+            state.clear();
+            state.shrink_to(64);
+        }
+    }
+}
+
+pub type LinearLayeredQueue<N, O> = LayeredQueue<StateQueueLayer<N, O, 1>>;
+pub type AffineLayeredQueue<N, O> = LayeredQueue<StateQueueLayer<N, O, 3>>;
+pub type TwoPieceLayeredQueue<N, O> = LayeredQueue<StateQueueLayer<N, O, 5>>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    impl QueueLayer for Vec<usize> {
+        type QueueItem = usize;
+
+        fn queue(&mut self, item: Self::QueueItem) {
+            self.push(item);
+        }
+
+        fn pop(&mut self) -> Option<Self::QueueItem> {
+            Vec::pop(self)
+        }
+
+        fn is_empty(&self) -> bool {
+            <[usize]>::is_empty(self)
+        }
+
+        fn clear(&mut self) {
+            Vec::clear(self)
+        }
+    }
+
+    #[test]
+    fn test_layered_queue() {
+        let mut queue: LayeredQueue<Vec<usize>> = LayeredQueue::new();
+
+        queue.queue(10, 10);
+        assert_eq!(queue.layers.len(), 1);
+        assert_eq!(queue.layer_min, 10);
+
+        queue.queue(5, 5);
+        assert_eq!(queue.layers.len(), 6);
+        assert_eq!(queue.layer_min, 5);
+
+        let popped = queue.pop();
+        assert_eq!(popped, Some(5));
+
+        assert_eq!(queue.layers.len(), 1);
+        assert_eq!(queue.layer_min, 10);
+
+        queue.queue(15, 15);
+        assert_eq!(queue.layers.len(), 6);
+        assert_eq!(queue.layer_min, 10);
+
+        queue.queue(12, 12);
+        assert_eq!(queue.layers.len(), 6);
+        assert_eq!(queue.layer_min, 10);
+        assert_eq!(queue.layers[2], vec![12]);
+    }
+
+    /// Popping must always return the lowest-priority item queued so far,
+    /// regardless of insertion order. Within a bucket the order is LIFO.
+    #[test]
+    fn pop_order_is_monotone_by_priority() {
+        let mut queue: LayeredQueue<Vec<usize>> = LayeredQueue::new();
+
+        let insertions = [(42, 7), (1, 3), (100, 20), (2, 3), (0, 1)];
+        for (item, priority) in insertions {
+            queue.queue(item, priority);
+        }
+
+        let mut popped = Vec::new();
+        while let Some(v) = queue.pop() {
+            popped.push(v);
+        }
+
+        assert_eq!(popped, vec![0, 2, 1, 42, 100]);
+    }
+
+    #[test]
+    fn spare_layers_are_reused() {
+        let mut queue: LayeredQueue<Vec<usize>> = LayeredQueue::new();
+
+        for p in [5, 6, 7] {
+            queue.queue(p, p);
+        }
+        while queue.pop().is_some() {}
+        assert_eq!(queue.spare.len(), 3);
+
+        queue.queue(10, 10);
+        queue.queue(11, 11);
+        assert_eq!(queue.spare.len(), 1);
+        let popped: Vec<_> = std::iter::from_fn(|| queue.pop()).collect();
+        assert_eq!(popped, vec![10, 11]);
+
+        for p in [1, 2, 3] {
+            queue.queue(p, p);
+        }
+        queue.clear();
+        assert!(queue.layers.is_empty());
+        assert_eq!(queue.spare.len(), 3);
+        assert_eq!(queue.pop(), None);
+    }
+
+    #[test]
+    fn state_layer_pops_matches_before_deletions_before_insertions() {
+        use crate::graph::mock::NIx;
+
+        let mut layer: StateQueueLayer<NIx, u32, 5> = StateQueueLayer::default();
+        let node = AlignmentGraphNode::new(NIx::new(0), 0u32);
+        for state in [
+            AlignState::Insertion2,
+            AlignState::Insertion,
+            AlignState::Deletion2,
+            AlignState::Deletion,
+            AlignState::Match,
+        ] {
+            layer.queue(AstarQueuedItem(0, node, state));
+        }
+
+        let order: Vec<AlignState> = std::iter::from_fn(|| layer.pop().map(|i| i.aln_state())).collect();
+        assert_eq!(order, POP_ORDER.to_vec());
+        assert!(layer.is_empty());
+    }
+}
