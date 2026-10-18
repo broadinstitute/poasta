@@ -1,6 +1,6 @@
 [package]
 name = "poasta"
-version = "0.2.0-alpha.1"
+version = "1.0.0"
 authors = ["Lucas van Dijk"]
 description = "Fast genome-scale partial order aligner"
 license = "BSD-3-Clause"
