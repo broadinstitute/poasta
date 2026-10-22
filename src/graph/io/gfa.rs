@@ -17,6 +17,7 @@ use crate::graph::traits::{GraphBase, GraphWithNodeOrdering};
 
 /// Options controlling GFA output generation.
 #[derive(Default, Copy, Clone, Debug)]
+#[non_exhaustive]
 pub struct GfaOutputOptions {
     /// When true, append an extra `P` line named "consensus" that traces the graph's
     /// heaviest-bundling consensus path.
@@ -24,6 +25,18 @@ pub struct GfaOutputOptions {
     /// Trim the consensus ends to nodes covered by at least this fraction of the sequences.
     /// 0 disables trimming. See [`trim_consensus_ends`].
     pub consensus_min_frac: f64,
+}
+
+impl GfaOutputOptions {
+    pub fn with_include_consensus(mut self, include_consensus: bool) -> Self {
+        self.include_consensus = include_consensus;
+        self
+    }
+
+    pub fn with_consensus_min_frac(mut self, consensus_min_frac: f64) -> Self {
+        self.consensus_min_frac = consensus_min_frac;
+        self
+    }
 }
 
 /// Serialise a POA graph to GFA 1.0.

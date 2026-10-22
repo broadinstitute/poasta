@@ -286,18 +286,16 @@ fn write_output(args: &AlignArgs, graph: &POAGraph<u32>) -> Result<(), CliError>
 
     match output_type {
         OutputType::Fasta => {
-            let opts = FastaOutputOptions {
-                include_consensus: args.include_consensus,
-                consensus_only: args.consensus_only,
-                consensus_min_frac: args.consensus_min_frac,
-            };
+            let opts = FastaOutputOptions::default()
+                .with_include_consensus(args.include_consensus)
+                .with_consensus_only(args.consensus_only)
+                .with_consensus_min_frac(args.consensus_min_frac);
             poa_graph_to_fasta(graph, &mut writer, opts)?;
         }
         OutputType::Gfa => {
-            let opts = GfaOutputOptions {
-                include_consensus: args.include_consensus,
-                consensus_min_frac: args.consensus_min_frac,
-            };
+            let opts = GfaOutputOptions::default()
+                .with_include_consensus(args.include_consensus)
+                .with_consensus_min_frac(args.consensus_min_frac);
             poa_graph_to_gfa(graph, &mut writer, opts)?;
         }
     }

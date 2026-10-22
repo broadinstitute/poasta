@@ -12,14 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--consensus-min-frac` trims the consensus ends to bases covered by at least that
   fraction of the sequences, and `trim_consensus_ends` does the same in the library.
   Off by default (#37).
-- `FastaOutputOptions` and `GfaOutputOptions` have a `consensus_min_frac` field. Code
-  that builds them with a struct literal must set it.
+- `FastaOutputOptions` and `GfaOutputOptions` have a `consensus_min_frac` field.
 
 ### Changed
 
 - `POAGraph::in_edges` and `POAGraph::out_edges` are public (#37).
 - The clap argument structs in `poasta::cli` are `#[non_exhaustive]`. Only clap
   builds them, and adding a CLI flag no longer breaks other crates.
+- `FastaOutputOptions` and `GfaOutputOptions` are `#[non_exhaustive]`. Build them from
+  `Default::default()` with the `with_*` methods.
 
 ### Fixed
 

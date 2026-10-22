@@ -15,7 +15,18 @@ use crate::graph::poa::{NodeId, POAGraph, Sequence};
 use crate::graph::traits::{GraphBase, GraphWithNodeOrdering};
 
 /// Options controlling FASTA output generation.
+///
+/// ```
+/// use poasta::graph::io::fasta::FastaOutputOptions;
+///
+/// let opts = FastaOutputOptions::default()
+///     .with_include_consensus(true)
+///     .with_consensus_min_frac(0.35);
+/// assert!(opts.include_consensus && !opts.consensus_only);
+/// assert_eq!(opts.consensus_min_frac, 0.35);
+/// ```
 #[derive(Default, Copy, Clone, Debug)]
+#[non_exhaustive]
 pub struct FastaOutputOptions {
     /// When true, append an extra FASTA record named "consensus" (with gap padding) as the last
     /// row of the MSA. Ignored if `consensus_only` is also set.
@@ -26,6 +37,23 @@ pub struct FastaOutputOptions {
     /// Trim the consensus ends to nodes covered by at least this fraction of the sequences.
     /// 0 disables trimming. See [`trim_consensus_ends`].
     pub consensus_min_frac: f64,
+}
+
+impl FastaOutputOptions {
+    pub fn with_include_consensus(mut self, include_consensus: bool) -> Self {
+        self.include_consensus = include_consensus;
+        self
+    }
+
+    pub fn with_consensus_only(mut self, consensus_only: bool) -> Self {
+        self.consensus_only = consensus_only;
+        self
+    }
+
+    pub fn with_consensus_min_frac(mut self, consensus_min_frac: f64) -> Self {
+        self.consensus_min_frac = consensus_min_frac;
+        self
+    }
 }
 
 /// Load a POA graph from a FASTA multiple sequence alignment.
