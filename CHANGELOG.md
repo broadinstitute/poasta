@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `POAGraph::in_edges` and `POAGraph::out_edges` are public (#37).
 
+### Fixed
+
+- The consensus follows each node's heaviest incoming edge, as in Lee's heaviest
+  bundling. It used to maximise the summed edge weight, so a long insertion in a few
+  sequences could outweigh the majority (#37). This can change consensus output.
+
 ## [1.0.0](https://github.com/broadinstitute/poasta/releases/tag/v1.0.0) - 2026-10-18
 
 A rewrite of POASTA, twice as fast as the previous version.

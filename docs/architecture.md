@@ -128,8 +128,8 @@ Three traits describe what the engine needs from a graph:
   loop.
 
 `consensus.rs` implements Lee's heaviest bundling: a forward pass in rank
-order that maximises accumulated edge weight, then a walk back from the end
-sentinel. `io/` reads FASTA and FASTQ (gzip aware), reads and writes FASTA
+order where each node follows its heaviest incoming edge, then a walk back
+from the end sentinel. `io/` reads FASTA and FASTQ (gzip aware), reads and writes FASTA
 MSAs and GFA 1.0, writes GAF for lasagna and DOT for debugging.
 
 ## The A* engine

@@ -1,9 +1,13 @@
 //! Consensus sequence generation for POA graphs.
 //!
-//! Implements Lee's heaviest-bundling algorithm: a forward DP over the POA DAG in
-//! topological order where each node takes the maximum of `score[u] + edge_weight(u, v)`
-//! across its incoming edges. Backtracking from the end sentinel yields the consensus
-//! path. Ties are broken by smaller predecessor rank for determinism.
+//! Implements Lee's heaviest-bundling algorithm: a forward pass over the POA DAG in
+//! topological order where each node follows its heaviest incoming edge. Ties go to the
+//! predecessor with the higher score, then to the smaller rank for determinism. A node's
+//! score is its predecessor's score plus that edge's weight. Backtracking from the end
+//! sentinel yields the consensus path.
+//!
+//! Following the heaviest edge rather than maximising the summed weight keeps a long
+//! detour that few sequences take from outscoring the edge most sequences take.
 
 use crate::graph::traits::IndexType;
 
@@ -35,24 +39,26 @@ where
             continue;
         }
 
-        let mut best: Option<(i64, usize, POANodeIndex<Ix>)> = None;
+        // Compared as (edge weight, predecessor score, Reverse(predecessor rank)).
+        let mut best: Option<(i64, i64, usize, POANodeIndex<Ix>)> = None;
         for (u, edge) in graph.in_edges(v) {
             let u_rank = graph.node_rank(u);
-            let cand = score[u_rank] + edge.weight as i64;
+            let w = edge.weight as i64;
 
             let replace = match best {
                 None => true,
-                Some((best_score, best_rank, _)) => {
-                    cand > best_score || (cand == best_score && u_rank < best_rank)
+                Some((best_w, best_score, best_rank, _)) => {
+                    (w, score[u_rank], std::cmp::Reverse(u_rank))
+                        > (best_w, best_score, std::cmp::Reverse(best_rank))
                 }
             };
             if replace {
-                best = Some((cand, u_rank, u));
+                best = Some((w, score[u_rank], u_rank, u));
             }
         }
 
-        if let Some((s, _, u)) = best {
-            score[rank] = s;
+        if let Some((w, s, _, u)) = best {
+            score[rank] = s + w;
             pred[rank] = Some(u);
         }
     }
@@ -95,6 +101,23 @@ mod tests {
     #[test]
     fn consensus_picks_majority_branch() {
         let graph = graph_from_msa(&["ACGTACGT", "ACGTACGT", "ACGTACGT", "ACTTACGT"]);
+
+        let consensus = heaviest_bundle_consensus(&graph);
+        let symbols: Vec<u8> = consensus.iter().map(|&n| graph.node_symbol(n)).collect();
+
+        assert_eq!(symbols, b"ACGTACGT");
+    }
+
+    #[test]
+    fn consensus_skips_long_minority_insertion() {
+        // One of four sequences has a 10 base insertion. Its detour sums to more
+        // weight than the majority edge, but that edge is the heavier one.
+        let graph = graph_from_msa(&[
+            "ACGT----------ACGT",
+            "ACGT----------ACGT",
+            "ACGT----------ACGT",
+            "ACGTTTTTTTTTTTACGT",
+        ]);
 
         let consensus = heaviest_bundle_consensus(&graph);
         let symbols: Vec<u8> = consensus.iter().map(|&n| graph.node_symbol(n)).collect();
