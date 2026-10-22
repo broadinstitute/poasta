@@ -64,9 +64,15 @@ node_type!(
     NodeId
 );
 
+/// What an edge of a [`POAGraph`] carries.
 #[derive(Debug, Default)]
 pub struct POAEdgeData {
+    /// The sum of the base weights of every sequence along this edge. Each
+    /// sequence adds the weights of both bases, so with weights of 1 a
+    /// sequence adds 2. To count sequences, use `sequence_ids.len()`.
     pub weight: usize,
+    /// The index in `POAGraph::sequences` of every sequence along this edge,
+    /// in ascending order.
     pub sequence_ids: Vec<usize>,
 }
 
@@ -291,7 +297,9 @@ where
     }
 
     /// Outgoing edges of `node` in successor order, as (target, data).
-    pub(crate) fn out_edges(
+    /// `node` is a rank. The edges to the end sentinel have weight 0 and no
+    /// sequence ids.
+    pub fn out_edges(
         &self,
         node: POANodeIndex<Ix>,
     ) -> impl Iterator<Item = (POANodeIndex<Ix>, &POAEdgeData)> + '_ {
@@ -303,7 +311,9 @@ where
     }
 
     /// Incoming edges of `node` in predecessor order, as (source, data).
-    pub(crate) fn in_edges(
+    /// `node` is a rank. The edges from the start sentinel have weight 0 and
+    /// no sequence ids.
+    pub fn in_edges(
         &self,
         node: POANodeIndex<Ix>,
     ) -> impl Iterator<Item = (POANodeIndex<Ix>, &POAEdgeData)> + '_ {
