@@ -75,6 +75,47 @@ where
     path
 }
 
+/// Drop nodes from both ends of a consensus path until each end node is covered
+/// by at least `min_frac` of the sequences in the graph. A node's coverage is the
+/// number of sequences through it. Interior nodes are kept, so the result stays a
+/// path in the graph. Returns an empty slice when no node is covered enough.
+pub fn trim_consensus_ends<'a, Ix>(
+    graph: &POAGraph<Ix>,
+    path: &'a [POANodeIndex<Ix>],
+    min_frac: f64,
+) -> &'a [POANodeIndex<Ix>]
+where
+    Ix: IndexType,
+{
+    if min_frac <= 0.0 {
+        return path;
+    }
+
+    let min_coverage = min_frac * graph.sequences.len() as f64;
+
+    // A sequence's first node has no incoming edge with its id, so count those
+    // sequences separately.
+    let mut starts = vec![0usize; graph.node_count()];
+    for seq in &graph.sequences {
+        starts[graph.node_rank(graph.node(seq.start_node()))] += 1;
+    }
+    let covered = |&v: &POANodeIndex<Ix>| {
+        let through: usize = graph
+            .in_edges(v)
+            .map(|(_, edge)| edge.sequence_ids.len())
+            .sum();
+        (starts[graph.node_rank(v)] + through) as f64 >= min_coverage
+    };
+
+    match (
+        path.iter().position(covered),
+        path.iter().rposition(covered),
+    ) {
+        (Some(first), Some(last)) => &path[first..=last],
+        _ => &[],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,6 +164,35 @@ mod tests {
         let symbols: Vec<u8> = consensus.iter().map(|&n| graph.node_symbol(n)).collect();
 
         assert_eq!(symbols, b"ACGTACGT");
+    }
+
+    /// The example from issue #37: one of 15 sequences has an extra base at one end.
+    fn overhang_graph(prefix: &str, suffix: &str) -> POAGraph<u32> {
+        let base = "CAG".repeat(20);
+        let mut rows = vec![format!("-{base}-"); 14];
+        rows.push(format!("{prefix}{base}{suffix}"));
+        let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+        graph_from_msa(&rows)
+    }
+
+    #[test]
+    fn trim_drops_minority_overhangs() {
+        for graph in [overhang_graph("-", "C"), overhang_graph("T", "-")] {
+            let consensus = heaviest_bundle_consensus(&graph);
+            assert_eq!(consensus.len(), 61);
+            assert_eq!(trim_consensus_ends(&graph, &consensus, 0.0).len(), 61);
+
+            let trimmed = trim_consensus_ends(&graph, &consensus, 0.35);
+            let symbols: Vec<u8> = trimmed.iter().map(|&n| graph.node_symbol(n)).collect();
+            assert_eq!(symbols, b"CAG".repeat(20));
+        }
+    }
+
+    #[test]
+    fn trim_can_drop_everything() {
+        let graph = graph_from_msa(&["AC--", "--GT"]);
+        let consensus = heaviest_bundle_consensus(&graph);
+        assert!(trim_consensus_ends(&graph, &consensus, 1.0).is_empty());
     }
 
     #[test]

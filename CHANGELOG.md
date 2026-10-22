@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- `--consensus-min-frac` trims the consensus ends to bases covered by at least that
+  fraction of the sequences, and `trim_consensus_ends` does the same in the library.
+  Off by default (#37).
+- `FastaOutputOptions` and `GfaOutputOptions` have a `consensus_min_frac` field. Code
+  that builds them with a struct literal must set it.
+
 ### Changed
 
 - `POAGraph::in_edges` and `POAGraph::out_edges` are public (#37).

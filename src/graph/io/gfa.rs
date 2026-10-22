@@ -10,7 +10,7 @@ use flate2::read::MultiGzDecoder;
 use rustc_hash::FxHashMap;
 
 use crate::errors::PoastaIOError;
-use crate::graph::consensus::heaviest_bundle_consensus;
+use crate::graph::consensus::{heaviest_bundle_consensus, trim_consensus_ends};
 use crate::graph::io::CONSENSUS_NAME;
 use crate::graph::poa::{NodeId, POAGraph, POANodeIndex};
 use crate::graph::traits::{GraphBase, GraphWithNodeOrdering};
@@ -21,6 +21,9 @@ pub struct GfaOutputOptions {
     /// When true, append an extra `P` line named "consensus" that traces the graph's
     /// heaviest-bundling consensus path.
     pub include_consensus: bool,
+    /// Trim the consensus ends to nodes covered by at least this fraction of the sequences.
+    /// 0 disables trimming. See [`trim_consensus_ends`].
+    pub consensus_min_frac: f64,
 }
 
 /// Serialise a POA graph to GFA 1.0.
@@ -100,6 +103,7 @@ where
     let mut consensus_emitted = false;
     if opts.include_consensus {
         let consensus = heaviest_bundle_consensus(graph);
+        let consensus = trim_consensus_ends(graph, &consensus, opts.consensus_min_frac);
         if !consensus.is_empty() {
             let segments: Vec<String> = consensus
                 .iter()

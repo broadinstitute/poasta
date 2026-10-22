@@ -43,6 +43,16 @@ impl AlignmentSpan {
     }
 }
 
+/// Parse a fraction between 0 and 1, inclusive.
+pub fn parse_fraction(s: &str) -> Result<f64, String> {
+    let value: f64 = s.parse().map_err(|e| format!("{e}"))?;
+    if (0.0..=1.0).contains(&value) {
+        Ok(value)
+    } else {
+        Err(format!("{value} is not between 0 and 1"))
+    }
+}
+
 /// Log verbosity levels exposed on the CLI.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum LogLevel {

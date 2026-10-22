@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 
-use crate::cli::{AlignmentSpan, CostModelKind, LogLevel, SearchArgs};
+use crate::cli::{AlignmentSpan, CostModelKind, LogLevel, SearchArgs, parse_fraction};
 
 /// The various output formats supported by Poasta
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -38,6 +38,7 @@ pub enum CliSubcommand {
 }
 
 #[derive(Args, Debug)]
+#[command(group(ArgGroup::new("consensus").args(["include_consensus", "consensus_only"])))]
 pub struct AlignArgs {
     /// Sequences to align in FASTA or FASTQ format, optionally gzipped.
     #[clap(help_heading = "Inputs")]
@@ -70,6 +71,13 @@ pub struct AlignArgs {
     #[arg(long, conflicts_with = "include_consensus")]
     #[clap(help_heading = "Outputs")]
     pub consensus_only: bool,
+
+    /// Trim the consensus ends until the first and last base are each covered by at least
+    /// this fraction of the sequences. 0 disables trimming. Bases inside the consensus are
+    /// never removed.
+    #[arg(long, default_value_t = 0.0, value_parser = parse_fraction, requires = "consensus")]
+    #[clap(help_heading = "Outputs")]
+    pub consensus_min_frac: f64,
 
     /// Alignment span.
     #[arg(short = 'm', long, value_enum, default_value = "global")]

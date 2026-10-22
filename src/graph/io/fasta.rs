@@ -9,7 +9,7 @@ use noodles::fasta::{self, Record};
 const NO_COL: u32 = u32::MAX;
 
 use crate::errors::PoastaIOError;
-use crate::graph::consensus::heaviest_bundle_consensus;
+use crate::graph::consensus::{heaviest_bundle_consensus, trim_consensus_ends};
 use crate::graph::io::CONSENSUS_NAME;
 use crate::graph::poa::{NodeId, POAGraph, Sequence};
 use crate::graph::traits::{GraphBase, GraphWithNodeOrdering};
@@ -23,6 +23,9 @@ pub struct FastaOutputOptions {
     /// When true, write only the consensus as one FASTA record without MSA columns or gaps.
     /// Takes precedence over `include_consensus`.
     pub consensus_only: bool,
+    /// Trim the consensus ends to nodes covered by at least this fraction of the sequences.
+    /// 0 disables trimming. See [`trim_consensus_ends`].
+    pub consensus_min_frac: f64,
 }
 
 /// Load a POA graph from a FASTA multiple sequence alignment.
@@ -122,6 +125,7 @@ where
 
     if opts.consensus_only {
         let consensus = heaviest_bundle_consensus(graph);
+        let consensus = trim_consensus_ends(graph, &consensus, opts.consensus_min_frac);
         let seq: Vec<u8> = consensus.iter().map(|&n| graph.node_symbol(n)).collect();
         tracing::debug!(length = seq.len(), "writing consensus-only FASTA");
         let record = Record::new(
@@ -204,8 +208,9 @@ where
 
     if opts.include_consensus {
         let consensus = heaviest_bundle_consensus(graph);
+        let consensus = trim_consensus_ends(graph, &consensus, opts.consensus_min_frac);
         let mut row = vec![b'-'; n_cols];
-        for node in &consensus {
+        for node in consensus {
             let col = col_of[node.index()];
             if col == NO_COL {
                 return Err(PoastaIOError::InvalidFormat);
