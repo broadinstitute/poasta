@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use crate::cli::CostModelKind;
 
 #[derive(Parser)]
+#[non_exhaustive]
 pub struct PoastaVsSpoaArgs {
     /// Sequences to align in FASTA format
     #[clap(help_heading = "Input/Output")]

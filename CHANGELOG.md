@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `POAGraph::in_edges` and `POAGraph::out_edges` are public (#37).
+- The clap argument structs in `poasta::cli` are `#[non_exhaustive]`. Only clap
+  builds them, and adding a CLI flag no longer breaks other crates.
 
 ### Fixed
 

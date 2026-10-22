@@ -107,6 +107,7 @@ pub enum HeuristicKind {
 
 /// A* search options shared by `poasta align` and `lasagna`.
 #[derive(Args, Debug, Clone)]
+#[non_exhaustive]
 pub struct SearchArgs {
     /// Which A* heuristic to use.
     #[arg(long, value_enum, default_value = "min-gap-cost")]

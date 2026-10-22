@@ -15,6 +15,7 @@ pub enum OutputType {
 }
 
 #[derive(Parser, Debug)]
+#[non_exhaustive]
 #[command(author, version, about)]
 pub struct CliArgs {
     /// Log verbosity level. Overridden by the RUST_LOG env var when set.
@@ -38,6 +39,7 @@ pub enum CliSubcommand {
 }
 
 #[derive(Args, Debug)]
+#[non_exhaustive]
 #[command(group(ArgGroup::new("consensus").args(["include_consensus", "consensus_only"])))]
 pub struct AlignArgs {
     /// Sequences to align in FASTA or FASTQ format, optionally gzipped.
@@ -127,12 +129,14 @@ pub struct AlignArgs {
 }
 
 #[derive(Args, Debug)]
+#[non_exhaustive]
 pub struct StatsArgs {
     /// The POASTA graph or an existing MSA in FASTA format to analyze
     pub graph: PathBuf,
 }
 
 #[derive(Args, Debug)]
+#[non_exhaustive]
 pub struct ViewArgs {
     /// Input POA graph
     pub graph: PathBuf,

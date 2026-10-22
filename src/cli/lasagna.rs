@@ -7,6 +7,7 @@ use clap::Parser;
 use crate::cli::{AlignmentSpan, CostModelKind, LogLevel, SearchArgs};
 
 #[derive(Parser, Debug)]
+#[non_exhaustive]
 #[command(
     name = "lasagna",
     author,
